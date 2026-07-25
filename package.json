@@ -1,0 +1,22 @@
+{
+  "name": "path-pulse",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PathPulse.ai — Blockchain settlement infrastructure on the Stellar network (D1–D8)",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "backend",
+    "web"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
