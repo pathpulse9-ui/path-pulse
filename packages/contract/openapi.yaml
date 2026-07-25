@@ -1,0 +1,173 @@
+openapi: 3.1.0
+info:
+  title: PathPulse Backend Core API
+  version: 0.1.0
+  description: >
+    Shared API consumed by the Android, iOS and Web clients. Phase 1 (D1) surface:
+    health, managed accounts, Privy onboarding, delegated transaction build/submit.
+    Later phases add payouts, off-ramp, settlement and SCOUT endpoints.
+servers:
+  - url: http://localhost:8080
+    description: Local dev (testnet)
+paths:
+  /health:
+    get:
+      summary: Liveness + network info
+      operationId: getHealth
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /v1/accounts/distribution:
+    get:
+      summary: List protocol-governed distribution accounts
+      operationId: listDistributionAccounts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DistributionAccount' }
+  /v1/treasury/config:
+    get:
+      summary: Current multisig treasury configuration (testnet)
+      operationId: getTreasuryConfig
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TreasuryConfig' }
+  /v1/onboard:
+    post:
+      summary: Exchange a Privy token for a managed Stellar wallet
+      operationId: onboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OnboardRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnboardResponse' }
+  /v1/tx/build:
+    post:
+      summary: Build (and, for managed accounts, delegate-sign) a transaction
+      operationId: buildTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BuildTransactionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildTransactionResponse' }
+  /v1/tx/submit:
+    post:
+      summary: Submit a signed transaction envelope to Horizon
+      operationId: submitTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitTransactionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubmitTransactionResponse' }
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, network, horizon, version]
+      properties:
+        status: { type: string, enum: [ok] }
+        network: { type: string, enum: [testnet, mainnet] }
+        horizon: { type: string }
+        version: { type: string }
+    DistributionAccount:
+      type: object
+      required: [role, publicKey, multisig, network]
+      properties:
+        role: { type: string, enum: [partner_revenue, driver_pool, treasury] }
+        publicKey: { type: string }
+        multisig: { type: boolean }
+        network: { type: string, enum: [testnet, mainnet] }
+    TreasuryConfig:
+      type: object
+      required: [publicKey, signers, thresholds, network]
+      properties:
+        publicKey: { type: string }
+        signers:
+          type: array
+          items:
+            type: object
+            properties:
+              publicKey: { type: string }
+              weight: { type: integer }
+        thresholds:
+          type: object
+          properties:
+            low: { type: integer }
+            medium: { type: integer }
+            high: { type: integer }
+        network: { type: string, enum: [testnet, mainnet] }
+    OnboardRequest:
+      type: object
+      required: [privyToken]
+      properties:
+        privyToken: { type: string }
+    OnboardResponse:
+      type: object
+      required: [userId, wallet]
+      properties:
+        userId: { type: string }
+        wallet: { $ref: '#/components/schemas/ManagedWallet' }
+    ManagedWallet:
+      type: object
+      required: [userId, address, provisioned, network]
+      properties:
+        userId: { type: string }
+        address: { type: string }
+        provisioned: { type: boolean }
+        network: { type: string, enum: [testnet, mainnet] }
+    BuildTransactionRequest:
+      type: object
+      required: [userId, operations]
+      properties:
+        userId: { type: string }
+        memo: { type: string }
+        operations:
+          type: array
+          items: { type: object }
+    BuildTransactionResponse:
+      type: object
+      required: [xdr, hash]
+      properties:
+        xdr: { type: string }
+        hash: { type: string }
+    SubmitTransactionRequest:
+      type: object
+      required: [xdr]
+      properties:
+        xdr: { type: string }
+    SubmitTransactionResponse:
+      type: object
+      required: [hash, successful, horizonUrl]
+      properties:
+        hash: { type: string }
+        successful: { type: boolean }
+        ledger: { type: integer }
+        horizonUrl: { type: string }

@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+.pnp.*
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+
+# env / secrets — NEVER commit key material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+keys/
+.testnet-accounts.json
+
+# logs
+*.log
+npm-debug.log*
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# android
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+*.keystore
+*.jks
+
+# ios
+ios/**/xcuserdata/
+ios/**/*.xcworkspace/xcuserdata/
+ios/Pods/
+ios/DerivedData/
