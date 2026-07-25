@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-web:
+    name: Backend + Web (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm install
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+      - name: Build (all workspaces)
+        run: npm run build
+
+  android:
+    name: Android (Kotlin)
+    runs-on: ubuntu-latest
+    # Enabled once android/ has a Gradle project (Phase 1, Daiwik).
+    if: ${{ hashFiles('android/settings.gradle', 'android/settings.gradle.kts') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Build
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+  ios:
+    name: iOS (Swift)
+    runs-on: macos-14
+    # Enabled once ios/ has an Xcode project (Phase 1, Daiwik).
+    if: ${{ hashFiles('ios/**/*.xcodeproj/project.pbxproj') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: ios
+        run: xcodebuild -scheme PathPulse -destination 'generic/platform=iOS Simulator' build
