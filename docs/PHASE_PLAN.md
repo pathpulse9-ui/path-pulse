@@ -20,7 +20,7 @@ indexer directly (both TS, tightly coupled).
 
 | Phase | Days | Dates 2026 | Focus | Deliverables |
 |-------|------|-----------|-------|--------------|
-| **1. Foundation & Managed Accounts** | 1–12 | Jul 21 – Aug 1 | Account layer, Privy onboarding, multisig treasury, scaffolds + CI | D1 |
+| **1. Foundation & Managed Accounts** | 1–12 | Jul 21 – Aug 1 | Account layer, Non Custodial, multisig treasury, scaffolds + CI | D1 |
 | **2. Wallet Interop & Payout Rails** | 13–25 | Aug 2 – Aug 14 | Wallets Kit demo, SDP batch payouts, reward screens | D2, D3 |
 | **3. Off-Ramp & Liquidity Routing** | 26–40 | Aug 15 – Aug 29 | Mercuryo SEP-24, Stellar Broker + Aquarius routing | D4, D5 |
 | **4. Settlement Engine & SCOUT** | 41–55 | Aug 30 – Sep 13 | 50/30/20 engine, SCOUT reputation assets, indexer | D6 |
