@@ -4,7 +4,7 @@
  * These mirror `openapi.yaml` and are the single source of truth consumed by the
  * backend and web. Kotlin/Swift model classes are generated from the OpenAPI spec.
  *
- * Phase 1 (D1) covers: managed accounts, Privy onboarding, delegated signing.
+ * Phase 1 (D1) covers: managed accounts, email onboarding, delegated signing.
  * Later phases extend this file (payouts, off-ramp, settlement, SCOUT, gov exports).
  */
 
@@ -31,7 +31,6 @@ export interface TreasuryConfig {
   network: StellarNetwork;
 }
 
-/** A driver's Privy-provisioned managed wallet. */
 export interface ManagedWallet {
   userId: string;
   address: string;
@@ -39,16 +38,49 @@ export interface ManagedWallet {
   network: StellarNetwork;
 }
 
-// ── Auth / onboarding ───────────────────────────────────────────────
+// ── Auth ────────────────────────────────────────────────────────────
 
-export interface OnboardRequest {
-  /** Privy access token obtained on-device after email/OAuth sign-up. */
-  privyToken: string;
+export interface SessionUser {
+  userId: string;
+  method: 'email' | 'wallet';
+  email?: string;
+  address?: string;
 }
 
-export interface OnboardResponse {
+export interface AuthMeResponse {
+  user: SessionUser | null;
+}
+
+export interface MagicLinkRequest {
+  email: string;
+}
+
+export interface MagicLinkRequestResponse {
+  /** Only present when NODE_ENV=development (no email provider wired yet). */
+  devLink?: string;
+}
+
+export interface MagicLinkVerifyRequest {
+  token: string;
+}
+
+export interface MagicLinkVerifyResponse {
   userId: string;
   wallet: ManagedWallet;
+}
+
+export interface WalletChallengeResponse {
+  transaction: string;
+  networkPassphrase: string;
+}
+
+export interface WalletVerifyRequest {
+  transaction: string;
+}
+
+export interface WalletVerifyResponse {
+  userId: string;
+  address: string;
 }
 
 // ── Delegated signing ───────────────────────────────────────────────

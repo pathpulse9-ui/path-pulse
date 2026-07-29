@@ -53,7 +53,6 @@ export const env = {
     },
   },
 
-  // dev | aws-kms | gcp-kms | hsm  — Phase 1 uses dev tier.
   signerBackend: process.env.SIGNER_BACKEND ?? 'dev',
 
   webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',

@@ -1,11 +1,13 @@
 packages:
   - 'packages/*'
+  - 'backend'
   - 'web'
 allowBuilds:
   '@reown/appkit': true
   '@stellar/stellar-sdk': true
   blake-hash: true
   bufferutil: true
+  esbuild: true
   protobufjs: true
   secp256k1: true
   sharp: true

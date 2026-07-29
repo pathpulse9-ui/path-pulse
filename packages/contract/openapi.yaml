@@ -4,7 +4,8 @@ info:
   version: 0.1.0
   description: >
     Shared API consumed by the Android, iOS and Web clients. Phase 1 (D1) surface:
-    health, managed accounts, Privy onboarding, delegated transaction build/submit.
+    health, managed accounts, email magic-link + SEP-10 wallet auth, delegated
+    transaction build/submit.
     Later phases add payouts, off-ramp, settlement and SCOUT endpoints.
 servers:
   - url: http://localhost:8080
@@ -42,21 +43,83 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TreasuryConfig' }
-  /v1/onboard:
+  /v1/auth/magic-link:
     post:
-      summary: Exchange a Privy token for a managed Stellar wallet
-      operationId: onboard
+      summary: Request a magic-link email to sign in (custodial)
+      operationId: requestMagicLink
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/OnboardRequest' }
+            schema: { $ref: '#/components/schemas/MagicLinkRequest' }
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/OnboardResponse' }
+              schema: { $ref: '#/components/schemas/MagicLinkRequestResponse' }
+  /v1/auth/magic-link/verify:
+    post:
+      summary: Verify a magic-link token and start a session
+      operationId: verifyMagicLink
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MagicLinkVerifyRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MagicLinkVerifyResponse' }
+  /v1/auth/challenge:
+    get:
+      summary: Get a SEP-10 challenge transaction for a Stellar account
+      operationId: getWalletChallenge
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletChallengeResponse' }
+  /v1/auth/wallet/verify:
+    post:
+      summary: Verify a signed SEP-10 challenge and start a session (non-custodial)
+      operationId: verifyWalletChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletVerifyRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletVerifyResponse' }
+  /v1/auth/me:
+    get:
+      summary: Get the current session user, if any
+      operationId: getSessionUser
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthMeResponse' }
+  /v1/auth/logout:
+    post:
+      summary: Clear the session cookie
+      operationId: logout
+      responses:
+        '200':
+          description: OK
   /v1/tx/build:
     post:
       summary: Build (and, for managed accounts, delegate-sign) a transaction
@@ -124,17 +187,59 @@ components:
             medium: { type: integer }
             high: { type: integer }
         network: { type: string, enum: [testnet, mainnet] }
-    OnboardRequest:
+    SessionUser:
       type: object
-      required: [privyToken]
+      required: [userId, method]
       properties:
-        privyToken: { type: string }
-    OnboardResponse:
+        userId: { type: string }
+        method: { type: string, enum: [email, wallet] }
+        email: { type: string }
+        address: { type: string }
+    AuthMeResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          oneOf:
+            - { $ref: '#/components/schemas/SessionUser' }
+            - type: 'null'
+    MagicLinkRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string }
+    MagicLinkRequestResponse:
+      type: object
+      properties:
+        devLink: { type: string }
+    MagicLinkVerifyRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+    MagicLinkVerifyResponse:
       type: object
       required: [userId, wallet]
       properties:
         userId: { type: string }
         wallet: { $ref: '#/components/schemas/ManagedWallet' }
+    WalletChallengeResponse:
+      type: object
+      required: [transaction, networkPassphrase]
+      properties:
+        transaction: { type: string }
+        networkPassphrase: { type: string }
+    WalletVerifyRequest:
+      type: object
+      required: [transaction]
+      properties:
+        transaction: { type: string }
+    WalletVerifyResponse:
+      type: object
+      required: [userId, address]
+      properties:
+        userId: { type: string }
+        address: { type: string }
     ManagedWallet:
       type: object
       required: [userId, address, provisioned, network]

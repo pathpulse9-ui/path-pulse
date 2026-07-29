@@ -1,12 +1,12 @@
 import { Horizon } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 
-/** Shared Horizon server instance for the configured network. */
+/** Shared Horizon server instance for network. */
 export const horizon = new Horizon.Server(env.horizonUrl, {
   allowHttp: env.horizonUrl.startsWith('http://'),
 });
 
-/** Fund a testnet account via Friendbot. Refuses to run on mainnet. */
+/** Fund a testnet account via Friendbot. */
 export async function fundWithFriendbot(publicKey: string): Promise<void> {
   if (env.network !== 'testnet') {
     throw new Error('Friendbot funding is testnet-only');

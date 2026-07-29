@@ -20,7 +20,6 @@ function VerifyInner() {
     ran.current = true;
     const token = params.get('token');
     if (!token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus('error');
       setError('Missing token.');
       return;
@@ -35,7 +34,6 @@ function VerifyInner() {
         setStatus('error');
         setError(String(err));
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
