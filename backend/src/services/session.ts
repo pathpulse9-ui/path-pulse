@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 
 export interface SessionPayload {
   userId: string;
-  method: 'email' | 'wallet';
+  method: 'google' | 'wallet';
   email?: string;
   address?: string;
 }

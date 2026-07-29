@@ -42,7 +42,7 @@ export interface ManagedWallet {
 
 export interface SessionUser {
   userId: string;
-  method: 'email' | 'wallet';
+  method: 'google' | 'wallet';
   email?: string;
   address?: string;
 }
@@ -51,20 +51,11 @@ export interface AuthMeResponse {
   user: SessionUser | null;
 }
 
-export interface MagicLinkRequest {
-  email: string;
+export interface GoogleVerifyRequest {
+  idToken: string;
 }
 
-export interface MagicLinkRequestResponse {
-  /** Only present when NODE_ENV=development (no email provider wired yet). */
-  devLink?: string;
-}
-
-export interface MagicLinkVerifyRequest {
-  token: string;
-}
-
-export interface MagicLinkVerifyResponse {
+export interface GoogleVerifyResponse {
   userId: string;
   wallet: ManagedWallet;
 }

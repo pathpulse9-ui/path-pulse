@@ -1,8 +1,6 @@
 import type {
-  MagicLinkRequest,
-  MagicLinkRequestResponse,
-  MagicLinkVerifyRequest,
-  MagicLinkVerifyResponse,
+  GoogleVerifyRequest,
+  GoogleVerifyResponse,
   WalletChallengeResponse,
   WalletVerifyRequest,
   WalletVerifyResponse,
@@ -24,17 +22,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export function requestMagicLink(email: string) {
-  const body: MagicLinkRequest = { email };
-  return apiFetch<MagicLinkRequestResponse>('/v1/auth/magic-link', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-}
-
-export function verifyMagicLink(token: string) {
-  const body: MagicLinkVerifyRequest = { token };
-  return apiFetch<MagicLinkVerifyResponse>('/v1/auth/magic-link/verify', {
+export function verifyGoogleIdToken(idToken: string) {
+  const body: GoogleVerifyRequest = { idToken };
+  return apiFetch<GoogleVerifyResponse>('/v1/auth/google/verify', {
     method: 'POST',
     body: JSON.stringify(body),
   });

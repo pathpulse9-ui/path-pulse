@@ -67,6 +67,10 @@ export const env = {
     signingSecret: process.env.SEP10_SIGNING_SECRET ?? '',
     homeDomain: process.env.SEP10_HOME_DOMAIN ?? 'localhost:8080',
   },
+
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+  },
 } as const;
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {

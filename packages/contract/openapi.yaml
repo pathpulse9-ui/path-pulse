@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: >
     Shared API consumed by the Android, iOS and Web clients. Phase 1 (D1) surface:
-    health, managed accounts, email magic-link + SEP-10 wallet auth, delegated
+    health, managed accounts, Google + SEP-10 wallet auth, delegated
     transaction build/submit.
     Later phases add payouts, off-ramp, settlement and SCOUT endpoints.
 servers:
@@ -43,36 +43,21 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TreasuryConfig' }
-  /v1/auth/magic-link:
+  /v1/auth/google/verify:
     post:
-      summary: Request a magic-link email to sign in (custodial)
-      operationId: requestMagicLink
+      summary: Verify a Google ID token and start a session (custodial)
+      operationId: verifyGoogleIdToken
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MagicLinkRequest' }
+            schema: { $ref: '#/components/schemas/GoogleVerifyRequest' }
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/MagicLinkRequestResponse' }
-  /v1/auth/magic-link/verify:
-    post:
-      summary: Verify a magic-link token and start a session
-      operationId: verifyMagicLink
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/MagicLinkVerifyRequest' }
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/MagicLinkVerifyResponse' }
+              schema: { $ref: '#/components/schemas/GoogleVerifyResponse' }
   /v1/auth/challenge:
     get:
       summary: Get a SEP-10 challenge transaction for a Stellar account
@@ -192,7 +177,7 @@ components:
       required: [userId, method]
       properties:
         userId: { type: string }
-        method: { type: string, enum: [email, wallet] }
+        method: { type: string, enum: [google, wallet] }
         email: { type: string }
         address: { type: string }
     AuthMeResponse:
@@ -203,21 +188,12 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/SessionUser' }
             - type: 'null'
-    MagicLinkRequest:
+    GoogleVerifyRequest:
       type: object
-      required: [email]
+      required: [idToken]
       properties:
-        email: { type: string }
-    MagicLinkRequestResponse:
-      type: object
-      properties:
-        devLink: { type: string }
-    MagicLinkVerifyRequest:
-      type: object
-      required: [token]
-      properties:
-        token: { type: string }
-    MagicLinkVerifyResponse:
+        idToken: { type: string }
+    GoogleVerifyResponse:
       type: object
       required: [userId, wallet]
       properties:

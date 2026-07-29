@@ -1,10 +1,8 @@
 import { Router } from 'express';
 import type {
   HealthResponse,
-  MagicLinkRequest,
-  MagicLinkRequestResponse,
-  MagicLinkVerifyRequest,
-  MagicLinkVerifyResponse,
+  GoogleVerifyRequest,
+  GoogleVerifyResponse,
   WalletChallengeResponse,
   WalletVerifyRequest,
   WalletVerifyResponse,
@@ -15,7 +13,8 @@ import {
   listDistributionAccounts,
   getTreasuryConfig,
 } from '../stellar/accounts.js';
-import { requestMagicLink, verifyMagicLink } from '../services/magicLink.js';
+import { ensureAccountForEmail } from '../services/account.js';
+import { verifyGoogleIdToken } from '../services/googleAuth.js';
 import { buildChallenge, verifyChallenge } from '../services/walletAuth.js';
 import {
   setSessionCookie,
@@ -53,23 +52,13 @@ router.get('/v1/treasury/config', async (_req, res, next) => {
   }
 });
 
-router.post('/v1/auth/magic-link', async (req, res, next) => {
+router.post('/v1/auth/google/verify', async (req, res, next) => {
   try {
-    const { email } = req.body as MagicLinkRequest;
-    const { devLink } = requestMagicLink(email);
-    const body: MagicLinkRequestResponse = { devLink };
-    res.json(body);
-  } catch (e) {
-    next(e);
-  }
-});
-
-router.post('/v1/auth/magic-link/verify', async (req, res, next) => {
-  try {
-    const { token } = req.body as MagicLinkVerifyRequest;
-    const { userId, wallet, email } = await verifyMagicLink(token);
-    setSessionCookie(res, { userId, method: 'email', email, address: wallet.address });
-    const body: MagicLinkVerifyResponse = { userId, wallet };
+    const { idToken } = req.body as GoogleVerifyRequest;
+    const { email } = await verifyGoogleIdToken(idToken);
+    const { userId, wallet } = await ensureAccountForEmail(email);
+    setSessionCookie(res, { userId, method: 'google', email, address: wallet.address });
+    const body: GoogleVerifyResponse = { userId, wallet };
     res.json(body);
   } catch (e) {
     (e as { status?: number }).status = 401;
