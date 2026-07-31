@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import type { ManagedWallet } from '@pathpulse/contract';
+import { provisionManagedWallet } from '../stellar/managed.js';
 
 /**
  * Privy server-side integration (D1).
@@ -34,12 +35,11 @@ export async function verifyPrivyToken(token: string): Promise<PrivyUser> {
  * Returns the managed wallet descriptor.
  */
 export async function ensureManagedWallet(user: PrivyUser): Promise<ManagedWallet> {
-  // TODO(phase1): call Privy embedded-wallet provisioning; persist mapping in Postgres.
-  // Stub returns an unprovisioned placeholder so the contract shape is exercised end-to-end.
-  return {
-    userId: user.userId,
-    address: '',
-    provisioned: false,
-    network: env.network,
-  };
+  if (!env.privy.appId || !env.privy.appSecret) {
+    // Dev tier: provision a backend-controlled testnet wallet that simulates a
+    // Privy embedded wallet, so delegated signing (/v1/tx/*) works end-to-end.
+    return provisionManagedWallet(user.userId);
+  }
+  // TODO(phase2): call Privy embedded-wallet provisioning; persist mapping in Postgres.
+  throw new Error('Privy live wallet provisioning not yet wired — set PRIVY creds or use the dev tier');
 }
