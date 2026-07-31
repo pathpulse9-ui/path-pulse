@@ -15,7 +15,7 @@ const NAV: NavItem[] = [
   { to: '/wallets', label: 'Wallet Interop', phase: 'P2', ready: true },
   { to: '/payouts', label: 'Payouts (SDP)', phase: 'P2' },
   { to: '/offramp', label: 'Off-ramp Recon', phase: 'P3' },
-  { to: '/settlement', label: 'Settlement Explorer', phase: 'P4' },
+  { to: '/settlement', label: 'Settlement Explorer', phase: 'P4', ready: true },
   { to: '/gov', label: 'Gov Gateway', phase: 'P6' },
 ];
 

@@ -23,16 +23,6 @@ export function OffRamp() {
   );
 }
 
-export function Settlement() {
-  return (
-    <Placeholder
-      title="Settlement Explorer"
-      phase="Phase 4 · PAT-13"
-      body="Batch drill-down: Treasury → 50/30/20 Split → SDP → Driver. Foundation for the government dashboard."
-    />
-  );
-}
-
 export function GovGateway() {
   return (
     <Placeholder
