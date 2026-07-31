@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { env } from '../config/env.js';
 import type { ManagedWallet } from '@pathpulse/contract';
 import { provisionManagedWallet } from '../stellar/managed.js';
@@ -22,8 +23,9 @@ export interface PrivyUser {
 export async function verifyPrivyToken(token: string): Promise<PrivyUser> {
   if (!token) throw new Error('missing privy token');
   if (!env.privy.appId || !env.privy.appSecret) {
-    // Dev stub: derive a stable pseudo-user id from the token until Privy creds land.
-    const userId = `dev-${Buffer.from(token).toString('hex').slice(0, 16)}`;
+    // Dev stub: derive a stable, collision-resistant pseudo-user id from the token
+    // (sha256 so distinct tokens never collide) until Privy creds land.
+    const userId = `dev-${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
     return { userId };
   }
   // TODO(phase1): call Privy verification endpoint with app credentials.
