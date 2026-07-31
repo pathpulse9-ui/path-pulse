@@ -12,7 +12,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Dashboard', phase: 'P1', ready: true },
-  { to: '/wallets', label: 'Wallet Interop', phase: 'P2' },
+  { to: '/wallets', label: 'Wallet Interop', phase: 'P2', ready: true },
   { to: '/payouts', label: 'Payouts (SDP)', phase: 'P2' },
   { to: '/offramp', label: 'Off-ramp Recon', phase: 'P3' },
   { to: '/settlement', label: 'Settlement Explorer', phase: 'P4' },
