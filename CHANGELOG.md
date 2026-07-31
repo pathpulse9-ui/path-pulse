@@ -2,6 +2,17 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.2.0] — 2026-07-31
+
+### Added (PAT-9 · Phase 2 · D2 — Wallet interoperability)
+- Wallet Interop surface in the ops console: connect an external Stellar wallet via Stellar Wallets Kit (Freighter, Lobstr, xBull, Albedo…), load the account from Horizon, fund via Friendbot, and sign & submit a testnet transaction. Reviewer-facing.
+- `web/src/wallet/kit.ts`: Wallets Kit integration module (connect/disconnect, session persistence, Horizon account load, Friendbot, external-wallet sign + submit).
+- Ported the preserved vanilla-TS D2 prototype (`legacy/wallet-demo.ts`) into a React page with the shared UI kit.
+
+### Changed
+- Wallet Interop route lazy-loaded (`React.lazy` + `Suspense`) so the Stellar SDK stays out of the main bundle — main chunk back to ~58 kB gzip; SDK loads on demand.
+- Sidebar marks Wallet Interop as ready (drops the phase tag).
+
 ## [0.1.1.0] — 2026-07-25
 
 ### Added (PAT-7 · Phase 1 · D1 — Web ops console)
