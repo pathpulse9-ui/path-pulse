@@ -2,6 +2,21 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.4.0] — 2026-07-31
+
+### Added (PAT-13 · Phase 4 · D6 — Settlement engine + SCOUT multipliers)
+- Deterministic **50 / 30 / 20** settlement engine (`stellar/settlement.ts`): 50% Authorities, 30% Driver Rewards, 20% Treasury, computed in integer stroops so parts sum to gross exactly. Driver pool split by SCOUT reputation multiplier (tier 1/2/3 → 1.0× / 1.2× / 1.5×). Executes as one multi-operation Stellar tx.
+- `POST /v1/settlement/batches` (execute), `GET /v1/settlement/batches` (list, cursor-paged), `GET /v1/settlement/batches/{id}` (drill-down) — plus a settlement **indexer v1** (in-memory; feeds D8).
+- Settlement funded from a dev-tier source account (testnet), keeping the real treasury multisig untouched/human-gated.
+- Web **Settlement Explorer**: batch list + Source → Split → Driver drill-down with per-driver tier/multiplier/payout, and a reviewer-facing "run sample settlement" action.
+- Contract: settlement types + OpenAPI paths/schemas; added `packages/contract/tsconfig.json` so the contract workspace typechecks in CI.
+
+### Fixed
+- Dev-tier `userId` derivation now hashes the Privy token (sha256) instead of truncating its hex, so distinct tokens no longer collide onto the same managed wallet.
+
+### Verified
+- End-to-end on testnet (backend and via the ops-console UI): 100 XLM → 50/30/20 split; 3 distinct drivers weighted 1.0/1.2/1.5, payouts summing to exactly 30; single 5-op tx `successful` and publicly verifiable on Horizon.
+
 ## [0.1.3.0] — 2026-07-31
 
 ### Added (PAT-5 · Phase 1 · D1 — Delegated signing endpoints)
