@@ -2,6 +2,18 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.3.0] — 2026-07-31
+
+### Added (PAT-5 · Phase 1 · D1 — Delegated signing endpoints)
+- `POST /v1/tx/build` — builds a transaction from the caller's managed wallet and **delegate-signs** it (payment / createAccount / changeTrust operations, optional memo); returns signed XDR + hash.
+- `POST /v1/tx/submit` — submits a signed envelope (managed or external-wallet) to Horizon; returns hash, `successful`, ledger, and explorer URL.
+- Dev-tier **managed wallet provider** (`stellar/managed.ts`) simulating Privy embedded wallets: per-user testnet keypair, Friendbot-funded on first onboard, backend-signable via the `Signer` interface (in-memory secrets, testnet-only; mainnet uses Privy/KMS).
+- `POST /v1/onboard` now returns a **real provisioned + funded** managed wallet address.
+- Request validation via zod; `ZodError` mapped to `400 ValidationError`; `AccountNotFound` (404) and `HorizonRejected` (422) surfaced cleanly.
+
+### Verified
+- End-to-end on testnet: onboard → build (delegate-signed) → submit → tx `successful`, publicly verifiable on Horizon (1 backend signature).
+
 ## [0.1.2.0] — 2026-07-31
 
 ### Added (PAT-9 · Phase 2 · D2 — Wallet interoperability)
