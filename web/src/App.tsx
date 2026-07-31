@@ -4,10 +4,10 @@ import { AuthProvider } from './auth/AuthContext';
 import { RequireAuth } from './auth/RequireAuth';
 import { Layout } from './ui/Layout';
 import { Dashboard } from './pages/Dashboard';
+import { Settlement } from './pages/Settlement';
 import {
   Payouts,
   OffRamp,
-  Settlement,
   GovGateway,
 } from './pages/Placeholders';
 
