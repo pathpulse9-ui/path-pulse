@@ -3,16 +3,6 @@ import { EmptyState } from '../ui/components';
 /** Phase surfaces that land in later tickets. Each is routed now so the shell
  *  structure (and auth gate) is complete from Phase 1. */
 
-export function WalletInterop() {
-  return (
-    <Placeholder
-      title="Wallet Interoperability"
-      phase="Phase 2 · PAT-9"
-      body="Stellar Wallets Kit demo (Freighter / Lobstr). The working vanilla-TS prototype is preserved in src/legacy/wallet-demo.ts and gets ported into this surface in PAT-9."
-    />
-  );
-}
-
 export function Payouts() {
   return (
     <Placeholder
