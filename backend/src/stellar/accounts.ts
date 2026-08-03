@@ -18,7 +18,7 @@ const ROLE_TO_PUBLIC: Record<DistributionAccountRole, string> = {
   treasury: env.distribution.treasury,
 };
 
-/** On-chain: does this account have a multisig signer set (more than the master key)? */
+/** On-chain: does this account have a multisig signer set */
 async function hasMultisig(publicKey: string): Promise<boolean> {
   if (!publicKey || !(await accountExists(publicKey))) return false;
   const acct = await horizon.loadAccount(publicKey);
@@ -63,6 +63,7 @@ export async function getTreasuryConfig(): Promise<TreasuryConfig> {
  *
  * Returns base64 XDR for review.
  */
+
 export async function buildTreasuryMultisigTx(): Promise<{ xdr: string }> {
   const publicKey = env.distribution.treasury;
   if (!publicKey) throw new Error('TREASURY_PUBLIC not configured');
@@ -77,7 +78,6 @@ export async function buildTreasuryMultisigTx(): Promise<{ xdr: string }> {
     networkPassphrase: env.networkPassphrase,
   });
 
-  // Add each additional signer with weight 1.
   for (const signerKey of signers) {
     if (signerKey === publicKey) continue;
     builder.addOperation(
@@ -87,7 +87,6 @@ export async function buildTreasuryMultisigTx(): Promise<{ xdr: string }> {
     );
   }
 
-  // Master key weight 1; thresholds require ≥ 2 signatures for any operation.
   builder.addOperation(
     Operation.setOptions({
       masterWeight: 1,

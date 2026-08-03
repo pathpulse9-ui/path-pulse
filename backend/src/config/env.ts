@@ -53,14 +53,29 @@ export const env = {
     },
   },
 
-  // dev | aws-kms | gcp-kms | hsm  — Phase 1 uses dev tier.
   signerBackend: process.env.SIGNER_BACKEND ?? 'dev',
 
-  privy: {
-    appId: process.env.PRIVY_APP_ID ?? '',
-    appSecret: process.env.PRIVY_APP_SECRET ?? '',
+  webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',
+
+  session: {
+    secret: process.env.SESSION_SECRET ?? 'dev-insecure-session-secret-change-me',
+    cookieName: 'pathpulse_session',
+    maxAgeSeconds: 7 * 24 * 60 * 60,
+  },
+
+  sep10: {
+    signingSecret: process.env.SEP10_SIGNING_SECRET ?? '',
+    homeDomain: process.env.SEP10_HOME_DOMAIN ?? 'localhost:8080',
+  },
+
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
 } as const;
+
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET must be set in production');
+}
 
 export const isMainnet = env.network === 'mainnet';
 export const horizonTxUrl = (hash: string) =>
