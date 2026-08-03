@@ -227,6 +227,15 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OffRampSession' }
+  /v1/offramp/callback:
+    post:
+      summary: Mercuryo callback (webhook); X-Signature HMAC-verified
+      operationId: offRampCallback
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: Invalid signature
 components:
   schemas:
     HealthResponse:
@@ -437,6 +446,7 @@ components:
         fiatCurrency: { type: string }
         fiatAmountEstimate: { type: string }
         anchorAccount: { type: string }
+        merchantTransactionId: { type: string }
         settlementBatchId: { type: string }
         stellarTxHash: { type: string }
         createdAt: { type: string }

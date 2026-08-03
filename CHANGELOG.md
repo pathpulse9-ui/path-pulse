@@ -4,17 +4,17 @@ All notable changes to PathPulse are documented here.
 
 ## [0.1.6.0] — 2026-08-03
 
-### Added (PAT-11 · Phase 3 · D4 — Mercuryo SEP-24 off-ramp)
-- Off-ramp orchestration behind an `OffRampProvider` interface (`backend/src/services/offramp.ts`): SEP-24 interactive withdrawal (stablecoin → fiat), in-memory session index, optional link to a settlement batch (validated → 404 if unknown).
-- **Sandbox stub** (active until Mercuryo credentials land): simulates the interactive URL, an anchor account, a fiat estimate, and status progression (`pending_user_transfer_start → pending_anchor → completed`). A live-Mercuryo provider is stubbed behind the same interface (`501` until `MERCURYO_*` env is set).
-- Endpoints: `POST /v1/offramp/sessions`, `GET /v1/offramp/sessions`, `GET /v1/offramp/sessions/{id}`; contract types + OpenAPI.
-- Web **Off-ramp Reconciliation** page (`web/app/offramp/page.tsx`): withdraw form, live status polling, fiat estimate, anchor + settlement links; nav link.
-- `.env.example`: documented the `MERCURYO_*` / `OFFRAMP_*` vars (blank ⇒ sandbox).
+### Added (PAT-11 · Phase 3 · D4 — Mercuryo off-ramp)
+- Off-ramp orchestration behind an `OffRampProvider` interface (`backend/src/services/offramp.ts`): in-memory session index, optional link to a settlement batch (validated → 404 if unknown).
+- **Mercuryo B2B REST client** (`backend/src/services/mercuryo.ts`) implementing the real off-ramp flow per the v1.6 spec: `sign-in`/`sign-up` (Sdk-Partner-Token) → `GET /b2b/oor/sell-rates` (trx_token) → `POST /b2b/oor/sell` (hosted redirect) → status via `GET /b2b/transactions`. Mercuryo is a **card-based** ramp, **not** a Stellar SEP-24 anchor — the integration was corrected to match.
+- **Callback webhook** `POST /v1/offramp/callback` verifying the `X-Signature` (HMAC-SHA256 over the **raw** body) before applying status. Raw-body capture added to `express.json`.
+- **Sandbox stub** (active until an Sdk-Partner-Token + whitelisted IP land): simulates the redirect + status progression so the flow is demoable; live provider calls the real Mercuryo API when `MERCURYO_SDK_PARTNER_TOKEN` is set.
+- Endpoints `POST/GET /v1/offramp/sessions[/:id]` + callback; contract types + OpenAPI; web Off-ramp page (withdraw form, live polling, fiat estimate); `.env.example` documents `MERCURYO_*` / `OFFRAMP_*`.
 
-### Verified (sandbox, testnet)
-- Create 30 & 50 USDC → INR withdrawals (estimate = amount × indicative rate); status auto-advances to `completed` via polling in the UI; settlement-link validation returns 404 for an unknown batch. `tsc` clean (all workspaces).
+### Verified
+- Callback signature gate: valid `X-Signature` → 200, invalid → 401 (raw-body HMAC). Sandbox create + status progression work end-to-end in the UI. `tsc` clean (all workspaces). Live Mercuryo REST calls implemented to spec but **untested pending sandbox partner token + IP whitelist**.
 
-> External dependency: **live off-ramp is blocked on Mercuryo onboarding** (SEP-24 anchor URL + widget id/secret + KYC). The stub keeps the flow demoable meanwhile.
+> ⚠️ **Open architecture question:** Mercuryo's sandbox lists BTC/ETH/USDT only — **Stellar assets may not be supported** for off-ramp. Confirm via `GET /b2b/currencies` before relying on it for Stellar-USDC settlement payouts. If unsupported, either bridge to a Mercuryo asset or use a Stellar-native anchor.
 
 ## [0.1.5.1] — 2026-08-03
 

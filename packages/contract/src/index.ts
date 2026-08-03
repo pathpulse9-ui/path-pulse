@@ -214,8 +214,10 @@ export interface OffRampSession {
   fiatCurrency: string;
   /** Estimated fiat the user receives, 2-decimal string (indicative). */
   fiatAmountEstimate?: string;
-  /** Anchor Stellar account the user sends the stablecoin to. */
+  /** Anchor / deposit account the user sends the crypto to. */
   anchorAccount?: string;
+  /** Mercuryo merchant_transaction_id (for status polling + callback correlation). */
+  merchantTransactionId?: string;
   settlementBatchId?: string;
   /** Stellar tx of the user's transfer to the anchor, once known. */
   stellarTxHash?: string;

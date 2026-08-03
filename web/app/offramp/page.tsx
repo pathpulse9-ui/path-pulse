@@ -7,8 +7,8 @@ import { listOffRampSessions, getOffRampSession, createOffRampWithdrawal } from 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 const STATUS_LABEL: Record<OffRampStatus, string> = {
-  pending_user_transfer_start: 'Awaiting your stablecoin transfer',
-  pending_anchor: 'Anchor converting → fiat',
+  pending_user_transfer_start: 'Awaiting your crypto transfer',
+  pending_anchor: 'Mercuryo converting → fiat',
   completed: 'Completed',
   error: 'Error',
 };
@@ -87,9 +87,9 @@ export default function OffRampPage() {
             </span>
           </h1>
           <p className="text-sm text-gray-600 mt-1">
-            PAT-11 · D4 — Mercuryo SEP-24 interactive withdrawal (stablecoin → fiat). Mercuryo owns
-            KYC / conversion / custody. Running against the <strong>sandbox stub</strong> until live
-            credentials land.
+            PAT-11 · D4 — Mercuryo off-ramp (sell crypto → fiat to card). Mercuryo owns
+            KYC / conversion / custody via its hosted flow. Running against the{' '}
+            <strong>sandbox stub</strong> until an Sdk-Partner-Token + whitelisted IP land.
           </p>
         </div>
 

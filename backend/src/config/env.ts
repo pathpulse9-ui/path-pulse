@@ -72,30 +72,28 @@ export const env = {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
 
-  // Mercuryo SEP-24 off-ramp (D4). All optional — when credentials are absent the
-  // off-ramp runs against an in-process sandbox stub (external-dependency guard).
+  // Mercuryo On/Off-Ramp B2B REST API (D4). NOTE: Mercuryo is a card-based ramp
+  // (sign-in → sell-rates → sell → hosted redirect + callbacks), NOT a Stellar
+  // SEP-24 anchor. All optional — absent credentials ⇒ in-process sandbox stub.
   mercuryo: {
-    // SEP-24 transfer server (anchor TRANSFER_SERVER_SEP0024) + its home domain / TOML.
-    sep24TransferServer: process.env.MERCURYO_SEP24_URL ?? '',
-    homeDomain: process.env.MERCURYO_HOME_DOMAIN ?? '',
-    // Widget/API credentials (used to sign the hosted interactive URL).
-    widgetId: process.env.MERCURYO_WIDGET_ID ?? '',
-    secret: process.env.MERCURYO_SECRET ?? '',
-    baseUrl: process.env.MERCURYO_BASE_URL ?? '',
-    // Corridor defaults.
-    defaultFiat: process.env.OFFRAMP_FIAT ?? 'INR',
-    // Indicative fiat received per 1 stablecoin unit (sandbox estimate only).
+    apiUrl: process.env.MERCURYO_API_URL ?? 'https://sandbox-api.mrcr.io/v1.6',
+    // Sdk-Partner-Token: signs sign-up / sign-in (from your integration manager).
+    sdkPartnerToken: process.env.MERCURYO_SDK_PARTNER_TOKEN ?? '',
+    // Callback (webhook) HMAC key used to verify the X-Signature header.
+    callbackSignKey: process.env.MERCURYO_CALLBACK_SIGN_KEY ?? '',
+    partnerName: process.env.MERCURYO_PARTNER_NAME ?? 'PathPulse',
+    // Corridor: the crypto Mercuryo actually off-ramps, its network, and target fiat.
+    // (Confirm via GET /b2b/currencies — Stellar may not be supported; see docs.)
+    crypto: process.env.OFFRAMP_CRYPTO ?? 'USDT',
+    network: process.env.OFFRAMP_NETWORK ?? 'ETHEREUM',
+    fiat: process.env.OFFRAMP_FIAT ?? 'INR',
+    // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live uses sell-rates).
     indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 83),
-    defaultAsset: {
-      code: process.env.OFFRAMP_ASSET_CODE ?? 'USDC',
-      issuer: process.env.OFFRAMP_ASSET_ISSUER ?? '',
-    },
   },
 } as const;
 
-/** Live Mercuryo requires both a transfer server and signing credentials; else sandbox stub. */
-export const mercuryoLive =
-  !!process.env.MERCURYO_SEP24_URL && !!process.env.MERCURYO_WIDGET_ID && !!process.env.MERCURYO_SECRET;
+/** Live Mercuryo requires the SDK partner token + API URL; otherwise the sandbox stub runs. */
+export const mercuryoLive = !!process.env.MERCURYO_SDK_PARTNER_TOKEN && !!process.env.MERCURYO_API_URL;
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be set in production');
