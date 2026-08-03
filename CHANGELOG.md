@@ -2,6 +2,16 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.5.0] — 2026-08-03
+
+### Added (PAT-13 · D6 — Settlement Explorer re-integrated into the Next.js app)
+- Ported the Settlement Explorer to the current Next.js/React 19/Tailwind web app (`web/app/settlement/page.tsx`) after the web rewrite dropped the earlier Vite version. Batch list + Source → Split → Driver drill-down (per-driver SCOUT tier / multiplier / payout), reading the live settlement API.
+- Reviewer "run sample settlement" action now generates + Friendbot-funds 3 driver accounts client-side (the old `/v1/onboard` was removed in the auth pivot) and executes a 100 XLM 50/30/20 split.
+- Settlement methods added to `web/app/lib/api.ts` (contract-typed); top nav link in `web/app/layout.tsx`.
+
+### Verified
+- End-to-end in the Next.js app on testnet: 100 XLM → 50/30/20; 3 distinct drivers 1.0/1.2/1.5 → 8.1081082 + 9.7297297 + 12.1621621 = 30.0000000; single multi-op tx on Horizon. `tsc` clean.
+
 ## [0.1.4.0] — 2026-07-31
 
 ### Added (PAT-13 · Phase 4 · D6 — Settlement engine + SCOUT multipliers)
