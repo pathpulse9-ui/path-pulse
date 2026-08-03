@@ -2,6 +2,11 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.5.1] — 2026-08-03
+
+### Docs
+- Updated `docs/API_ARCHITECTURE.md` for the auth pivot: **httpOnly cookie sessions** (no Bearer/refresh token), **Google sign-in (custodial)** + **SEP-10 wallet connect (non-custodial)** replacing the old Privy/`/v1/onboard` model. Refreshed the endpoint catalog (auth + `/v1/tx/*` + `/v1/settlement/*` now marked live), core data shapes (session + settlement types), custody boundary for delegated signing, environments (pnpm, Next.js `NEXT_PUBLIC_API_URL`, cookie/CORS), and non-negotiables.
+
 ## [0.1.5.0] — 2026-08-03
 
 ### Added (PAT-13 · D6 — Settlement Explorer re-integrated into the Next.js app)
