@@ -64,7 +64,6 @@ export default function OffRampPage() {
     try {
       const session = await createOffRampWithdrawal({
         amount,
-        fiatCurrency: 'INR',
         settlementBatchId: batchId.trim() || undefined,
       });
       setSelected(session);
@@ -118,7 +117,7 @@ export default function OffRampPage() {
               disabled={busy}
               className="rounded bg-black px-4 py-1.5 text-white text-sm font-medium disabled:opacity-50"
             >
-              {busy ? 'Starting…' : 'Withdraw to INR'}
+              {busy ? 'Starting…' : 'Sell to fiat'}
             </button>
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}

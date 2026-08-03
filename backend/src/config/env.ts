@@ -82,13 +82,13 @@ export const env = {
     // Callback (webhook) HMAC key used to verify the X-Signature header.
     callbackSignKey: process.env.MERCURYO_CALLBACK_SIGN_KEY ?? '',
     partnerName: process.env.MERCURYO_PARTNER_NAME ?? 'PathPulse',
-    // Corridor: the crypto Mercuryo actually off-ramps, its network, and target fiat.
-    // (Confirm via GET /b2b/currencies — Stellar may not be supported; see docs.)
-    crypto: process.env.OFFRAMP_CRYPTO ?? 'USDT',
-    network: process.env.OFFRAMP_NETWORK ?? 'ETHEREUM',
-    fiat: process.env.OFFRAMP_FIAT ?? 'INR',
-    // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live uses sell-rates).
-    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 83),
+    // Corridor. Mercuryo supports USDC on Stellar; off-ramp fiat is EUR/USD (NOT INR).
+    // Confirm the exact network label + pairs via GET /b2b/currencies.
+    crypto: process.env.OFFRAMP_CRYPTO ?? 'USDC',
+    network: process.env.OFFRAMP_NETWORK ?? 'STELLAR',
+    fiat: process.env.OFFRAMP_FIAT ?? 'EUR',
+    // Indicative fiat per 1 USDC — sandbox stub estimate only (live uses sell-rates).
+    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 0.92),
   },
 } as const;
 
