@@ -125,3 +125,58 @@ export interface HealthResponse {
   horizon: string;
   version: string;
 }
+
+// ── Settlement engine & SCOUT reputation (D6) ─────────────────────────
+
+/** SCOUT reputation tiers → on-chain reward multipliers. */
+export type ScoutTier = 1 | 2 | 3;
+export const SCOUT_MULTIPLIER: Record<ScoutTier, number> = { 1: 1.0, 2: 1.2, 3: 1.5 };
+
+export interface SettlementDriverInput {
+  userId: string;
+  address: string;
+  tier: ScoutTier;
+}
+
+export interface CreateSettlementBatchRequest {
+  /** Gross revenue to settle, as a 7-decimal string. */
+  grossAmount: string;
+  /** Defaults to native XLM on testnet. */
+  asset?: AssetRef;
+  drivers: SettlementDriverInput[];
+}
+
+/** The deterministic 50 / 30 / 20 split, as 7-decimal strings summing to gross. */
+export interface SettlementSplit {
+  authorities: string; // 50%
+  driverRewards: string; // 30%
+  treasury: string; // 20%
+}
+
+export interface SettlementDriverPayout {
+  userId: string;
+  address: string;
+  tier: ScoutTier;
+  multiplier: number;
+  amount: string;
+}
+
+export interface SettlementBatch {
+  id: string;
+  createdAt: string;
+  network: StellarNetwork;
+  grossAmount: string;
+  asset: AssetRef;
+  split: SettlementSplit;
+  driverPayouts: SettlementDriverPayout[];
+  sourceAddress: string;
+  authoritiesAddress: string;
+  treasuryAddress: string;
+  txHash: string;
+  horizonUrl: string;
+}
+
+export interface SettlementBatchPage {
+  items: SettlementBatch[];
+  nextCursor: string | null;
+}

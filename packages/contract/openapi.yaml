@@ -135,6 +135,52 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SubmitTransactionResponse' }
+  /v1/settlement/batches:
+    get:
+      summary: List settlement batches (indexer)
+      operationId: listSettlementBatches
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, maximum: 100 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettlementBatchPage' }
+    post:
+      summary: Execute a deterministic 50/30/20 settlement batch
+      operationId: createSettlementBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSettlementBatchRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettlementBatch' }
+  /v1/settlement/batches/{id}:
+    get:
+      summary: Settlement batch drill-down (Treasury → Split → Driver)
+      operationId: getSettlementBatch
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettlementBatch' }
 components:
   schemas:
     HealthResponse:
@@ -252,3 +298,71 @@ components:
         successful: { type: boolean }
         ledger: { type: integer }
         horizonUrl: { type: string }
+    ScoutTier:
+      type: integer
+      enum: [1, 2, 3]
+      description: 'SCOUT reputation tier (multipliers 1.0 / 1.2 / 1.5)'
+    SettlementDriverInput:
+      type: object
+      required: [userId, address, tier]
+      properties:
+        userId: { type: string }
+        address: { type: string }
+        tier: { $ref: '#/components/schemas/ScoutTier' }
+    CreateSettlementBatchRequest:
+      type: object
+      required: [grossAmount, drivers]
+      properties:
+        grossAmount: { type: string }
+        asset: { $ref: '#/components/schemas/AssetRef' }
+        drivers:
+          type: array
+          items: { $ref: '#/components/schemas/SettlementDriverInput' }
+    AssetRef:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+        issuer: { type: string }
+    SettlementSplit:
+      type: object
+      required: [authorities, driverRewards, treasury]
+      properties:
+        authorities: { type: string }
+        driverRewards: { type: string }
+        treasury: { type: string }
+    SettlementDriverPayout:
+      type: object
+      required: [userId, address, tier, multiplier, amount]
+      properties:
+        userId: { type: string }
+        address: { type: string }
+        tier: { $ref: '#/components/schemas/ScoutTier' }
+        multiplier: { type: number }
+        amount: { type: string }
+    SettlementBatch:
+      type: object
+      required: [id, createdAt, network, grossAmount, asset, split, driverPayouts, sourceAddress, authoritiesAddress, treasuryAddress, txHash, horizonUrl]
+      properties:
+        id: { type: string }
+        createdAt: { type: string }
+        network: { type: string, enum: [testnet, mainnet] }
+        grossAmount: { type: string }
+        asset: { $ref: '#/components/schemas/AssetRef' }
+        split: { $ref: '#/components/schemas/SettlementSplit' }
+        driverPayouts:
+          type: array
+          items: { $ref: '#/components/schemas/SettlementDriverPayout' }
+        sourceAddress: { type: string }
+        authoritiesAddress: { type: string }
+        treasuryAddress: { type: string }
+        txHash: { type: string }
+        horizonUrl: { type: string }
+    SettlementBatchPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SettlementBatch' }
+        nextCursor: { type: string, nullable: true }
