@@ -21,6 +21,7 @@ export default function RootLayout({
             <Link href="/" className="font-semibold">PathPulse</Link>
             <Link href="/" className="text-gray-600 hover:text-black">Wallet</Link>
             <Link href="/settlement" className="text-gray-600 hover:text-black">Settlement Explorer</Link>
+            <Link href="/offramp" className="text-gray-600 hover:text-black">Off-ramp</Link>
           </nav>
           {children}
         </SessionProvider>

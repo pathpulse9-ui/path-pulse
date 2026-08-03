@@ -180,3 +180,52 @@ export interface SettlementBatchPage {
   items: SettlementBatch[];
   nextCursor: string | null;
 }
+
+// ── Fiat off-ramp (D4 — Mercuryo SEP-24) ──────────────────────────────
+
+/** SEP-24 interactive withdrawal lifecycle (subset used by PathPulse). */
+export type OffRampStatus =
+  | 'pending_user_transfer_start' // user must send stablecoin to the anchor
+  | 'pending_anchor' // anchor is converting + paying out fiat
+  | 'completed'
+  | 'error';
+
+export interface CreateOffRampWithdrawalRequest {
+  /** Stablecoin amount to off-ramp, 7-decimal string. */
+  amount: string;
+  /** Stablecoin to withdraw (defaults to USDC on testnet). */
+  asset?: AssetRef;
+  /** Fiat currency to receive (e.g. "INR"). Defaults to the backend's configured corridor. */
+  fiatCurrency?: string;
+  /** Optional link to the settlement batch this withdrawal draws from. */
+  settlementBatchId?: string;
+}
+
+export interface OffRampSession {
+  id: string;
+  provider: 'mercuryo';
+  /** true when running against the sandbox stub (no live Mercuryo credentials). */
+  sandbox: boolean;
+  status: OffRampStatus;
+  /** Hosted SEP-24 interactive URL (KYC + bank details + conversion). */
+  interactiveUrl: string;
+  amount: string;
+  asset: AssetRef;
+  fiatCurrency: string;
+  /** Estimated fiat the user receives, 2-decimal string (indicative). */
+  fiatAmountEstimate?: string;
+  /** Anchor / deposit account the user sends the crypto to. */
+  anchorAccount?: string;
+  /** Mercuryo merchant_transaction_id (for status polling + callback correlation). */
+  merchantTransactionId?: string;
+  settlementBatchId?: string;
+  /** Stellar tx of the user's transfer to the anchor, once known. */
+  stellarTxHash?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OffRampSessionPage {
+  items: OffRampSession[];
+  nextCursor: string | null;
+}

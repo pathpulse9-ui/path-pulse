@@ -181,6 +181,61 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SettlementBatch' }
+  /v1/offramp/sessions:
+    get:
+      summary: List fiat off-ramp withdrawal sessions
+      operationId: listOffRampSessions
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, maximum: 100 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OffRampSessionPage' }
+    post:
+      summary: Start a Mercuryo SEP-24 interactive withdrawal
+      operationId: createOffRampWithdrawal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOffRampWithdrawalRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OffRampSession' }
+  /v1/offramp/sessions/{id}:
+    get:
+      summary: Off-ramp session status (polled)
+      operationId: getOffRampSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OffRampSession' }
+  /v1/offramp/callback:
+    post:
+      summary: Mercuryo callback (webhook); X-Signature HMAC-verified
+      operationId: offRampCallback
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: Invalid signature
 components:
   schemas:
     HealthResponse:
@@ -365,4 +420,42 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/SettlementBatch' }
+        nextCursor: { type: string, nullable: true }
+    OffRampStatus:
+      type: string
+      enum: [pending_user_transfer_start, pending_anchor, completed, error]
+    CreateOffRampWithdrawalRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount: { type: string }
+        asset: { $ref: '#/components/schemas/AssetRef' }
+        fiatCurrency: { type: string }
+        settlementBatchId: { type: string }
+    OffRampSession:
+      type: object
+      required: [id, provider, sandbox, status, interactiveUrl, amount, asset, fiatCurrency, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        provider: { type: string, enum: [mercuryo] }
+        sandbox: { type: boolean }
+        status: { $ref: '#/components/schemas/OffRampStatus' }
+        interactiveUrl: { type: string }
+        amount: { type: string }
+        asset: { $ref: '#/components/schemas/AssetRef' }
+        fiatCurrency: { type: string }
+        fiatAmountEstimate: { type: string }
+        anchorAccount: { type: string }
+        merchantTransactionId: { type: string }
+        settlementBatchId: { type: string }
+        stellarTxHash: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    OffRampSessionPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OffRampSession' }
         nextCursor: { type: string, nullable: true }
