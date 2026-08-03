@@ -2,6 +2,20 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.6.0] — 2026-08-03
+
+### Added (PAT-11 · Phase 3 · D4 — Mercuryo SEP-24 off-ramp)
+- Off-ramp orchestration behind an `OffRampProvider` interface (`backend/src/services/offramp.ts`): SEP-24 interactive withdrawal (stablecoin → fiat), in-memory session index, optional link to a settlement batch (validated → 404 if unknown).
+- **Sandbox stub** (active until Mercuryo credentials land): simulates the interactive URL, an anchor account, a fiat estimate, and status progression (`pending_user_transfer_start → pending_anchor → completed`). A live-Mercuryo provider is stubbed behind the same interface (`501` until `MERCURYO_*` env is set).
+- Endpoints: `POST /v1/offramp/sessions`, `GET /v1/offramp/sessions`, `GET /v1/offramp/sessions/{id}`; contract types + OpenAPI.
+- Web **Off-ramp Reconciliation** page (`web/app/offramp/page.tsx`): withdraw form, live status polling, fiat estimate, anchor + settlement links; nav link.
+- `.env.example`: documented the `MERCURYO_*` / `OFFRAMP_*` vars (blank ⇒ sandbox).
+
+### Verified (sandbox, testnet)
+- Create 30 & 50 USDC → INR withdrawals (estimate = amount × indicative rate); status auto-advances to `completed` via polling in the UI; settlement-link validation returns 404 for an unknown batch. `tsc` clean (all workspaces).
+
+> External dependency: **live off-ramp is blocked on Mercuryo onboarding** (SEP-24 anchor URL + widget id/secret + KYC). The stub keeps the flow demoable meanwhile.
+
 ## [0.1.5.1] — 2026-08-03
 
 ### Docs

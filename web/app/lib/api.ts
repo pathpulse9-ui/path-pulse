@@ -8,6 +8,9 @@ import type {
   SettlementBatch,
   SettlementBatchPage,
   CreateSettlementBatchRequest,
+  OffRampSession,
+  OffRampSessionPage,
+  CreateOffRampWithdrawalRequest,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -67,6 +70,23 @@ export function getSettlementBatch(id: string) {
 
 export function createSettlementBatch(req: CreateSettlementBatchRequest) {
   return apiFetch<SettlementBatch>('/v1/settlement/batches', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+// ── Off-ramp (D4 — Mercuryo SEP-24) ───────────────────────────────────
+
+export function listOffRampSessions(limit = 50) {
+  return apiFetch<OffRampSessionPage>(`/v1/offramp/sessions?limit=${limit}`);
+}
+
+export function getOffRampSession(id: string) {
+  return apiFetch<OffRampSession>(`/v1/offramp/sessions/${id}`);
+}
+
+export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest) {
+  return apiFetch<OffRampSession>('/v1/offramp/sessions', {
     method: 'POST',
     body: JSON.stringify(req),
   });

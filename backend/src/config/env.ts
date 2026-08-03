@@ -71,7 +71,31 @@ export const env = {
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
+
+  // Mercuryo SEP-24 off-ramp (D4). All optional — when credentials are absent the
+  // off-ramp runs against an in-process sandbox stub (external-dependency guard).
+  mercuryo: {
+    // SEP-24 transfer server (anchor TRANSFER_SERVER_SEP0024) + its home domain / TOML.
+    sep24TransferServer: process.env.MERCURYO_SEP24_URL ?? '',
+    homeDomain: process.env.MERCURYO_HOME_DOMAIN ?? '',
+    // Widget/API credentials (used to sign the hosted interactive URL).
+    widgetId: process.env.MERCURYO_WIDGET_ID ?? '',
+    secret: process.env.MERCURYO_SECRET ?? '',
+    baseUrl: process.env.MERCURYO_BASE_URL ?? '',
+    // Corridor defaults.
+    defaultFiat: process.env.OFFRAMP_FIAT ?? 'INR',
+    // Indicative fiat received per 1 stablecoin unit (sandbox estimate only).
+    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 83),
+    defaultAsset: {
+      code: process.env.OFFRAMP_ASSET_CODE ?? 'USDC',
+      issuer: process.env.OFFRAMP_ASSET_ISSUER ?? '',
+    },
+  },
 } as const;
+
+/** Live Mercuryo requires both a transfer server and signing credentials; else sandbox stub. */
+export const mercuryoLive =
+  !!process.env.MERCURYO_SEP24_URL && !!process.env.MERCURYO_WIDGET_ID && !!process.env.MERCURYO_SECRET;
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be set in production');

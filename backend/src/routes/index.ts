@@ -29,6 +29,11 @@ import {
   listSettlementBatches,
   getSettlementBatch,
 } from '../stellar/settlement.js';
+import {
+  createWithdrawal,
+  listWithdrawals,
+  getWithdrawal,
+} from '../services/offramp.js';
 
 export const router = Router();
 
@@ -185,6 +190,43 @@ router.get('/v1/settlement/batches', (req, res, next) => {
 router.get('/v1/settlement/batches/:id', (req, res, next) => {
   try {
     res.json(getSettlementBatch(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Fiat off-ramp (D4 — Mercuryo SEP-24): start an interactive withdrawal, list, poll.
+const createWithdrawalSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  asset: assetRefOptional(),
+  fiatCurrency: z.string().optional(),
+  settlementBatchId: z.string().optional(),
+});
+
+router.post('/v1/offramp/sessions', async (req, res, next) => {
+  try {
+    const parsed = createWithdrawalSchema.parse(req.body);
+    const session = getSessionFromRequest(req);
+    const userId = session?.userId ?? 'sandbox-user';
+    res.json(await createWithdrawal(userId, parsed));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/offramp/sessions', (req, res, next) => {
+  try {
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(listWithdrawals(cursor, limit));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/offramp/sessions/:id', (req, res, next) => {
+  try {
+    res.json(getWithdrawal(req.params.id));
   } catch (e) {
     next(e);
   }
