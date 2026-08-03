@@ -5,6 +5,9 @@ import type {
   WalletVerifyRequest,
   WalletVerifyResponse,
   AuthMeResponse,
+  SettlementBatch,
+  SettlementBatchPage,
+  CreateSettlementBatchRequest,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -50,4 +53,21 @@ export function getSessionUser() {
 
 export function logout() {
   return apiFetch<{ ok: true }>('/v1/auth/logout', { method: 'POST' });
+}
+
+// ── Settlement (D6) ───────────────────────────────────────────────────
+
+export function listSettlementBatches(limit = 50) {
+  return apiFetch<SettlementBatchPage>(`/v1/settlement/batches?limit=${limit}`);
+}
+
+export function getSettlementBatch(id: string) {
+  return apiFetch<SettlementBatch>(`/v1/settlement/batches/${id}`);
+}
+
+export function createSettlementBatch(req: CreateSettlementBatchRequest) {
+  return apiFetch<SettlementBatch>('/v1/settlement/batches', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
 }
