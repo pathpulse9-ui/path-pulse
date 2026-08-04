@@ -68,24 +68,26 @@ export default function GoogleLogin() {
 
   if (sessionLoading) {
     return (
-      <div className="rounded border border-gray-200 p-4">
-        <p className="text-sm text-gray-500">Loading…</p>
+      <div className="rounded-2xl bg-white p-6">
+        <p className="text-sm text-black/50">Loading…</p>
       </div>
     );
   }
 
   if (user?.method === 'google') {
     return (
-      <div className="rounded border border-gray-200 p-4 space-y-3">
-        <h2 className="font-semibold">Google Login (Custodial)</h2>
-        <p className="text-sm text-green-700">
+      <div className="rounded-2xl bg-white p-6 space-y-3">
+        <h2 className="text-black text-lg font-medium" style={{ letterSpacing: '-0.02em' }}>
+          Google Login <span className="text-black/40 font-normal">(Custodial)</span>
+        </h2>
+        <p className="text-sm text-black/70">
           Signed in as <strong>{user.email}</strong>
           <br />
-          Public key: <code className="text-xs break-all">{user.address}</code>
+          Public key: <code className="text-xs break-all text-black/50">{user.address}</code>
         </p>
         <button
           onClick={logout}
-          className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+          className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
         >
           Sign out
         </button>
@@ -94,9 +96,11 @@ export default function GoogleLogin() {
   }
 
   return (
-    <div className="rounded border border-gray-200 p-4 space-y-3">
-      <h2 className="font-semibold">Google Login (Custodial)</h2>
-      <p className="text-sm text-gray-600">
+    <div className="rounded-2xl bg-white p-6 space-y-3">
+      <h2 className="text-black text-lg font-medium" style={{ letterSpacing: '-0.02em' }}>
+        Google Login <span className="text-black/40 font-normal">(Custodial)</span>
+      </h2>
+      <p className="text-sm text-black/60">
         Sign in with Google. We provision and hold a Stellar wallet for you, tied to your
         Google account.
       </p>
