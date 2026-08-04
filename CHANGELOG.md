@@ -2,6 +2,35 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.6.0] — 2026-08-03
+
+### Added (PAT-11 · Phase 3 · D4 — Mercuryo off-ramp)
+- Off-ramp orchestration behind an `OffRampProvider` interface (`backend/src/services/offramp.ts`): in-memory session index, optional link to a settlement batch (validated → 404 if unknown).
+- **Mercuryo B2B REST client** (`backend/src/services/mercuryo.ts`) implementing the real off-ramp flow per the v1.6 spec: `sign-in`/`sign-up` (Sdk-Partner-Token) → `GET /b2b/oor/sell-rates` (trx_token) → `POST /b2b/oor/sell` (hosted redirect) → status via `GET /b2b/transactions`. Mercuryo is a **card-based** ramp, **not** a Stellar SEP-24 anchor — the integration was corrected to match.
+- **Callback webhook** `POST /v1/offramp/callback` verifying the `X-Signature` (HMAC-SHA256 over the **raw** body) before applying status. Raw-body capture added to `express.json`.
+- **Sandbox stub** (active until an Sdk-Partner-Token + whitelisted IP land): simulates the redirect + status progression so the flow is demoable; live provider calls the real Mercuryo API when `MERCURYO_SDK_PARTNER_TOKEN` is set.
+- Endpoints `POST/GET /v1/offramp/sessions[/:id]` + callback; contract types + OpenAPI; web Off-ramp page (withdraw form, live polling, fiat estimate); `.env.example` documents `MERCURYO_*` / `OFFRAMP_*`.
+
+### Verified
+- Callback signature gate: valid `X-Signature` → 200, invalid → 401 (raw-body HMAC). Sandbox create + status progression work end-to-end in the UI. `tsc` clean (all workspaces). Live Mercuryo REST calls implemented to spec but **untested pending sandbox partner token + IP whitelist**.
+
+> ⚠️ **Open architecture question:** Mercuryo's sandbox lists BTC/ETH/USDT only — **Stellar assets may not be supported** for off-ramp. Confirm via `GET /b2b/currencies` before relying on it for Stellar-USDC settlement payouts. If unsupported, either bridge to a Mercuryo asset or use a Stellar-native anchor.
+
+## [0.1.5.1] — 2026-08-03
+
+### Docs
+- Updated `docs/API_ARCHITECTURE.md` for the auth pivot: **httpOnly cookie sessions** (no Bearer/refresh token), **Google sign-in (custodial)** + **SEP-10 wallet connect (non-custodial)** replacing the old Privy/`/v1/onboard` model. Refreshed the endpoint catalog (auth + `/v1/tx/*` + `/v1/settlement/*` now marked live), core data shapes (session + settlement types), custody boundary for delegated signing, environments (pnpm, Next.js `NEXT_PUBLIC_API_URL`, cookie/CORS), and non-negotiables.
+
+## [0.1.5.0] — 2026-08-03
+
+### Added (PAT-13 · D6 — Settlement Explorer re-integrated into the Next.js app)
+- Ported the Settlement Explorer to the current Next.js/React 19/Tailwind web app (`web/app/settlement/page.tsx`) after the web rewrite dropped the earlier Vite version. Batch list + Source → Split → Driver drill-down (per-driver SCOUT tier / multiplier / payout), reading the live settlement API.
+- Reviewer "run sample settlement" action now generates + Friendbot-funds 3 driver accounts client-side (the old `/v1/onboard` was removed in the auth pivot) and executes a 100 XLM 50/30/20 split.
+- Settlement methods added to `web/app/lib/api.ts` (contract-typed); top nav link in `web/app/layout.tsx`.
+
+### Verified
+- End-to-end in the Next.js app on testnet: 100 XLM → 50/30/20; 3 distinct drivers 1.0/1.2/1.5 → 8.1081082 + 9.7297297 + 12.1621621 = 30.0000000; single multi-op tx on Horizon. `tsc` clean.
+
 ## [0.1.4.0] — 2026-07-31
 
 ### Added (PAT-13 · Phase 4 · D6 — Settlement engine + SCOUT multipliers)

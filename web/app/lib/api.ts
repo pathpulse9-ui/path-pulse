@@ -5,6 +5,12 @@ import type {
   WalletVerifyRequest,
   WalletVerifyResponse,
   AuthMeResponse,
+  SettlementBatch,
+  SettlementBatchPage,
+  CreateSettlementBatchRequest,
+  OffRampSession,
+  OffRampSessionPage,
+  CreateOffRampWithdrawalRequest,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -50,4 +56,38 @@ export function getSessionUser() {
 
 export function logout() {
   return apiFetch<{ ok: true }>('/v1/auth/logout', { method: 'POST' });
+}
+
+// ── Settlement (D6) ───────────────────────────────────────────────────
+
+export function listSettlementBatches(limit = 50) {
+  return apiFetch<SettlementBatchPage>(`/v1/settlement/batches?limit=${limit}`);
+}
+
+export function getSettlementBatch(id: string) {
+  return apiFetch<SettlementBatch>(`/v1/settlement/batches/${id}`);
+}
+
+export function createSettlementBatch(req: CreateSettlementBatchRequest) {
+  return apiFetch<SettlementBatch>('/v1/settlement/batches', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+// ── Off-ramp (D4 — Mercuryo SEP-24) ───────────────────────────────────
+
+export function listOffRampSessions(limit = 50) {
+  return apiFetch<OffRampSessionPage>(`/v1/offramp/sessions?limit=${limit}`);
+}
+
+export function getOffRampSession(id: string) {
+  return apiFetch<OffRampSession>(`/v1/offramp/sessions/${id}`);
+}
+
+export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest) {
+  return apiFetch<OffRampSession>('/v1/offramp/sessions', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
 }

@@ -71,7 +71,29 @@ export const env = {
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
+
+  // Mercuryo On/Off-Ramp B2B REST API (D4). NOTE: Mercuryo is a card-based ramp
+  // (sign-in → sell-rates → sell → hosted redirect + callbacks), NOT a Stellar
+  // SEP-24 anchor. All optional — absent credentials ⇒ in-process sandbox stub.
+  mercuryo: {
+    apiUrl: process.env.MERCURYO_API_URL ?? 'https://sandbox-api.mrcr.io/v1.6',
+    // Sdk-Partner-Token: signs sign-up / sign-in (from your integration manager).
+    sdkPartnerToken: process.env.MERCURYO_SDK_PARTNER_TOKEN ?? '',
+    // Callback (webhook) HMAC key used to verify the X-Signature header.
+    callbackSignKey: process.env.MERCURYO_CALLBACK_SIGN_KEY ?? '',
+    partnerName: process.env.MERCURYO_PARTNER_NAME ?? 'PathPulse',
+    // Corridor. Mercuryo supports USDC on Stellar; off-ramp fiat is EUR/USD (NOT INR).
+    // Confirm the exact network label + pairs via GET /b2b/currencies.
+    crypto: process.env.OFFRAMP_CRYPTO ?? 'USDC',
+    network: process.env.OFFRAMP_NETWORK ?? 'STELLAR',
+    fiat: process.env.OFFRAMP_FIAT ?? 'EUR',
+    // Indicative fiat per 1 USDC — sandbox stub estimate only (live uses sell-rates).
+    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 0.92),
+  },
 } as const;
+
+/** Live Mercuryo requires the SDK partner token + API URL; otherwise the sandbox stub runs. */
+export const mercuryoLive = !!process.env.MERCURYO_SDK_PARTNER_TOKEN && !!process.env.MERCURYO_API_URL;
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be set in production');

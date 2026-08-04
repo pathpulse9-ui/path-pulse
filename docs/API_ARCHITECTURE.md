@@ -7,6 +7,8 @@
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) (system), [PHASE_PLAN.md](PHASE_PLAN.md) (roadmap/ownership).
 
+> **Stack (current):** monorepo on **pnpm** (`workspace:*` deps). Backend = Node/TS + Express (`pnpm --filter @pathpulse/backend dev`, :8080). Web = **Next.js 16 / React 19 / Tailwind v4**, app-router (`pnpm --dir web dev`, :3000). Auth = **Google sign-in (custodial) + SEP-10 wallet (non-custodial)** — the "Non Custodial" pivot replaced the earlier Privy/`/v1/onboard` model.
+
 ---
 
 ## 0. The one rule: contract-first
@@ -32,7 +34,7 @@ If a client needs a field or endpoint that doesn't exist, the fix is a contract 
 | **Versioning** | All resources under `/v1/…`. `/health` is unversioned. Breaking change ⇒ `/v2`, never a silent shape change. |
 | **Format** | JSON only. Request + response bodies are `application/json`. |
 | **Casing** | `camelCase` for all JSON keys (matches the TS contract). |
-| **Auth** | `Authorization: Bearer <token>` on every `/v1` endpoint except `/v1/onboard`. See §2. |
+| **Auth** | **httpOnly cookie session** (signed JWT set by the backend). Clients send it automatically — web with `credentials: 'include'`, mobile via a cookie jar. **No `Authorization` header.** Public endpoints: `/health`, `/v1/auth/*`. See §2. |
 | **Timestamps** | ISO-8601 UTC, e.g. `2026-07-30T12:00:00Z`. Never epoch, never local time. |
 | **Money / amounts** | **Strings**, 7 decimal places (Stellar precision), e.g. `"12.5000000"`. Never floats — floats lose stroops. |
 | **Assets** | `{ "code": "USDC", "issuer": "G..." }`. Native XLM = `{ "code": "XLM" }` (no issuer). |
@@ -59,44 +61,65 @@ If a client needs a field or endpoint that doesn't exist, the fix is a contract 
 
 ## 2. Auth model
 
-Two audiences, two token types. Both arrive as `Authorization: Bearer <token>`.
+**Two sign-in methods, one session.** Both set the same **httpOnly cookie** holding a signed JWT
+(`{ userId, method, email?, address? }`). Every later request carries that cookie automatically;
+`GET /v1/auth/me` reads it, `POST /v1/auth/logout` clears it. There is no `Authorization` header
+and no refresh token — a session simply expires and the user signs in again.
 
-### Driver apps (Android / iOS / web driver flows)
-1. Client signs the user up **on-device** via the Privy SDK (email/OAuth) → gets a **Privy access token**.
-2. Client calls `POST /v1/onboard` with that token. Backend verifies it with Privy, ensures the managed Stellar wallet exists, and returns the user + a **PathPulse session token** (short-lived JWT) + refresh token.
-3. Client stores the session token (Android: EncryptedSharedPreferences · iOS: Keychain · web: httpOnly cookie or memory) and sends it as `Bearer` on all later calls.
-4. On `401`, client calls `POST /v1/auth/refresh` with the refresh token; if that fails, re-run onboarding.
+The two methods differ in **who holds the key**:
 
-> Phase-1 note: the current backend `/v1/onboard` accepts the Privy token and returns `{ userId, wallet }` with a dev stub. The session-token issuance + `/v1/auth/refresh` land as we wire live Privy. Build clients against the **session-token** model now; treat the Phase-1 stub as transitional.
+### A. Google sign-in — custodial
+1. Client gets a **Google ID token** on-device (Google Identity SDK).
+2. `POST /v1/auth/google/verify { idToken }` → backend verifies it (audience = `GOOGLE_CLIENT_ID`),
+   extracts the email, and **provisions a backend-custodied Stellar account** for that email
+   (Friendbot-funded on testnet). Sets the session cookie (`method: "google"`).
+3. Returns `{ userId, wallet }`. Because the backend holds this key, these accounts can use
+   **delegated signing** (`/v1/tx/*`, §3).
 
-### Ops console (web, internal)
-Separate realm. Operators authenticate at `POST /v1/ops/login` → ops session. Never mixed with driver tokens. (Phase-1 web ships a dev-passcode gate; backend `/v1/ops/login` replaces it in Phase 2.)
+### B. Wallet connect (SEP-10) — non-custodial
+1. `GET /v1/auth/challenge?account=G…` → backend returns a **SEP-10 challenge transaction**
+   (built + signed by the server signing key) + `networkPassphrase`.
+2. Client signs the challenge with its own wallet (Stellar Wallets Kit — Freighter/Lobstr/…).
+3. `POST /v1/auth/wallet/verify { transaction }` → backend verifies the signature (`WebAuth.readChallengeTx`
+   + `verifyChallengeTxSigners`), maps the account to a `userId`, sets the session cookie
+   (`method: "wallet"`). Returns `{ userId, address }`. The user holds the key; the backend never
+   sees it — these users **sign their own transactions client-side** and use `/v1/tx/submit` (§3).
+
+> Current state: sessions + both flows are **live**. The signing key for SEP-10 challenges comes from
+> `SEP10_SIGNING_SECRET` (an ephemeral dev key if unset). Custodial and non-custodial users are
+> distinguished by `session.method`; per-endpoint enforcement of the session is being rolled out
+> as protected routes land.
 
 ```mermaid
 sequenceDiagram
-  participant App as Client (Android/iOS/Web)
-  participant Privy as Privy SDK
+  participant App as Client (web / mobile)
+  participant G as Google
   participant API as Backend Core
-  App->>Privy: email/OAuth sign-up
-  Privy-->>App: Privy access token
-  App->>API: POST /v1/onboard  (Bearer: privyToken)
-  API->>Privy: verify token
-  API->>API: ensure managed Stellar wallet
-  API-->>App: { user, wallet, sessionToken, refreshToken }
-  App->>API: GET /v1/wallets/me  (Bearer: sessionToken)
-  API-->>App: balances
+  Note over App,API: A · Google (custodial)
+  App->>G: sign in
+  G-->>App: idToken
+  App->>API: POST /v1/auth/google/verify { idToken }
+  API->>API: verify · provision custodial wallet · set session cookie
+  API-->>App: { userId, wallet }  (+ Set-Cookie)
+  Note over App,API: B · SEP-10 (non-custodial)
+  App->>API: GET /v1/auth/challenge?account=G…
+  API-->>App: { transaction, networkPassphrase }
+  App->>App: sign challenge with own wallet
+  App->>API: POST /v1/auth/wallet/verify { transaction }
+  API->>API: verify signature · set session cookie
+  API-->>App: { userId, address }  (+ Set-Cookie)
 ```
 
 ---
 
 ## 3. Delegated signing model (how clients move value)
 
-Clients **never** hold treasury/protocol keys and never build settlement transactions. For actions from the driver's own managed wallet, the backend builds and (for managed accounts) signs; the client only initiates and, where required, confirms.
+Clients **never** hold treasury/protocol keys and never build settlement transactions. Two paths, by custody:
 
-- `POST /v1/tx/build` → backend constructs the transaction (and delegate-signs if it's a managed account), returns base64 **XDR** + hash.
-- `POST /v1/tx/submit` → backend submits the (signed) XDR to Horizon, returns result + explorer URL.
+- **Custodial (Google) accounts** → `POST /v1/tx/build` constructs the transaction and **delegate-signs** it (the backend holds that key), returning base64 **XDR** + hash; then `POST /v1/tx/submit`.
+- **Non-custodial (SEP-10 wallet) users** → the backend builds/returns an unsigned XDR (or the client builds its own), the **user signs client-side** with their wallet, then `POST /v1/tx/submit` relays the signed envelope to Horizon.
 
-External wallets (web, via Stellar Wallets Kit) sign client-side and submit their own signed XDR through `/v1/tx/submit`.
+`POST /v1/tx/submit` returns `{ hash, successful, ledger, horizonUrl }`.
 
 ```mermaid
 sequenceDiagram
@@ -120,17 +143,20 @@ Guardrails baked into the backend: the signer **refuses mainnet** unless a KMS/H
 
 Legend: **[live]** implemented on testnet · **[planned]** contract-defined, not yet built · owner in parens.
 
-### Phase 1 — Foundation (D1)
+### Phase 1 — Foundation & auth (D1)
 | Method | Path | Purpose | Status |
 |---|---|---|---|
-| GET | `/health` | liveness + network/version | **[live]** (Aditya) |
+| GET | `/health` | liveness + network/version | **[live]** |
 | GET | `/v1/accounts/distribution` | Partner Revenue / Driver Pool / Treasury accounts | **[live]** |
 | GET | `/v1/treasury/config` | multisig signers + thresholds | **[live]** |
-| POST | `/v1/onboard` | Privy token → managed wallet (+ session) | **[live]** (stub) |
-| POST | `/v1/tx/build` | build (+delegate-sign) a tx | **[planned]** |
-| POST | `/v1/tx/submit` | submit signed XDR to Horizon | **[planned]** |
+| POST | `/v1/auth/google/verify` | Google ID token → custodial wallet + session | **[live]** |
+| GET | `/v1/auth/challenge` | SEP-10 challenge for a Stellar account | **[live]** |
+| POST | `/v1/auth/wallet/verify` | verify signed SEP-10 challenge → session | **[live]** |
+| GET | `/v1/auth/me` | current session user (or `null`) | **[live]** |
+| POST | `/v1/auth/logout` | clear the session cookie | **[live]** |
+| POST | `/v1/tx/build` | build (+delegate-sign) a tx | **[live]** |
+| POST | `/v1/tx/submit` | submit signed XDR to Horizon | **[live]** |
 | GET | `/v1/wallets/me` | the caller's wallet + balances | **[planned]** |
-| POST | `/v1/auth/refresh` | refresh session token | **[planned]** |
 
 ### Phase 2 — Wallet interop & payout rails (D2, D3)
 | Method | Path | Purpose |
@@ -152,12 +178,13 @@ Legend: **[live]** implemented on testnet · **[planned]** contract-defined, not
 | GET | `/v1/routing/quote` | Stellar Broker / Aquarius path-payment quote *(internal/ops)* |
 
 ### Phase 4 — Settlement engine & SCOUT (D6)
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/v1/settlement/batches?cursor=&limit=` | settlement batches |
-| GET | `/v1/settlement/batches/{id}` | drill-down: Treasury → 50/30/20 split → SDP → driver |
-| GET | `/v1/scout/me` | caller's SCOUT tier + multiplier (1.0/1.2/1.5x) |
-| GET | `/v1/settlement/me?cursor=&limit=` | driver's earnings breakdown per batch (mobile) |
+| Method | Path | Purpose | Status |
+|---|---|---|---|
+| POST | `/v1/settlement/batches` | execute a deterministic 50/30/20 batch | **[live]** |
+| GET | `/v1/settlement/batches?cursor=&limit=` | settlement batches (indexer v1, in-memory) | **[live]** |
+| GET | `/v1/settlement/batches/{id}` | drill-down: Source → 50/30/20 split → driver | **[live]** |
+| GET | `/v1/scout/me` | caller's SCOUT tier + multiplier (1.0/1.2/1.5x) | **[planned]** |
+| GET | `/v1/settlement/me?cursor=&limit=` | driver's earnings breakdown per batch (mobile) | **[planned]** |
 
 ### Phase 6 — Government gateway & exports (D8)
 | Method | Path | Purpose |
@@ -174,7 +201,7 @@ Legend: **[live]** implemented on testnet · **[planned]** contract-defined, not
 
 For payout-received and settlement events, clients subscribe instead of polling.
 
-- Endpoint: `GET /v1/stream` (WebSocket upgrade), `Authorization: Bearer <sessionToken>`.
+- Endpoint: `GET /v1/stream` (WebSocket upgrade), authenticated by the **session cookie** sent on the upgrade request.
 - Subscribe frame: `{ "type": "subscribe", "channels": ["payouts:me", "settlement:me"] }`.
 - Event frame: `{ "type": "event", "channel": "payouts:me", "data": { …Payout } }`.
 - Heartbeat: server ping every 30s; client replies pong. Reconnect with exponential backoff; on reconnect, clients re-fetch via REST to fill any gap (WS is a notification, REST is the source of truth).
@@ -185,7 +212,7 @@ Mobile uses WS only for live nudges (badge a new payout, then GET the detail). N
 
 ## 6. Core data shapes (from `packages/contract`)
 
-These already exist in `src/index.ts`; later phases extend the same file.
+These live in `src/index.ts`; later phases extend the same file.
 
 ```ts
 type StellarNetwork = 'testnet' | 'mainnet';
@@ -193,17 +220,34 @@ type DistributionAccountRole = 'partner_revenue' | 'driver_pool' | 'treasury';
 
 interface ManagedWallet { userId: string; address: string; provisioned: boolean; network: StellarNetwork; }
 interface AssetRef { code: string; issuer?: string; }               // no issuer = native XLM
-interface OnboardResponse { userId: string; wallet: ManagedWallet; } // + sessionToken (planned)
+
+// auth (cookie session)
+interface SessionUser { userId: string; method: 'google' | 'wallet'; email?: string; address?: string; }
+interface AuthMeResponse { user: SessionUser | null; }
+interface GoogleVerifyRequest { idToken: string; }
+interface GoogleVerifyResponse { userId: string; wallet: ManagedWallet; }
+interface WalletChallengeResponse { transaction: string; networkPassphrase: string; } // SEP-10 challenge XDR
+interface WalletVerifyRequest { transaction: string; }                                 // signed challenge
+interface WalletVerifyResponse { userId: string; address: string; }
 
 // delegated signing
 interface BuildTransactionRequest { userId: string; operations: TransactionOperation[]; memo?: string; }
 interface BuildTransactionResponse { xdr: string; hash: string; }
 interface SubmitTransactionResponse { hash: string; successful: boolean; ledger?: number; horizonUrl: string; }
 
+// settlement (D6)
+type ScoutTier = 1 | 2 | 3;
+const SCOUT_MULTIPLIER: Record<ScoutTier, number>;                   // 1→1.0, 2→1.2, 3→1.5
+interface CreateSettlementBatchRequest { grossAmount: string; asset?: AssetRef; drivers: SettlementDriverInput[]; }
+interface SettlementSplit { authorities: string; driverRewards: string; treasury: string; } // 50/30/20
+interface SettlementBatch { id: string; createdAt: string; grossAmount: string; split: SettlementSplit;
+  driverPayouts: SettlementDriverPayout[]; sourceAddress: string; txHash: string; horizonUrl: string; /* … */ }
+interface SettlementBatchPage { items: SettlementBatch[]; nextCursor: string | null; }
+
 interface ApiError { error: string; message: string; requestId?: string; }
 ```
 
-Planned additions (Phase 2+): `Balance { asset: AssetRef; amount: string }`, `Payout`, `SettlementBatch`, `ScoutTier`, `OfframpSession`, `Page<T> { items: T[]; nextCursor: string | null }`.
+Planned additions (Phase 2+): `Balance`, `Payout`, `OfframpSession`, and a generic `Page<T>`.
 
 ---
 
@@ -211,11 +255,13 @@ Planned additions (Phase 2+): `Balance { asset: AssetRef; amount: string }`, `Pa
 
 | Env | Base URL | Network | Notes |
 |---|---|---|---|
-| Local | `http://localhost:8080` | testnet | `npm run dev:backend`. Android emulator uses `10.0.2.2`. |
+| Local | `http://localhost:8080` | testnet | backend `pnpm --filter @pathpulse/backend dev`; web `pnpm --dir web dev` (Next.js :3000). Android emulator uses `10.0.2.2`. |
 | Staging | TBD | testnet | shared testnet backend for reviewers |
 | Prod | TBD | mainnet | Phase 5+, human-gated |
 
-Clients read the base URL from config (never hardcode): Android `BuildConfig.API_BASE`, iOS `Info.plist`/xcconfig, web `VITE_API_BASE`.
+Clients read the base URL from config (never hardcode): web `NEXT_PUBLIC_API_URL`, Android `BuildConfig.API_BASE`, iOS `Info.plist`/xcconfig.
+
+**Cookie/CORS:** the session is an httpOnly cookie, so cross-origin clients must send credentials (web `fetch(..., { credentials: 'include' })`) and the backend must allow that origin with `Access-Control-Allow-Credentials`. The cookie is `SameSite=Lax`, `Secure` in production.
 
 ---
 
@@ -223,10 +269,10 @@ Clients read the base URL from config (never hardcode): Android `BuildConfig.API
 
 - **Contract-first**: no field ships that isn't in `openapi.yaml`. Client models are generated, not hand-written.
 - **Money is strings, 7 decimals.** Never parse Stellar amounts into a float/double anywhere.
-- **Never put secrets or tokens in URLs/query strings.** Tokens go in the `Authorization` header only.
-- **Idempotency-Key on every value-moving POST.** Retries must not double-pay.
-- **Clients never sign settlement/treasury tx.** Only the driver's own managed-wallet ops via `/v1/tx/*`.
-- **Switch on `error` codes, not messages.** Handle `401` → refresh, `429` → back off, `422` → show the reason.
+- **Session is a cookie, not a header.** Send `credentials: 'include'`; never put session/secrets in URLs or query strings.
+- **Custody boundary:** the backend delegate-signs only for **custodial (Google)** accounts; **non-custodial (SEP-10 wallet)** users sign client-side. Clients never sign settlement/treasury tx.
+- **Idempotency-Key on every value-moving POST** (target convention). Retries must not double-pay.
+- **Switch on `error` codes, not messages.** Handle `401` → re-authenticate (no refresh token), `429` → back off, `422` → show the reason.
 - **Testnet only through Phase 4.** No client hardcodes a mainnet URL before Phase 5.
 
 ---

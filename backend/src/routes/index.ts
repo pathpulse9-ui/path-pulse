@@ -29,6 +29,13 @@ import {
   listSettlementBatches,
   getSettlementBatch,
 } from '../stellar/settlement.js';
+import {
+  createWithdrawal,
+  listWithdrawals,
+  getWithdrawal,
+  applyCallback,
+} from '../services/offramp.js';
+import { verifyCallbackSignature } from '../services/mercuryo.js';
 
 export const router = Router();
 
@@ -188,4 +195,66 @@ router.get('/v1/settlement/batches/:id', (req, res, next) => {
   } catch (e) {
     next(e);
   }
+});
+
+// Fiat off-ramp (D4 — Mercuryo SEP-24): start an interactive withdrawal, list, poll.
+const createWithdrawalSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  asset: assetRefOptional(),
+  fiatCurrency: z.string().optional(),
+  settlementBatchId: z.string().optional(),
+});
+
+router.post('/v1/offramp/sessions', async (req, res, next) => {
+  try {
+    const parsed = createWithdrawalSchema.parse(req.body);
+    const session = getSessionFromRequest(req);
+    const userId = session?.userId ?? 'sandbox-user';
+    const userIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined;
+    res.json(
+      await createWithdrawal(userId, parsed, {
+        email: session?.email,
+        userIp,
+        refundAddress: session?.address,
+      }),
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/offramp/sessions', async (req, res, next) => {
+  try {
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(await listWithdrawals(cursor, limit));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/offramp/sessions/:id', async (req, res, next) => {
+  try {
+    res.json(await getWithdrawal(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Mercuryo callback (webhook): verify X-Signature (HMAC-SHA256 of the raw body) then apply.
+router.post('/v1/offramp/callback', (req, res) => {
+  const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
+  const signature = (req.headers['x-signature'] as string) ?? '';
+  if (!verifyCallbackSignature(raw, signature)) {
+    res.status(401).json({ error: 'InvalidSignature', message: 'callback signature verification failed' });
+    return;
+  }
+  const payload = (req.body?.payload?.data ?? req.body?.data ?? {}) as {
+    merchant_transaction_id?: string;
+    status?: string;
+  };
+  if (payload.merchant_transaction_id && payload.status) {
+    applyCallback(payload.merchant_transaction_id, payload.status);
+  }
+  res.status(200).json({ ok: true }); // Mercuryo needs a 200 to consider it delivered
 });
