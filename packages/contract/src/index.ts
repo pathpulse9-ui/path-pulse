@@ -42,7 +42,7 @@ export interface ManagedWallet {
 
 export interface SessionUser {
   userId: string;
-  method: 'google' | 'wallet';
+  method: 'google' | 'wallet' | 'guest';
   email?: string;
   address?: string;
 }
@@ -72,6 +72,10 @@ export interface WalletVerifyRequest {
 export interface WalletVerifyResponse {
   userId: string;
   address: string;
+}
+
+export interface GuestSessionResponse {
+  userId: string;
 }
 
 // ── Delegated signing ───────────────────────────────────────────────

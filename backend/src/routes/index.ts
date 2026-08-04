@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type {
   HealthResponse,
@@ -7,6 +8,7 @@ import type {
   WalletChallengeResponse,
   WalletVerifyRequest,
   WalletVerifyResponse,
+  GuestSessionResponse,
   AuthMeResponse,
   BuildTransactionRequest,
 } from '@pathpulse/contract';
@@ -132,6 +134,13 @@ router.post('/v1/auth/wallet/verify', async (req, res, next) => {
     (e as { status?: number }).status = 401;
     next(e);
   }
+});
+
+router.post('/v1/auth/guest', (_req, res) => {
+  const userId = `guest_${randomUUID()}`;
+  setSessionCookie(res, { userId, method: 'guest' });
+  const body: GuestSessionResponse = { userId };
+  res.json(body);
 });
 
 router.get('/v1/auth/me', (req, res) => {
