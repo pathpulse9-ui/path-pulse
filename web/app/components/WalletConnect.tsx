@@ -201,8 +201,8 @@ export default function WalletConnect() {
 
   if (sessionLoading) {
     return (
-      <div className="rounded border border-gray-200 p-4">
-        <p className="text-sm text-gray-500">Loading…</p>
+      <div className="rounded-2xl bg-white p-6">
+        <p className="text-sm text-black/50">Loading…</p>
       </div>
     );
   }
@@ -210,16 +210,18 @@ export default function WalletConnect() {
   const signedIn = user?.method === 'wallet';
 
   return (
-    <div className="rounded border border-gray-200 p-4 space-y-3">
-      <h2 className="font-semibold">Connect Wallet (Non-Custodial)</h2>
+    <div className="rounded-2xl bg-white p-6 space-y-4">
+      <h2 className="text-black text-lg font-medium" style={{ letterSpacing: '-0.02em' }}>
+        Connect Wallet <span className="text-black/40 font-normal">(Non-Custodial)</span>
+      </h2>
 
       {!signedIn && (
         <>
-          <p className="text-sm text-gray-600">No wallet connected.</p>
+          <p className="text-sm text-black/60">No wallet connected.</p>
           <button
             onClick={connectAndAuthenticate}
             disabled={connecting}
-            className="rounded bg-black px-4 py-2 text-white text-sm font-medium disabled:opacity-50"
+            className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
           >
             {connecting ? 'Connecting…' : 'Connect Wallet'}
           </button>
@@ -227,21 +229,22 @@ export default function WalletConnect() {
       )}
 
       {signedIn && user?.address && (
-        <div className="space-y-3">
-          <p className="text-sm text-gray-600">
-            Signed in as <code className="text-xs break-all">{user.address}</code>
-            {kitConnection && <> via <strong>{kitConnection.walletName}</strong></>}
+        <div className="space-y-4">
+          <p className="text-sm text-black/60">
+            Signed in as <code className="text-xs break-all text-black/50">{user.address}</code>
+            {kitConnection && <> via <strong className="text-black">{kitConnection.walletName}</strong></>}
           </p>
 
-          {account.status === 'loading' && <p className="text-sm text-gray-500">Loading…</p>}
+          {account.status === 'loading' && <p className="text-sm text-black/50">Loading…</p>}
           {account.status === 'loaded' && (
-            <p className="text-sm">
-              Balance: <strong>{account.balance} XLM</strong> · sequence {account.sequence} ·{' '}
+            <p className="text-sm text-black/70">
+              Balance: <strong className="text-black">{account.balance} XLM</strong> · sequence{' '}
+              {account.sequence} ·{' '}
               <a
                 href={`${HORIZON_URL}/accounts/${user.address}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="underline"
+                className="underline hover:text-black transition-colors duration-200"
               >
                 view on Horizon
               </a>
@@ -255,33 +258,33 @@ export default function WalletConnect() {
           {account.status === 'error' && (
             <p className="text-sm text-red-600">Horizon error: {account.error}</p>
           )}
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               onClick={() => refreshAccount(user.address!)}
-              className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+              className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
             >
               Refresh
             </button>
             <button
               onClick={fundWithFriendbot}
               disabled={fundLoading}
-              className="rounded border border-gray-300 px-3 py-1.5 text-sm disabled:opacity-50"
+              className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200 disabled:opacity-50"
             >
               {fundLoading ? 'Funding…' : 'Fund with Friendbot'}
             </button>
             <button
               onClick={disconnectAndSignOut}
-              className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+              className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
             >
               Sign out
             </button>
           </div>
 
-          <div className="space-y-2 border-t border-gray-200 pt-3">
+          <div className="space-y-3 border-t border-black/10 pt-4">
             {!kitConnection ? (
               <button
                 onClick={reconnectForSigning}
-                className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+                className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
               >
                 Reconnect wallet to send a payment
               </button>
@@ -292,25 +295,25 @@ export default function WalletConnect() {
                   value={destination}
                   onChange={(e) => setDestination(e.target.value)}
                   placeholder="Destination address (defaults to self)"
-                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm focus:outline-none focus:border-black/30"
                 />
                 <button
                   onClick={signAndSubmitPayment}
                   disabled={sendLoading}
-                  className="rounded bg-black px-4 py-2 text-white text-sm font-medium disabled:opacity-50"
+                  className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
                 >
                   {sendLoading ? 'Sending…' : 'Send 1 XLM'}
                 </button>
               </>
             )}
             {txResult?.status === 'ok' && (
-              <p className="text-sm text-green-600">
+              <p className="text-sm text-green-700">
                 ✓ Submitted. Hash: <code className="text-xs">{txResult.hash}</code> ·{' '}
                 <a
                   href={`https://stellar.expert/explorer/testnet/tx/${txResult.hash}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="underline"
+                  className="underline hover:text-black transition-colors duration-200"
                 >
                   stellar.expert
                 </a>
@@ -326,7 +329,7 @@ export default function WalletConnect() {
       <div>
         <pre
           ref={logRef}
-          className="h-40 overflow-y-auto rounded bg-gray-950 text-gray-200 text-xs p-3 whitespace-pre-wrap"
+          className="h-40 overflow-y-auto rounded-xl bg-[#0A0A0A] text-gray-200 text-xs p-3 whitespace-pre-wrap"
         >
           {logLines.map((line, i) => (
             <span

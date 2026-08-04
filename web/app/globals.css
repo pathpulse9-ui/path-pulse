@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'TT Norms Pro';
+  src: url('/fonts/tt-norms-pro-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TT Norms Pro';
+  src: url('/fonts/tt-norms-pro-semibold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -17,8 +33,16 @@
   }
 }
 
+html,
+body {
+  font-family: 'TT Norms Pro', ui-sans-serif, system-ui, Arial, Helvetica, sans-serif;
+}
+
+* {
+  font-family: inherit;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
