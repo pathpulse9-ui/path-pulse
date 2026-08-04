@@ -33,7 +33,7 @@ export function UseCasesSection() {
               by on-chain reputation tier, settled in a single Stellar transaction your team
               and regulators can verify on Horizon.
             </p>
-            <a href="/settlement" className="group inline-flex items-center gap-3">
+            <a href="/dashboard/settlement" className="group inline-flex items-center gap-3">
               <span className="w-9 h-9 rounded-full bg-white/80 backdrop-blur flex items-center justify-center group-hover:bg-white transition-colors">
                 <ArrowRight className="w-4 h-4 text-black" />
               </span>

@@ -41,7 +41,7 @@ export function HeroSection() {
             audit trail from treasury to recipient.
           </p>
           <a
-            href="/wallet"
+            href="/dashboard/wallet"
             className="inline-flex items-center gap-3 bg-black text-white text-base md:text-lg font-medium pl-8 pr-2 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200"
           >
             Request access

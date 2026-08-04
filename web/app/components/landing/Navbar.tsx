@@ -2,9 +2,9 @@ import Link from 'next/link';
 import { LogoIcon } from './LogoIcon';
 
 const NAV_LINKS = [
-  { label: 'Wallet', href: '/wallet' },
-  { label: 'Settlement Engine', href: '/settlement' },
-  { label: 'Off-ramp', href: '/offramp' },
+  { label: 'Wallet', href: '/dashboard/wallet' },
+  { label: 'Settlement Engine', href: '/dashboard/settlement' },
+  { label: 'Off-ramp', href: '/dashboard/offramp' },
   { label: 'Docs', href: '#' },
   { label: 'Partners', href: '#' },
 ];
@@ -29,10 +29,10 @@ export function Navbar() {
           ))}
         </div>
         <Link
-          href="/wallet"
+          href="/signin"
           className="bg-black text-white text-base font-medium px-7 py-2.5 rounded-full hover:bg-gray-800 transition-colors duration-200"
         >
-          Open Wallet
+          Sign in
         </Link>
       </div>
     </nav>
