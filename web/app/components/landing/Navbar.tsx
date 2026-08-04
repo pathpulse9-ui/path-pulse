@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { LogoIcon } from './LogoIcon';
 
 const NAV_LINKS = [
-  { label: 'Wallet', href: '/dashboard/wallet' },
+  { label: 'Dashboard', href: '/dashboard' },
   { label: 'Settlement Engine', href: '/dashboard/settlement' },
   { label: 'Off-ramp', href: '/dashboard/offramp' },
   { label: 'Docs', href: '#' },

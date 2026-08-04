@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { useSession } from '../../lib/session';
+import WalletConnect from '../../components/WalletConnect';
 
 const METHOD_LABEL = { google: 'Google', wallet: 'Stellar wallet', guest: 'Guest' } as const;
 
@@ -105,6 +106,12 @@ export default function ProfilePage() {
           </button>
         </div>
       </div>
+
+      {user.method === 'wallet' && (
+        <div className="max-w-xl">
+          <WalletConnect />
+        </div>
+      )}
     </div>
   );
 }

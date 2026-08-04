@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import {
   LayoutGrid,
-  Wallet,
   ArrowLeftRight,
   Banknote,
   Landmark,
@@ -16,7 +15,6 @@ import { LogoIcon } from '../landing/LogoIcon';
 
 const NAV = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutGrid },
-  { label: 'Wallet', href: '/dashboard/wallet', icon: Wallet },
   { label: 'Settlement', href: '/dashboard/settlement', icon: ArrowLeftRight },
   { label: 'Off-ramp', href: '/dashboard/offramp', icon: Banknote },
   { label: 'Treasury', href: '/dashboard/treasury', icon: Landmark },
