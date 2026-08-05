@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LogoIcon } from '../landing/LogoIcon';
-import { StellarWalletsKit, initKit } from '../../lib/stellar';
+import { StellarWalletsKit, initKit, FRIENDBOT_URL } from '../../lib/stellar';
 import {
   getWalletChallenge,
   verifyWalletChallenge,
@@ -31,6 +31,8 @@ export default function SignInPanel() {
   const { user, loading, refresh } = useSession();
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unfundedAddress, setUnfundedAddress] = useState<string | null>(null);
+  const [funding, setFunding] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const googleInitialized = useRef(false);
 
@@ -46,8 +48,10 @@ export default function SignInPanel() {
   const connectWallet = useCallback(async () => {
     setPending('wallet');
     setError(null);
+    setUnfundedAddress(null);
+    let address: string | undefined;
     try {
-      const { address } = await StellarWalletsKit.authModal();
+      ({ address } = await StellarWalletsKit.authModal());
       const { transaction, networkPassphrase } = await getWalletChallenge(address);
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(transaction, {
         address,
@@ -57,10 +61,27 @@ export default function SignInPanel() {
       await finish();
     } catch (e) {
       setError(String(e));
+      if (address) setUnfundedAddress(address);
     } finally {
       setPending(null);
     }
   }, [finish]);
+
+  const fundAndRetry = useCallback(async () => {
+    if (!unfundedAddress) return;
+    setFunding(true);
+    setError(null);
+    try {
+      const res = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(unfundedAddress)}`);
+      if (!res.ok) throw new Error(`Friendbot HTTP ${res.status}`);
+      setUnfundedAddress(null);
+      await connectWallet();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setFunding(false);
+    }
+  }, [unfundedAddress, connectWallet]);
 
   const handleCredential = useCallback(
     async (response: CredentialResponse) => {
