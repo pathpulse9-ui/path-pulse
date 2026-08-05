@@ -90,10 +90,21 @@ export const env = {
     // Indicative fiat per 1 USDC — sandbox stub estimate only (live uses sell-rates).
     indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 0.92),
   },
+
+  sdp: {
+    baseUrl: process.env.SDP_BASE_URL ?? 'http://localhost:8000',
+    apiKey: process.env.SDP_API_KEY ?? '',
+    walletId: process.env.SDP_WALLET_ID ?? '',
+    assetId: process.env.SDP_ASSET_ID ?? '',
+    registrationContactType: process.env.SDP_REGISTRATION_CONTACT_TYPE ?? 'PHONE_NUMBER_AND_WALLET_ADDRESS',
+    verificationField: process.env.SDP_VERIFICATION_FIELD ?? 'DATE_OF_BIRTH',
+  },
 } as const;
 
 /** Live Mercuryo requires the SDK partner token + API URL; otherwise the sandbox stub runs. */
 export const mercuryoLive = !!process.env.MERCURYO_SDK_PARTNER_TOKEN && !!process.env.MERCURYO_API_URL;
+
+export const sdpLive = !!process.env.SDP_API_KEY && !!process.env.SDP_WALLET_ID && !!process.env.SDP_ASSET_ID;
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be set in production');
