@@ -199,7 +199,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OffRampSessionPage' }
     post:
-      summary: Start a Mercuryo SEP-24 interactive withdrawal
+      summary: Start a Ramp Network off-ramp withdrawal
       operationId: createOffRampWithdrawal
       requestBody:
         required: true
@@ -229,7 +229,7 @@ paths:
               schema: { $ref: '#/components/schemas/OffRampSession' }
   /v1/offramp/callback:
     post:
-      summary: Mercuryo callback (webhook); X-Signature HMAC-verified
+      summary: Ramp webhook (V3); X-Body-Signature ECDSA-verified
       operationId: offRampCallback
       responses:
         '200':
@@ -437,7 +437,7 @@ components:
       required: [id, provider, sandbox, status, interactiveUrl, amount, asset, fiatCurrency, createdAt, updatedAt]
       properties:
         id: { type: string }
-        provider: { type: string, enum: [mercuryo] }
+        provider: { type: string, enum: [ramp, mercuryo] }
         sandbox: { type: boolean }
         status: { $ref: '#/components/schemas/OffRampStatus' }
         interactiveUrl: { type: string }
