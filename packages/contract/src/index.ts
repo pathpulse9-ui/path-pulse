@@ -178,6 +178,7 @@ export interface SettlementBatch {
   treasuryAddress: string;
   txHash: string;
   horizonUrl: string;
+  payoutBatchId: string;
 }
 
 export interface SettlementBatchPage {
@@ -231,5 +232,43 @@ export interface OffRampSession {
 
 export interface OffRampSessionPage {
   items: OffRampSession[];
+  nextCursor: string | null;
+}
+
+// ── Driver payout batches (D2/D3 — Stellar Disbursement Platform) ─────
+
+export type PayoutBatchStatus = 'draft' | 'ready' | 'started' | 'paused' | 'completed' | 'error';
+
+export type PayoutReceiptStatus = 'ready' | 'pending' | 'success' | 'failed';
+
+export interface PayoutReceipt {
+  userId: string;
+  address: string;
+  tier: ScoutTier;
+  amount: string;
+  status: PayoutReceiptStatus;
+  stellarTxHash?: string;
+}
+
+export interface PayoutBatch {
+  id: string;
+  provider: 'sdp';
+  sandbox: boolean;
+  status: PayoutBatchStatus;
+  asset: AssetRef;
+  totalAmount: string;
+  receipts: PayoutReceipt[];
+  settlementBatchId?: string;
+  disbursementId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePayoutBatchRequest {
+  settlementBatchId: string;
+}
+
+export interface PayoutBatchPage {
+  items: PayoutBatch[];
   nextCursor: string | null;
 }

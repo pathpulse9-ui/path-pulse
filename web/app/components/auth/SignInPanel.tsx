@@ -4,9 +4,8 @@ import Script from 'next/script';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Mail } from 'lucide-react';
 import { LogoIcon } from '../landing/LogoIcon';
-import { StellarWalletsKit, initKit } from '../../lib/stellar';
+import { StellarWalletsKit, initKit, FRIENDBOT_URL } from '../../lib/stellar';
 import {
   getWalletChallenge,
   verifyWalletChallenge,
@@ -24,9 +23,6 @@ interface CredentialResponse {
 
 type Pending = 'wallet' | 'google' | 'guest' | null;
 
-const MAGIC_LINK_UNAVAILABLE =
-  'Email sign-in needs a mail sender and a verification endpoint before it can be enabled. Use a wallet, Google, or continue as a guest.';
-
 const BUTTON_BASE =
   'h-12 w-full rounded-full text-sm font-medium flex items-center justify-center gap-3 transition-colors duration-200 disabled:opacity-50';
 
@@ -35,8 +31,8 @@ export default function SignInPanel() {
   const { user, loading, refresh } = useSession();
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
-  const [email, setEmail] = useState('');
-  const [notice, setNotice] = useState<string | null>(null);
+  const [unfundedAddress, setUnfundedAddress] = useState<string | null>(null);
+  const [funding, setFunding] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const googleInitialized = useRef(false);
 
@@ -52,8 +48,10 @@ export default function SignInPanel() {
   const connectWallet = useCallback(async () => {
     setPending('wallet');
     setError(null);
+    setUnfundedAddress(null);
+    let address: string | undefined;
     try {
-      const { address } = await StellarWalletsKit.authModal();
+      ({ address } = await StellarWalletsKit.authModal());
       const { transaction, networkPassphrase } = await getWalletChallenge(address);
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(transaction, {
         address,
@@ -63,10 +61,27 @@ export default function SignInPanel() {
       await finish();
     } catch (e) {
       setError(String(e));
+      if (address) setUnfundedAddress(address);
     } finally {
       setPending(null);
     }
   }, [finish]);
+
+  const fundAndRetry = useCallback(async () => {
+    if (!unfundedAddress) return;
+    setFunding(true);
+    setError(null);
+    try {
+      const res = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(unfundedAddress)}`);
+      if (!res.ok) throw new Error(`Friendbot HTTP ${res.status}`);
+      setUnfundedAddress(null);
+      await connectWallet();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setFunding(false);
+    }
+  }, [unfundedAddress, connectWallet]);
 
   const handleCredential = useCallback(
     async (response: CredentialResponse) => {
@@ -146,42 +161,6 @@ export default function SignInPanel() {
           </div>
         ) : (
           <div className="space-y-3">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setError(null);
-                setNotice(MAGIC_LINK_UNAVAILABLE);
-              }}
-              className="space-y-3"
-            >
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setNotice(null);
-                }}
-                placeholder="Email address"
-                className="h-12 w-full rounded-full border border-black/10 bg-white px-5 text-sm text-black placeholder:text-black/35 focus:outline-none focus:border-black/30 transition-colors duration-200"
-              />
-              <button
-                type="submit"
-                className={`${BUTTON_BASE} border border-black/10 text-black hover:bg-black/5`}
-              >
-                <Mail className="w-4 h-4" />
-                Send magic link
-              </button>
-            </form>
-
-            {notice && <p className="text-xs text-black/50 leading-relaxed">{notice}</p>}
-
-            <div className="flex items-center gap-4 py-3">
-              <span className="h-px flex-1 bg-black/10" />
-              <span className="text-xs text-black/40 tracking-widest">OR</span>
-              <span className="h-px flex-1 bg-black/10" />
-            </div>
-
             <button
               onClick={connectWallet}
               disabled={pending !== null}
