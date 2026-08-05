@@ -12,6 +12,7 @@ import {
 import { env, horizonTxUrl } from '../config/env.js';
 import { horizon } from './network.js';
 import { provisionManagedWallet, getManagedSigner } from './managed.js';
+import { getOnchainTier } from './scout.js';
 
 /**
  * Deterministic 50 / 30 / 20 settlement engine (D6).
@@ -99,7 +100,16 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
   // Dev-tier settlement source (testnet, backend-controlled). Provision + fund once.
   const source = await provisionManagedWallet(SETTLEMENT_SOURCE_USER);
   const { asset, ref } = assetOf(req.asset);
-  const split = computeSplit(req.grossAmount, req.drivers);
+
+  // Reputation is on-chain: resolve each driver's SCOUT tier from their held badge,
+  // falling back to the request's tier only when the driver holds no SCOUT asset.
+  const resolvedDrivers = await Promise.all(
+    req.drivers.map(async (d) => {
+      const { tier } = await getOnchainTier(d.address);
+      return { ...d, tier: tier ?? d.tier };
+    }),
+  );
+  const split = computeSplit(req.grossAmount, resolvedDrivers);
 
   const account = await horizon.loadAccount(source.address);
   const builder = new TransactionBuilder(account, {
