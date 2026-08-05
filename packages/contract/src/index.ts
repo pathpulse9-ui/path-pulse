@@ -181,6 +181,45 @@ export interface SettlementBatchPage {
   nextCursor: string | null;
 }
 
+// ── SCOUT reputation assets (D6) ──────────────────────────────────────
+
+export interface ScoutTierInfo {
+  tier: ScoutTier;
+  /** Classic Asset code, e.g. "SCOUT2". */
+  code: string;
+  multiplier: number;
+}
+
+export interface ScoutConfig {
+  /** Issuer account of the SCOUT Classic Assets. */
+  issuer: string;
+  network: StellarNetwork;
+  tiers: ScoutTierInfo[];
+}
+
+/** Assign a tier from a PulseGen validation score (0..1). */
+export interface AssignScoutTierRequest {
+  score: number;
+}
+
+export interface ScoutAssignment {
+  userId: string;
+  address: string;
+  tier: ScoutTier;
+  multiplier: number;
+  score: number;
+  issuer: string;
+  assetCode: string;
+  txHash: string;
+  horizonUrl: string;
+}
+
+export interface ScoutTierLookup {
+  address: string;
+  tier: ScoutTier | null;
+  multiplier: number;
+}
+
 // ── Fiat off-ramp (D4 — Mercuryo SEP-24) ──────────────────────────────
 
 /** SEP-24 interactive withdrawal lifecycle (subset used by PathPulse). */
