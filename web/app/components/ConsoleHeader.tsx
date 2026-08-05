@@ -4,10 +4,11 @@ import { LogoIcon } from './landing/LogoIcon';
 const CONSOLE_LINKS = [
   { label: 'Wallet', href: '/wallet' },
   { label: 'Settlement', href: '/settlement' },
+  { label: 'SCOUT', href: '/scout' },
   { label: 'Off-ramp', href: '/offramp' },
 ];
 
-export function ConsoleHeader({ active }: { active: 'wallet' | 'settlement' | 'offramp' }) {
+export function ConsoleHeader({ active }: { active: 'wallet' | 'settlement' | 'scout' | 'offramp' }) {
   return (
     <header className="px-6 py-5 flex items-center justify-between flex-wrap gap-4">
       <Link href="/" className="flex items-center gap-2">
