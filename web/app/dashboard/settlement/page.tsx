@@ -3,9 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Keypair } from '@stellar/stellar-sdk';
 import type { SettlementBatch } from '@pathpulse/contract';
-import { FRIENDBOT_URL } from '../lib/stellar';
-import { listSettlementBatches, createSettlementBatch } from '../lib/api';
-import { ConsoleHeader } from '../components/ConsoleHeader';
+import { FRIENDBOT_URL } from '../../lib/stellar';
+import { listSettlementBatches, createSettlementBatch } from '../../lib/api';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
@@ -78,11 +77,9 @@ export default function SettlementPage() {
   }, [load]);
 
   return (
-    <div className="min-h-screen bg-[#F5F5F5]">
-      <ConsoleHeader active="settlement" />
-
-      <div className="px-6 pb-24">
-        <div className="max-w-4xl mx-auto space-y-6">
+    <div>
+      <div>
+        <div className="space-y-6">
           <div>
             <h1
               className="text-black text-3xl md:text-4xl font-medium leading-tight"

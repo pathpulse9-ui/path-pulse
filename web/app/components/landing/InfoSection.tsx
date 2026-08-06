@@ -13,7 +13,7 @@ export function InfoSection() {
               Meet PathPulse.
             </h2>
             <a
-              href="/settlement"
+              href="/dashboard/settlement"
               className="inline-flex items-center gap-3 bg-black text-white text-base font-medium pl-8 pr-2 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200"
             >
               Discover it

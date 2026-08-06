@@ -13,6 +13,7 @@ import { env, horizonTxUrl } from '../config/env.js';
 import { horizon } from './network.js';
 import { provisionManagedWallet, getManagedSigner } from './managed.js';
 import { getOnchainTier } from './scout.js';
+import { createPayoutBatch } from '../services/payouts.js';
 
 /**
  * Deterministic 50 / 30 / 20 settlement engine (D6).
@@ -20,6 +21,7 @@ import { getOnchainTier } from './scout.js';
  * 50% Authorities · 30% Driver Rewards · 20% Treasury, computed in integer stroops
  * (1 XLM = 10,000,000 stroops) so the parts always sum to the gross exactly — no float
  * drift. The 30% driver pool is split by SCOUT reputation multiplier (1.0 / 1.2 / 1.5).
+ *
  *
  * Funds are paid from a dev-tier settlement source account (testnet, backend-controlled).
  * The real PathPulse Treasury multisig is intentionally NOT the signer here — production
@@ -116,15 +118,10 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     fee: BASE_FEE,
     networkPassphrase: env.networkPassphrase,
   });
-  // 50% Authorities, 20% Treasury, then each driver's reputation-weighted share.
   if (split.authorities > 0n)
     builder.addOperation(Operation.payment({ destination: authoritiesAddress, asset, amount: fromStroops(split.authorities) }));
   if (split.treasury > 0n)
     builder.addOperation(Operation.payment({ destination: treasuryAddress, asset, amount: fromStroops(split.treasury) }));
-  for (const p of split.payouts) {
-    if (p.amount > 0n)
-      builder.addOperation(Operation.payment({ destination: p.address, asset, amount: fromStroops(p.amount) }));
-  }
 
   let tx = builder.setTimeout(180).build();
   tx = (await getManagedSigner(SETTLEMENT_SOURCE_USER).sign(tx)) as typeof tx;
@@ -150,8 +147,11 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     amount: fromStroops(p.amount),
   }));
 
+  const batchId = `stl_${Date.now()}_${randomBytes(4).toString('hex')}`;
+  const payoutBatch = await createPayoutBatch(driverPayouts, ref, { settlementBatchId: batchId });
+
   const batch: SettlementBatch = {
-    id: `stl_${Date.now()}_${randomBytes(4).toString('hex')}`,
+    id: batchId,
     createdAt: new Date().toISOString(),
     network: env.network,
     grossAmount: fromStroops(toStroops(req.grossAmount)),
@@ -167,6 +167,7 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     treasuryAddress,
     txHash: res.hash,
     horizonUrl: horizonTxUrl(res.hash),
+    payoutBatchId: payoutBatch.id,
   };
   batches.unshift(batch); // newest first
   return batch;

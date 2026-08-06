@@ -1,9 +1,11 @@
 import type {
+  HealthResponse,
   GoogleVerifyRequest,
   GoogleVerifyResponse,
   WalletChallengeResponse,
   WalletVerifyRequest,
   WalletVerifyResponse,
+  GuestSessionResponse,
   AuthMeResponse,
   SettlementBatch,
   SettlementBatchPage,
@@ -31,6 +33,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export function getHealth() {
+  return apiFetch<HealthResponse>('/health');
+}
+
 export function verifyGoogleIdToken(idToken: string) {
   const body: GoogleVerifyRequest = { idToken };
   return apiFetch<GoogleVerifyResponse>('/v1/auth/google/verify', {
@@ -51,6 +57,10 @@ export function verifyWalletChallenge(transaction: string) {
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+export function continueAsGuest() {
+  return apiFetch<GuestSessionResponse>('/v1/auth/guest', { method: 'POST' });
 }
 
 export function getSessionUser() {

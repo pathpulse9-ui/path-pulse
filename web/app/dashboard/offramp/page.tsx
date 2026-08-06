@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { OffRampSession, OffRampStatus } from '@pathpulse/contract';
-import { listOffRampSessions, getOffRampSession, createOffRampWithdrawal } from '../lib/api';
-import { ConsoleHeader } from '../components/ConsoleHeader';
+import { listOffRampSessions, getOffRampSession, createOffRampWithdrawal } from '../../lib/api';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -77,11 +76,9 @@ export default function OffRampPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F5F5]">
-      <ConsoleHeader active="offramp" />
-
-      <div className="px-6 pb-24">
-        <div className="max-w-3xl mx-auto space-y-6">
+    <div>
+      <div>
+        <div className="space-y-6">
           <div>
             <h1
               className="text-black text-3xl md:text-4xl font-medium leading-tight"

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type {
   HealthResponse,
@@ -7,6 +8,7 @@ import type {
   WalletChallengeResponse,
   WalletVerifyRequest,
   WalletVerifyResponse,
+  GuestSessionResponse,
   AuthMeResponse,
   BuildTransactionRequest,
 } from '@pathpulse/contract';
@@ -37,6 +39,7 @@ import {
 } from '../services/offramp.js';
 import { verifyCallbackSignature } from '../services/mercuryo.js';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
+import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 
 export const router = Router();
 
@@ -135,6 +138,13 @@ router.post('/v1/auth/wallet/verify', async (req, res, next) => {
   }
 });
 
+router.post('/v1/auth/guest', (_req, res) => {
+  const userId = `guest_${randomUUID()}`;
+  setSessionCookie(res, { userId, method: 'guest' });
+  const body: GuestSessionResponse = { userId };
+  res.json(body);
+});
+
 router.get('/v1/auth/me', (req, res) => {
   const session = getSessionFromRequest(req);
   const body: AuthMeResponse = {
@@ -193,6 +203,38 @@ router.get('/v1/settlement/batches', (req, res, next) => {
 router.get('/v1/settlement/batches/:id', (req, res, next) => {
   try {
     res.json(getSettlementBatch(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+const createPayoutBatchSchema = z.object({ settlementBatchId: z.string().min(1) });
+
+router.post('/v1/ops/payouts/batches', async (req, res, next) => {
+  try {
+    const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
+    const settlementBatch = getSettlementBatch(settlementBatchId);
+    res.json(
+      await createPayoutBatch(settlementBatch.driverPayouts, settlementBatch.asset, { settlementBatchId }),
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/payouts/batches', async (req, res, next) => {
+  try {
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(await listPayoutBatches(cursor, limit));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/payouts/batches/:id', async (req, res, next) => {
+  try {
+    res.json(await getPayoutBatch(req.params.id));
   } catch (e) {
     next(e);
   }
