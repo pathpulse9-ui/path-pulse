@@ -6,6 +6,7 @@ import { useState } from 'react';
 import {
   LayoutGrid,
   ArrowLeftRight,
+  Award,
   Banknote,
   Landmark,
   User,
@@ -16,6 +17,7 @@ import { LogoIcon } from '../landing/LogoIcon';
 const NAV = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutGrid },
   { label: 'Settlement', href: '/dashboard/settlement', icon: ArrowLeftRight },
+  { label: 'SCOUT', href: '/dashboard/scout', icon: Award },
   { label: 'Off-ramp', href: '/dashboard/offramp', icon: Banknote },
   { label: 'Treasury', href: '/dashboard/treasury', icon: Landmark },
 ];

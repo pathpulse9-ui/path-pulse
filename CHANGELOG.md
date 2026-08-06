@@ -15,6 +15,19 @@ All notable changes to PathPulse are documented here.
 
 > ⚠️ **Corridor note:** Ramp off-ramps **XLM** (not Stellar-USDC). PathPulse settles in USDC, so drivers would convert USDC→XLM on Stellar (trivial via path payment/DEX) before off-ramping, or we use a USDC-supporting rail. INR off-ramp availability + KYC/countries to confirm during Ramp onboarding.
 
+## [0.1.7.0] — 2026-08-05
+
+### Added (PAT-14 · Phase 4 · D6 — SCOUT reputation assets)
+- **SCOUT1/2/3 Classic Assets** (`backend/src/stellar/scout.ts`) issued by a protocol issuer with **AUTH_REQUIRED + AUTH_REVOCABLE + AUTH_CLAWBACK_ENABLED**. Tier assignment from a **PulseGen validation score** (synthetic: ≥0.8→SCOUT3, ≥0.5→SCOUT2, else SCOUT1) via trustline → issuer-authorize → badge payment; on-chain tier lookup.
+- **Settlement engine now reads reputation on-chain** — each driver's SCOUT badge sets the multiplier (1.0/1.2/1.5×), overriding the request's tier field.
+- Endpoints: `GET /v1/scout` (issuer+tiers), `POST /v1/scout/assign` (score→badge), `GET /v1/scout/{address}` (on-chain tier); contract types + OpenAPI.
+- Web **SCOUT** console page (`web/app/scout/page.tsx`): issuer/tiers, assign-a-tier, tier lookup; added to `ConsoleHeader`.
+
+### Verified (testnet)
+- Issuer flags = auth_required + auth_revocable + auth_clawback_enabled on Horizon; drivers hold **authorized** SCOUT badges. Assign 0.3/0.6/0.9 → SCOUT1/2/3. A settlement passing all drivers as `tier:1` still paid 1.0/1.2/1.5× — proving tiers are read from chain, not input. `tsc` clean; production web build clean.
+
+> Remaining on PAT-14: Android/iOS SCOUT tier-badge UI (mobile — Daiwik). The assets + API are ready for it.
+
 ## [0.1.6.0] — 2026-08-03
 
 ### Added (PAT-11 · Phase 3 · D4 — Mercuryo off-ramp)
