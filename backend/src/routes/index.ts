@@ -38,6 +38,7 @@ import {
   applyCallback,
 } from '../services/offramp.js';
 import { verifyCallbackSignature } from '../services/mercuryo.js';
+import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 
 export const router = Router();
@@ -278,6 +279,35 @@ router.get('/v1/offramp/sessions', async (req, res, next) => {
 router.get('/v1/offramp/sessions/:id', async (req, res, next) => {
   try {
     res.json(await getWithdrawal(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// SCOUT reputation assets (D6): config, assign a tier from a PulseGen score, look up on-chain tier.
+const assignScoutSchema = z.object({ score: z.number().min(0).max(1) });
+
+router.get('/v1/scout', async (_req, res, next) => {
+  try {
+    res.json(await getScoutConfig());
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/scout/assign', async (req, res, next) => {
+  try {
+    const { score } = assignScoutSchema.parse(req.body);
+    res.json(await assignSampleTier(score));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/scout/:address', async (req, res, next) => {
+  try {
+    const { tier, multiplier } = await getOnchainTier(req.params.address);
+    res.json({ address: req.params.address, tier, multiplier });
   } catch (e) {
     next(e);
   }

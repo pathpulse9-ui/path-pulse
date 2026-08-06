@@ -13,6 +13,9 @@ import type {
   OffRampSession,
   OffRampSessionPage,
   CreateOffRampWithdrawalRequest,
+  ScoutConfig,
+  ScoutAssignment,
+  ScoutTierLookup,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -100,4 +103,21 @@ export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest) {
     method: 'POST',
     body: JSON.stringify(req),
   });
+}
+
+// ── SCOUT reputation assets (D6) ──────────────────────────────────────
+
+export function getScoutConfig() {
+  return apiFetch<ScoutConfig>('/v1/scout');
+}
+
+export function assignScoutTier(score: number) {
+  return apiFetch<ScoutAssignment>('/v1/scout/assign', {
+    method: 'POST',
+    body: JSON.stringify({ score }),
+  });
+}
+
+export function getScoutTier(address: string) {
+  return apiFetch<ScoutTierLookup>(`/v1/scout/${address}`);
 }
