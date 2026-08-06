@@ -38,6 +38,7 @@ import {
   applyCallback,
 } from '../services/offramp.js';
 import { verifyRampWebhook } from '../services/ramp.js';
+import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 
 export const router = Router();
 
@@ -201,6 +202,38 @@ router.get('/v1/settlement/batches', (req, res, next) => {
 router.get('/v1/settlement/batches/:id', (req, res, next) => {
   try {
     res.json(getSettlementBatch(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+const createPayoutBatchSchema = z.object({ settlementBatchId: z.string().min(1) });
+
+router.post('/v1/ops/payouts/batches', async (req, res, next) => {
+  try {
+    const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
+    const settlementBatch = getSettlementBatch(settlementBatchId);
+    res.json(
+      await createPayoutBatch(settlementBatch.driverPayouts, settlementBatch.asset, { settlementBatchId }),
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/payouts/batches', async (req, res, next) => {
+  try {
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(await listPayoutBatches(cursor, limit));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/payouts/batches/:id', async (req, res, next) => {
+  try {
+    res.json(await getPayoutBatch(req.params.id));
   } catch (e) {
     next(e);
   }
