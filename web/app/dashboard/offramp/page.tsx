@@ -8,7 +8,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 const STATUS_LABEL: Record<OffRampStatus, string> = {
   pending_user_transfer_start: 'Awaiting your crypto transfer',
-  pending_anchor: 'Mercuryo converting → fiat',
+  pending_anchor: 'Ramp converting → fiat',
   completed: 'Completed',
   error: 'Error',
 };
@@ -90,9 +90,9 @@ export default function OffRampPage() {
               </span>
             </h1>
             <p className="text-sm text-black/60 mt-2">
-              Mercuryo off-ramp (sell crypto → fiat to card). Mercuryo owns KYC / conversion /
-              custody via its hosted flow. Running against the <strong>sandbox stub</strong>{' '}
-              until an SDK partner token + whitelisted IP land.
+              Ramp Network off-ramp (sell XLM → fiat, incl. INR). Ramp runs KYC / conversion /
+              bank payout in its hosted widget. Running against the <strong>sandbox stub</strong>{' '}
+              until a Ramp host API key + webhook key land.
             </p>
           </div>
 

@@ -247,7 +247,7 @@ export interface CreateOffRampWithdrawalRequest {
 
 export interface OffRampSession {
   id: string;
-  provider: 'mercuryo';
+  provider: 'ramp' | 'mercuryo';
   /** true when running against the sandbox stub (no live Mercuryo credentials). */
   sandbox: boolean;
   status: OffRampStatus;
