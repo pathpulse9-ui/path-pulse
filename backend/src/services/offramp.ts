@@ -7,27 +7,20 @@ import type {
   OffRampSessionPage,
   OffRampStatus,
 } from '@pathpulse/contract';
-import { env, mercuryoLive } from '../config/env.js';
+import { env, rampLive } from '../config/env.js';
 import { getSettlementBatch } from '../stellar/settlement.js';
-import {
-  signInOrSignUp,
-  getSellRate,
-  startSell,
-  getTransactionStatus,
-  mapMercuryoStatus,
-} from './mercuryo.js';
+import { buildOfframpUrl, mapRampStatus } from './ramp.js';
 
 /**
- * Fiat off-ramp orchestration (D4).
+ * Fiat off-ramp orchestration (D4 — Ramp Network).
  *
- * Mercuryo is a **card-based** B2B REST ramp (not a Stellar SEP-24 anchor): the driver
- * sells crypto and Mercuryo pays fiat to their payment card. Flow: sign-in → sell-rates
- * → sell (hosted redirect) → user binds card + sends crypto to Mercuryo's deposit address
- * → Mercuryo pays fiat. Status via /b2b/transactions + callbacks.
+ * Ramp is a widget-based ramp: the driver opens a signed off-ramp widget URL, Ramp runs
+ * KYC + shows a deposit address + pays fiat to their bank. Status arrives via ECDSA-signed
+ * V3 webhooks (see routes `/v1/offramp/callback`), correlated to the session by a `ref` param.
  *
- * Behind an `OffRampProvider` interface. Live provider calls Mercuryo; sandbox stub
- * simulates the redirect + status progression so the flow is demoable until an
- * Sdk-Partner-Token + whitelisted IP land (external onboarding).
+ * Behind an `OffRampProvider` interface. Live provider builds the Ramp URL; sandbox stub
+ * simulates the URL + status progression so the flow is demoable until a Ramp host API key
+ * + webhook public key land (external onboarding).
  */
 
 function httpError(message: string, status: number, name: string): Error {
@@ -40,8 +33,8 @@ function httpError(message: string, status: number, name: string): Error {
 export interface OffRampContext {
   email?: string;
   userIp?: string;
-  /** Address to refund crypto to on error (defaults to the driver's own address). */
-  refundAddress?: string;
+  /** The driver's Stellar address (the crypto being sold). */
+  userAddress?: string;
 }
 
 interface OffRampProvider {
@@ -50,17 +43,20 @@ interface OffRampProvider {
   status(session: OffRampSession): Promise<OffRampStatus>;
 }
 
+const callbackBase = `${process.env.PUBLIC_API_URL ?? `http://localhost:${env.port}`}/v1/offramp/callback`;
+
 // A stable dev "anchor" account for the sandbox (where the user would send funds).
 const sandboxAnchor = Keypair.random().publicKey();
 
 const sandboxProvider: OffRampProvider = {
   sandbox: true,
   async start(session) {
-    session.fiatAmountEstimate = (Number(session.amount) * env.mercuryo.indicativeRate).toFixed(2);
-    session.interactiveUrl = `${env.webAppUrl}/offramp?session=${session.id}`;
+    session.fiatAmountEstimate = (Number(session.amount) * env.ramp.indicativeRate).toFixed(2);
+    session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
     session.anchorAccount = sandboxAnchor;
   },
   async status(session) {
+    // Time-based simulation so polling shows real progression.
     const elapsed = (Date.now() - new Date(session.createdAt).getTime()) / 1000;
     if (elapsed < 8) return 'pending_user_transfer_start';
     if (elapsed < 16) return 'pending_anchor';
@@ -68,43 +64,32 @@ const sandboxProvider: OffRampProvider = {
   },
 };
 
-// Per-session Mercuryo context needed to poll status (bearer + merchant id). Not persisted.
-const mercuryoRefs = new Map<string, { bearer: string; merchantTransactionId: string }>();
-
 const liveProvider: OffRampProvider = {
   sandbox: false,
   async start(session, ctx) {
-    if (!ctx.email) {
-      throw httpError('Off-ramp requires an authenticated user email (Mercuryo user)', 400, 'ValidationError');
-    }
-    const user = await signInOrSignUp(ctx.email, ctx.userIp);
-    // NOTE: KYC (SumSub) must be `complete` for feature:crypto before a sell can settle;
-    // the hosted redirect handles KYC when incomplete. See docs/API_ARCHITECTURE + Mercuryo guide.
-    const rate = await getSellRate(user.bearerToken, session.asset.code, session.fiatCurrency, session.amount, env.mercuryo.network);
-    session.fiatAmountEstimate = rate.fiatAmount;
-    const merchantTransactionId = session.id.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 255);
-    const refund = ctx.refundAddress ?? session.anchorAccount ?? '';
-    const started = await startSell(user.bearerToken, rate.trxToken, refund, merchantTransactionId, ctx.userIp);
-    session.interactiveUrl = started.redirectUrl;
-    session.merchantTransactionId = started.merchantTransactionId;
-    mercuryoRefs.set(session.id, { bearer: user.bearerToken, merchantTransactionId: started.merchantTransactionId });
+    session.fiatAmountEstimate = (Number(session.amount) * env.ramp.indicativeRate).toFixed(2);
+    session.interactiveUrl = buildOfframpUrl({
+      sessionId: session.id,
+      amount: session.amount,
+      userAddress: ctx.userAddress,
+      callbackBase,
+      finalUrl: `${env.webAppUrl}/dashboard/offramp?session=${session.id}`,
+    });
   },
+  // Ramp status is webhook-driven (see applyCallback); polling just returns the last known state.
   async status(session) {
-    const ref = mercuryoRefs.get(session.id);
-    if (!ref) return session.status; // no live handle (e.g. after restart) — rely on callbacks
-    const mapped = mapMercuryoStatus(await getTransactionStatus(ref.bearer, ref.merchantTransactionId));
-    return mapped ?? session.status;
+    return session.status;
   },
 };
 
-const provider: OffRampProvider = mercuryoLive ? liveProvider : sandboxProvider;
+const provider: OffRampProvider = rampLive ? liveProvider : sandboxProvider;
 
 // ── in-memory index (links off-ramp events to settlement batches; feeds D8) ──
 const sessions = new Map<string, OffRampSession>();
 
 function assetOf(ref?: AssetRef): AssetRef {
   if (ref?.code) return ref;
-  return { code: env.mercuryo.crypto };
+  return { code: env.ramp.crypto };
 }
 
 export async function createWithdrawal(
@@ -120,13 +105,13 @@ export async function createWithdrawal(
   const now = new Date().toISOString();
   const session: OffRampSession = {
     id: `ofr_${Date.now()}_${randomBytes(4).toString('hex')}`,
-    provider: 'mercuryo',
+    provider: 'ramp',
     sandbox: provider.sandbox,
     status: 'pending_user_transfer_start',
     interactiveUrl: '',
     amount: req.amount,
     asset: assetOf(req.asset),
-    fiatCurrency: req.fiatCurrency ?? env.mercuryo.fiat,
+    fiatCurrency: req.fiatCurrency ?? env.ramp.fiat,
     settlementBatchId: req.settlementBatchId,
     createdAt: now,
     updatedAt: now,
@@ -163,11 +148,11 @@ export async function listWithdrawals(cursor?: string, limit = 50): Promise<OffR
   return { items, nextCursor: next };
 }
 
-/** Apply a verified Mercuryo callback (webhook) to the matching session. */
-export function applyCallback(merchantTransactionId: string, mercuryoStatus: string): boolean {
-  const s = [...sessions.values()].find((x) => x.merchantTransactionId === merchantTransactionId);
+/** Apply a verified Ramp webhook to the session identified by the `ref` query param. */
+export function applyCallback(sessionId: string, rampStatus: string): boolean {
+  const s = sessions.get(sessionId);
   if (!s) return false;
-  const mapped = mapMercuryoStatus(mercuryoStatus as never);
+  const mapped = mapRampStatus(rampStatus);
   if (mapped && mapped !== s.status) {
     s.status = mapped;
     s.updatedAt = new Date().toISOString();

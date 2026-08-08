@@ -72,23 +72,24 @@ export const env = {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
 
-  // Mercuryo On/Off-Ramp B2B REST API (D4). NOTE: Mercuryo is a card-based ramp
-  // (sign-in → sell-rates → sell → hosted redirect + callbacks), NOT a Stellar
-  // SEP-24 anchor. All optional — absent credentials ⇒ in-process sandbox stub.
-  mercuryo: {
-    apiUrl: process.env.MERCURYO_API_URL ?? 'https://sandbox-api.mrcr.io/v1.6',
-    // Sdk-Partner-Token: signs sign-up / sign-in (from your integration manager).
-    sdkPartnerToken: process.env.MERCURYO_SDK_PARTNER_TOKEN ?? '',
-    // Callback (webhook) HMAC key used to verify the X-Signature header.
-    callbackSignKey: process.env.MERCURYO_CALLBACK_SIGN_KEY ?? '',
-    partnerName: process.env.MERCURYO_PARTNER_NAME ?? 'PathPulse',
-    // Corridor. Mercuryo supports USDC on Stellar; off-ramp fiat is EUR/USD (NOT INR).
-    // Confirm the exact network label + pairs via GET /b2b/currencies.
-    crypto: process.env.OFFRAMP_CRYPTO ?? 'USDC',
-    network: process.env.OFFRAMP_NETWORK ?? 'STELLAR',
-    fiat: process.env.OFFRAMP_FIAT ?? 'EUR',
-    // Indicative fiat per 1 USDC — sandbox stub estimate only (live uses sell-rates).
-    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 0.92),
+  // Ramp Network off-ramp (D4). Widget/SDK-based: we build a signed off-ramp widget
+  // URL (enabledFlows=OFFRAMP) and receive ECDSA-signed V3 webhooks. All optional —
+  // absent an API key ⇒ in-process sandbox stub.
+  ramp: {
+    apiKey: process.env.RAMP_API_KEY ?? '',
+    // Hosted widget origin (staging: app.demo.ramp.network; prod: app.ramp.network).
+    widgetUrl: process.env.RAMP_WIDGET_URL ?? 'https://app.demo.ramp.network',
+    // Ramp's ECDSA public key (PEM) used to verify webhook X-Body-Signature.
+    webhookPublicKey: (process.env.RAMP_WEBHOOK_PUBLIC_KEY ?? '').replace(/\\n/g, '\n'),
+    hostAppName: process.env.RAMP_HOST_APP_NAME ?? 'PathPulse',
+    // Corridor. Ramp off-ramps XLM on Stellar (Stellar-USDC not in the off-ramp list);
+    // INR is supported. Confirm live pairs via Ramp's /offramp/assets.
+    crypto: process.env.OFFRAMP_CRYPTO ?? 'XLM',
+    // Ramp asset id is CHAIN_SYMBOL, e.g. "XLM_XLM".
+    assetId: process.env.OFFRAMP_ASSET_ID ?? 'XLM_XLM',
+    fiat: process.env.OFFRAMP_FIAT ?? 'INR',
+    // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live: Ramp quote).
+    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 30),
   },
 
   sdp: {
@@ -101,8 +102,8 @@ export const env = {
   },
 } as const;
 
-/** Live Mercuryo requires the SDK partner token + API URL; otherwise the sandbox stub runs. */
-export const mercuryoLive = !!process.env.MERCURYO_SDK_PARTNER_TOKEN && !!process.env.MERCURYO_API_URL;
+/** Live Ramp requires a host API key; otherwise the sandbox stub runs. */
+export const rampLive = !!process.env.RAMP_API_KEY;
 
 export const sdpLive = !!process.env.SDP_API_KEY && !!process.env.SDP_WALLET_ID && !!process.env.SDP_ASSET_ID;
 

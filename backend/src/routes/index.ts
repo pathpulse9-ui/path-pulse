@@ -37,7 +37,8 @@ import {
   getWithdrawal,
   applyCallback,
 } from '../services/offramp.js';
-import { verifyCallbackSignature } from '../services/mercuryo.js';
+import { verifyRampWebhook } from '../services/ramp.js';
+import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 
 export const router = Router();
@@ -257,7 +258,7 @@ router.post('/v1/offramp/sessions', async (req, res, next) => {
       await createWithdrawal(userId, parsed, {
         email: session?.email,
         userIp,
-        refundAddress: session?.address,
+        userAddress: session?.address,
       }),
     );
   } catch (e) {
@@ -283,20 +284,47 @@ router.get('/v1/offramp/sessions/:id', async (req, res, next) => {
   }
 });
 
-// Mercuryo callback (webhook): verify X-Signature (HMAC-SHA256 of the raw body) then apply.
+// SCOUT reputation assets (D6): config, assign a tier from a PulseGen score, look up on-chain tier.
+const assignScoutSchema = z.object({ score: z.number().min(0).max(1) });
+
+router.get('/v1/scout', async (_req, res, next) => {
+  try {
+    res.json(await getScoutConfig());
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/scout/assign', async (req, res, next) => {
+  try {
+    const { score } = assignScoutSchema.parse(req.body);
+    res.json(await assignSampleTier(score));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/scout/:address', async (req, res, next) => {
+  try {
+    const { tier, multiplier } = await getOnchainTier(req.params.address);
+    res.json({ address: req.params.address, tier, multiplier });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Ramp webhook (V3): verify the ECDSA X-Body-Signature over the raw body, then apply the
+// status to the session named by the `ref` query param (Ramp excludes URL params from the sig).
 router.post('/v1/offramp/callback', (req, res) => {
   const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
-  const signature = (req.headers['x-signature'] as string) ?? '';
-  if (!verifyCallbackSignature(raw, signature)) {
-    res.status(401).json({ error: 'InvalidSignature', message: 'callback signature verification failed' });
+  const signature = (req.headers['x-body-signature'] as string) ?? '';
+  if (!verifyRampWebhook(raw, signature)) {
+    res.status(401).json({ error: 'InvalidSignature', message: 'webhook signature verification failed' });
     return;
   }
-  const payload = (req.body?.payload?.data ?? req.body?.data ?? {}) as {
-    merchant_transaction_id?: string;
-    status?: string;
-  };
-  if (payload.merchant_transaction_id && payload.status) {
-    applyCallback(payload.merchant_transaction_id, payload.status);
-  }
-  res.status(200).json({ ok: true }); // Mercuryo needs a 200 to consider it delivered
+  const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined;
+  const body = req.body as { type?: string; status?: string; payload?: { status?: string } };
+  const status = body.type ?? body.status ?? body.payload?.status;
+  if (ref && status) applyCallback(ref, status);
+  res.status(200).json({ ok: true }); // Ramp needs a 200 to consider it delivered
 });
