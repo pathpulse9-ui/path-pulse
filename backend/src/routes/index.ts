@@ -32,6 +32,11 @@ import {
   getSettlementBatch,
 } from '../stellar/settlement.js';
 import {
+  executeGroupPayout,
+  listGroupPayoutBatches,
+  getGroupPayoutBatch,
+} from '../stellar/groupPayout.js';
+import {
   createWithdrawal,
   listWithdrawals,
   getWithdrawal,
@@ -203,6 +208,44 @@ router.get('/v1/settlement/batches', (req, res, next) => {
 router.get('/v1/settlement/batches/:id', (req, res, next) => {
   try {
     res.json(getSettlementBatch(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Bulk group payout (CSV/Excel upload): flat, exact-amount payments, no split/tier logic.
+const groupPayoutRecipientSchema = z.object({
+  name: z.string().min(1),
+  address: z.string().min(1),
+  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+});
+const createGroupPayoutSchema = z.object({
+  asset: assetRefOptional(),
+  recipients: z.array(groupPayoutRecipientSchema).min(1).max(100),
+});
+
+router.post('/v1/settlement/group-payouts', async (req, res, next) => {
+  try {
+    const parsed = createGroupPayoutSchema.parse(req.body);
+    res.json(await executeGroupPayout(parsed));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/settlement/group-payouts', (req, res, next) => {
+  try {
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(listGroupPayoutBatches(cursor, limit));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/settlement/group-payouts/:id', (req, res, next) => {
+  try {
+    res.json(getGroupPayoutBatch(req.params.id));
   } catch (e) {
     next(e);
   }

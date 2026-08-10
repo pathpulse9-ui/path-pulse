@@ -10,6 +10,9 @@ import type {
   SettlementBatch,
   SettlementBatchPage,
   CreateSettlementBatchRequest,
+  GroupPayoutBatch,
+  GroupPayoutBatchPage,
+  CreateGroupPayoutRequest,
   OffRampSession,
   OffRampSessionPage,
   CreateOffRampWithdrawalRequest,
@@ -83,6 +86,23 @@ export function getSettlementBatch(id: string) {
 
 export function createSettlementBatch(req: CreateSettlementBatchRequest) {
   return apiFetch<SettlementBatch>('/v1/settlement/batches', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+// ── Group payouts (bulk CSV/Excel upload) ─────────────────────────────
+
+export function listGroupPayouts(limit = 50) {
+  return apiFetch<GroupPayoutBatchPage>(`/v1/settlement/group-payouts?limit=${limit}`);
+}
+
+export function getGroupPayout(id: string) {
+  return apiFetch<GroupPayoutBatch>(`/v1/settlement/group-payouts/${id}`);
+}
+
+export function createGroupPayout(req: CreateGroupPayoutRequest) {
+  return apiFetch<GroupPayoutBatch>('/v1/settlement/group-payouts', {
     method: 'POST',
     body: JSON.stringify(req),
   });
