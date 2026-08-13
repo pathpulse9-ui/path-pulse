@@ -17,6 +17,8 @@ val PpShapes = Shapes(
 
 val PpPillShape = RoundedCornerShape(50)
 val PpCardShape = RoundedCornerShape(16.dp)
+val PpTileShape = RoundedCornerShape(12.dp)
+val PpBadgeShape = RoundedCornerShape(10.dp)
 
 private val PpColorScheme = lightColorScheme(
     background = PpBackground,
@@ -34,6 +36,7 @@ fun PathPulseTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = PpColorScheme,
         shapes = PpShapes,
+        typography = PpTypography,
         content = content,
     )
 }
