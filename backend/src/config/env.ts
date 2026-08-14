@@ -92,6 +92,33 @@ export const env = {
     indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 30),
   },
 
+  // Carret Infra off-ramp (D4 · alt provider). Pure REST, server-driven — no widget.
+  // Corridor: USDC on Stellar → INR (bank_transfer). All optional — absent an API key
+  // ⇒ in-process sandbox stub that returns shape-accurate mocked Carret responses.
+  //
+  // Onboarding (external — PAT-27): email contact@carret.in for `dev.carret.in` sandbox
+  // API-KEY + Partner Dashboard access; then register the webhook URL there.
+  carret: {
+    apiKey: process.env.CARRET_API_KEY ?? '',
+    // Staging: https://dev.carret.in/api ; production: https://prod.carret.in/api.
+    baseUrl: process.env.CARRET_BASE_URL ?? 'https://dev.carret.in/api',
+    // The Partner account id (main or sub) that owns the trading wallet + orders.
+    accountId: process.env.CARRET_ACCOUNT_ID ?? '',
+    // Corridor: Carret's Supported Assets page lists USDC on Stellar in on-ramp + off-ramp.
+    crypto: process.env.CARRET_CRYPTO ?? 'USDC',
+    chain: process.env.CARRET_CHAIN ?? 'Stellar',
+    fiat: process.env.CARRET_FIAT ?? 'INR',
+    // Registered bank_id used for the off-ramp order's bank_transfer payout.
+    bankId: process.env.CARRET_BANK_ID ?? '',
+    // Optional webhook shared secret (signature scheme TBD — pending Carret docs/team).
+    webhookSecret: process.env.CARRET_WEBHOOK_SECRET ?? '',
+    // Indicative fiat per 1 USDC — sandbox stub estimate only (live: Carret quote).
+    indicativeRate: Number(process.env.CARRET_INDICATIVE_RATE ?? 84),
+  },
+
+  // Which off-ramp provider is active: 'ramp' (default, current) or 'carret'.
+  offrampProvider: (process.env.OFFRAMP_PROVIDER ?? 'ramp') as 'ramp' | 'carret',
+
   sdp: {
     baseUrl: process.env.SDP_BASE_URL ?? 'http://localhost:8000',
     apiKey: process.env.SDP_API_KEY ?? '',
@@ -104,6 +131,9 @@ export const env = {
 
 /** Live Ramp requires a host API key; otherwise the sandbox stub runs. */
 export const rampLive = !!process.env.RAMP_API_KEY;
+
+/** Live Carret requires an API-KEY + accountId; otherwise the sandbox stub runs. */
+export const carretLive = !!process.env.CARRET_API_KEY && !!process.env.CARRET_ACCOUNT_ID;
 
 export const sdpLive = !!process.env.SDP_API_KEY && !!process.env.SDP_WALLET_ID && !!process.env.SDP_ASSET_ID;
 
