@@ -215,6 +215,35 @@ export interface ScoutAssignment {
   score: number;
   issuer: string;
   assetCode: string;
+// ── Group payouts (bulk CSV/Excel upload — flat, non-split payments) ──
+}
+
+export interface GroupPayoutRecipient {
+  name: string;
+  address: string;
+  /** 7-decimal string; paid exactly, no split/tier logic. */
+  amount: string;
+}
+
+export interface CreateGroupPayoutRequest {
+  asset?: AssetRef;
+  recipients: GroupPayoutRecipient[];
+}
+
+export interface GroupPayoutReceipt {
+  name: string;
+  address: string;
+  amount: string;
+}
+
+export interface GroupPayoutBatch {
+  id: string;
+  createdAt: string;
+  network: StellarNetwork;
+  asset: AssetRef;
+  totalAmount: string;
+  sourceAddress: string;
+  receipts: GroupPayoutReceipt[];
   txHash: string;
   horizonUrl: string;
 }
@@ -223,6 +252,11 @@ export interface ScoutTierLookup {
   address: string;
   tier: ScoutTier | null;
   multiplier: number;
+}
+
+export interface GroupPayoutBatchPage {
+  items: GroupPayoutBatch[];
+  nextCursor: string | null;
 }
 
 // ── Fiat off-ramp (D4 — Mercuryo SEP-24) ──────────────────────────────

@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keypair } from '@stellar/stellar-sdk';
-import type { SettlementBatch } from '@pathpulse/contract';
+import type { SettlementBatch, GroupPayoutBatch } from '@pathpulse/contract';
 import { FRIENDBOT_URL } from '../../lib/stellar';
-import { listSettlementBatches, createSettlementBatch } from '../../lib/api';
+import { listSettlementBatches, createSettlementBatch, createGroupPayout } from '../../lib/api';
+import { parseRecipientsFile, type ParsedRecipient } from '../../lib/parseRecipients';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
@@ -30,6 +31,13 @@ export default function SettlementPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  const [recipients, setRecipients] = useState<ParsedRecipient[]>([]);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [payingGroup, setPayingGroup] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [groupResult, setGroupResult] = useState<GroupPayoutBatch | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,6 +84,46 @@ export default function SettlementPage() {
     }
   }, [load]);
 
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setParseError(null);
+    setGroupError(null);
+    setGroupResult(null);
+    try {
+      const parsed = await parseRecipientsFile(file);
+      setRecipients(parsed);
+    } catch (err) {
+      setRecipients([]);
+      setParseError(err instanceof Error ? err.message : 'Failed to parse file');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, []);
+
+  const validRecipients = useMemo(
+    () => recipients.filter((r) => r.addressValid && r.amountValid),
+    [recipients],
+  );
+  const invalidCount = recipients.length - validRecipients.length;
+  const totalAmount = validRecipients.reduce((sum, r) => sum + Number(r.amount), 0);
+
+  const payGroup = useCallback(async () => {
+    if (validRecipients.length === 0) return;
+    setPayingGroup(true);
+    setGroupError(null);
+    try {
+      const batch = await createGroupPayout({
+        recipients: validRecipients.map((r) => ({ name: r.name, address: r.address, amount: r.amount })),
+      });
+      setGroupResult(batch);
+    } catch (err) {
+      setGroupError(err instanceof Error ? err.message : 'Group payout failed');
+    } finally {
+      setPayingGroup(false);
+    }
+  }, [validRecipients]);
+
   return (
     <div>
       <div>
@@ -94,6 +142,107 @@ export default function SettlementPage() {
               Deterministic 50 / 30 / 20 revenue split with SCOUT reputation multipliers.
               Drill down: Source → Split → Driver.
             </p>
+          </div>
+
+          <div className="rounded-2xl bg-white p-6 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-black text-lg font-medium" style={{ letterSpacing: '-0.02em' }}>
+                  Group payout
+                </h2>
+                <p className="text-sm text-black/60 mt-1">
+                  Upload a CSV or Excel file of name, Stellar address, and amount — pays each
+                  address exactly, no split or tier logic.
+                </p>
+              </div>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
+              >
+                Upload CSV / Excel
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </div>
+
+            {parseError && <p className="text-sm text-red-600">{parseError}</p>}
+
+            {recipients.length > 0 && (
+              <>
+                <div className="flex items-center gap-4 flex-wrap text-sm text-black/60">
+                  <span>{recipients.length} rows</span>
+                  <span className="text-green-700">{validRecipients.length} verified</span>
+                  {invalidCount > 0 && <span className="text-red-600">{invalidCount} invalid</span>}
+                  <span>Total {totalAmount.toFixed(2)} XLM</span>
+                </div>
+
+                <div className="max-h-[420px] overflow-y-auto space-y-2 pr-1">
+                  {recipients.map((r, i) => {
+                    const valid = r.addressValid && r.amountValid;
+                    return (
+                      <div
+                        key={`${r.address}-${i}`}
+                        className={`rounded-xl border p-4 flex items-center gap-4 ${
+                          valid ? 'border-black/10' : 'border-red-300 bg-red-50'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-black font-medium truncate">{r.name || 'Unnamed'}</div>
+                          <div className="text-xs text-black/40 font-mono truncate">{r.address}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-black">{r.amountValid ? r.amount : '—'} XLM</div>
+                        </div>
+                        <span
+                          className={`text-xs rounded-full border px-2 py-0.5 shrink-0 ${
+                            valid
+                              ? 'bg-green-100 text-green-700 border-green-300'
+                              : 'bg-red-100 text-red-700 border-red-300'
+                          }`}
+                        >
+                          {valid
+                            ? 'Verified'
+                            : !r.addressValid
+                              ? 'Invalid address'
+                              : 'Invalid amount'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={payGroup}
+                  disabled={validRecipients.length === 0 || payingGroup}
+                  className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
+                >
+                  {payingGroup
+                    ? 'Paying…'
+                    : `Pay ${validRecipients.length} recipient${validRecipients.length === 1 ? '' : 's'} (${totalAmount.toFixed(2)} XLM)`}
+                </button>
+
+                {groupError && <p className="text-sm text-red-600">{groupError}</p>}
+
+                {groupResult && (
+                  <div className="rounded-xl border border-green-300 bg-green-50 p-4 text-sm">
+                    Paid {groupResult.receipts.length} recipients · {groupResult.totalAmount} XLM ·{' '}
+                    <a
+                      href={groupResult.horizonUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-black transition-colors duration-200"
+                    >
+                      view on stellar.expert
+                    </a>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="rounded-2xl bg-white p-6 space-y-4">
