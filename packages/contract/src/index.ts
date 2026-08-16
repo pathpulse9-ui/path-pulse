@@ -215,13 +215,11 @@ export interface ScoutAssignment {
   score: number;
   issuer: string;
   assetCode: string;
-// ── Group payouts (bulk CSV/Excel upload — flat, non-split payments) ──
 }
 
 export interface GroupPayoutRecipient {
   name: string;
   address: string;
-  /** 7-decimal string; paid exactly, no split/tier logic. */
   amount: string;
 }
 
@@ -261,15 +259,13 @@ export interface GroupPayoutBatchPage {
 
 // ── Fiat off-ramp (D4 — Mercuryo SEP-24) ──────────────────────────────
 
-/** SEP-24 interactive withdrawal lifecycle (subset used by PathPulse). */
 export type OffRampStatus =
-  | 'pending_user_transfer_start' // user must send stablecoin to the anchor
-  | 'pending_anchor' // anchor is converting + paying out fiat
+  | 'pending_user_transfer_start'
+  | 'pending_anchor'
   | 'completed'
   | 'error';
 
 export interface CreateOffRampWithdrawalRequest {
-  /** Stablecoin amount to off-ramp, 7-decimal string. */
   amount: string;
   /** Stablecoin to withdraw (defaults to USDC on testnet). */
   asset?: AssetRef;

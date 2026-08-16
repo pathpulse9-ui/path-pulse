@@ -4,7 +4,7 @@ import { logger } from './config/logger.js';
 
 const app = createServer();
 
-app.listen(env.port, () => {
+app.listen(env.port, '0.0.0.0', () => {
   logger.info(
     { port: env.port, network: env.network, horizon: env.horizonUrl },
     `PathPulse Backend Core listening on :${env.port}`,

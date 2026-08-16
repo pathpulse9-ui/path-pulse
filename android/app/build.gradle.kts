@@ -22,7 +22,8 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "API_BASE", "\"http://10.73.95.160:8080\"")
+            val apiBase = providers.gradleProperty("pathpulse.apiBase").getOrElse("http://10.73.95.160:8080")
+            buildConfigField("String", "API_BASE", "\"$apiBase\"")
         }
         release {
             buildConfigField("String", "API_BASE", "\"https://TBD\"")
