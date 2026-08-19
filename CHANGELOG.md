@@ -2,6 +2,22 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.9.0] — 2026-08-13
+
+### Added (PAT-11 · D4 — Carret Infra off-ramp provider, mocked-first)
+- Introduced **Carret Infrastructure API** as an alternate `OffRampProvider` alongside Ramp. Corridor: **USDC on Stellar → INR** (native match for PathPulse's settlement asset — no USDC→XLM bridge hop required). Pure REST + `API-KEY` header, no widget/redirect.
+- New `backend/src/services/carret.ts`: typed HTTP client covering `GET /supported_routes/`, `POST /offramp/quote/`, `POST /offramp/place_order/`, `GET /offramp/orders/{id}/`; status mapper (`open|partially_filled → pending_anchor`, `filled → completed`, `cancelled → error`); fail-closed HMAC-SHA256 webhook verifier for `X-Carret-Signature` (scheme TBD — placeholder until Carret confirms).
+- New `carretMocks`: shape-accurate mocked responses so the full flow is demoable + testable pre-onboarding. Time-based order progression (`open` → `partially_filled` → `filled`).
+- Provider selection via `OFFRAMP_PROVIDER=ramp|carret` (default `ramp`, so main is unchanged). `carretLive` toggle engages the real API the moment `CARRET_API_KEY` + `CARRET_ACCOUNT_ID` land.
+- `applyCarretCallback(orderId, status)` correlates webhooks by Carret's `order_id` (Carret's payload doesn't carry our session id). Callback route now provider-shaped.
+- Contract: `OffRampSession.provider` widened to `'ramp' | 'mercuryo' | 'carret'`.
+- Env: `CARRET_API_KEY`, `CARRET_BASE_URL`, `CARRET_ACCOUNT_ID`, `CARRET_CRYPTO=USDC`, `CARRET_CHAIN=Stellar`, `CARRET_FIAT=INR`, `CARRET_BANK_ID`, `CARRET_WEBHOOK_SECRET`, `CARRET_INDICATIVE_RATE`, `OFFRAMP_PROVIDER`.
+
+### Verified
+- `tsc` clean (contract + backend). With `OFFRAMP_PROVIDER=carret` (no API key), sandbox flow: create session → returns `provider:'carret'`, `sandbox:true`, mocked `quote_id`/`order_id`, indicative INR estimate; polling advances through Carret's status vocabulary → `completed`.
+
+> **Open (external — PAT-27):** Carret sandbox `API-KEY` for `dev.carret.in`, Partner Dashboard access to register the webhook URL, definitive webhook signature scheme, and the sub-account/KYC onboarding model (per-driver sub-accounts under PathPulse's main account). Ramp remains the default until Carret goes live.
+
 ## [0.1.8.0] — 2026-08-05
 
 ### Changed (PAT-11 · D4 — off-ramp switched Mercuryo → Ramp Network)

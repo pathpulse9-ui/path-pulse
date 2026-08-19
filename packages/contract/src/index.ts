@@ -279,8 +279,8 @@ export interface CreateOffRampWithdrawalRequest {
 
 export interface OffRampSession {
   id: string;
-  provider: 'ramp' | 'mercuryo';
-  /** true when running against the sandbox stub (no live Mercuryo credentials). */
+  provider: 'ramp' | 'mercuryo' | 'carret';
+  /** true when running against the sandbox stub (no live provider credentials). */
   sandbox: boolean;
   status: OffRampStatus;
   /** Hosted SEP-24 interactive URL (KYC + bank details + conversion). */

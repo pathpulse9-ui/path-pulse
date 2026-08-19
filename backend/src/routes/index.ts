@@ -41,8 +41,11 @@ import {
   listWithdrawals,
   getWithdrawal,
   applyCallback,
+  applyCarretCallback,
+  activeProvider,
 } from '../services/offramp.js';
 import { verifyRampWebhook } from '../services/ramp.js';
+import { verifyCarretWebhook } from '../services/carret.js';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { quoteSwap, executeSwap } from '../routing/swap.js';
@@ -400,10 +403,35 @@ router.get('/v1/scout/:address', async (req, res, next) => {
   }
 });
 
-// Ramp webhook (V3): verify the ECDSA X-Body-Signature over the raw body, then apply the
-// status to the session named by the `ref` query param (Ramp excludes URL params from the sig).
+/**
+ * Off-ramp webhook. Provider-shaped:
+ *  - Ramp:   verify ECDSA `X-Body-Signature` over the raw body; correlate by `ref` query.
+ *  - Carret: verify HMAC-SHA256 `X-Carret-Signature` (scheme assumed — TBD with Carret);
+ *            correlate by `order_id` in the JSON body.
+ * Both need a 200 to be considered delivered.
+ */
 router.post('/v1/offramp/callback', (req, res) => {
   const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
+
+  if (activeProvider() === 'carret') {
+    const signature = (req.headers['x-carret-signature'] as string) ?? '';
+    if (!verifyCarretWebhook(raw, signature)) {
+      res.status(401).json({ error: 'InvalidSignature', message: 'webhook signature verification failed' });
+      return;
+    }
+    const body = req.body as {
+      order_id?: string;
+      status?: string;
+      data?: { order_id?: string; status?: string };
+    };
+    const orderId = body.order_id ?? body.data?.order_id;
+    const status = body.status ?? body.data?.status;
+    if (orderId && status) applyCarretCallback(orderId, status);
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  // Ramp (default)
   const signature = (req.headers['x-body-signature'] as string) ?? '';
   if (!verifyRampWebhook(raw, signature)) {
     res.status(401).json({ error: 'InvalidSignature', message: 'webhook signature verification failed' });
@@ -413,5 +441,5 @@ router.post('/v1/offramp/callback', (req, res) => {
   const body = req.body as { type?: string; status?: string; payload?: { status?: string } };
   const status = body.type ?? body.status ?? body.payload?.status;
   if (ref && status) applyCallback(ref, status);
-  res.status(200).json({ ok: true }); // Ramp needs a 200 to consider it delivered
+  res.status(200).json({ ok: true });
 });

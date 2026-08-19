@@ -7,9 +7,19 @@ import type {
   OffRampSessionPage,
   OffRampStatus,
 } from '@pathpulse/contract';
-import { env, rampLive } from '../config/env.js';
+import { env, rampLive, carretLive } from '../config/env.js';
 import { getSettlementBatch } from '../stellar/settlement.js';
 import { buildOfframpUrl, mapRampStatus } from './ramp.js';
+import {
+  carretMocks,
+  createOfframpQuote,
+  getConfiguredDepositAddress,
+  getOfframpOrder,
+  mapCarretStatus,
+  placeOfframpOrder,
+  resolveOfframpRouteId,
+  type CarretOrder,
+} from './carret.js';
 
 /**
  * Fiat off-ramp orchestration (D4 — Ramp Network).
@@ -38,17 +48,33 @@ export interface OffRampContext {
 }
 
 interface OffRampProvider {
+  readonly name: 'ramp' | 'carret';
   readonly sandbox: boolean;
   start(session: OffRampSession, ctx: OffRampContext): Promise<void>;
   status(session: OffRampSession): Promise<OffRampStatus>;
 }
+
+/**
+ * Provider-private state we attach to a session but don't expose in the public
+ * contract. Today: Carret's order_id (webhook `ref` + polling handle).
+ */
+interface CarretSessionMeta {
+  carretOrderId?: string | number;
+  carretQuoteId?: string | number;
+  /** Stellar-style memo (numeric string) — required on every deposit tx. */
+  carretDepositMemo?: string | null;
+}
+type SessionInternal = OffRampSession & CarretSessionMeta;
 
 const callbackBase = `${process.env.PUBLIC_API_URL ?? `http://localhost:${env.port}`}/v1/offramp/callback`;
 
 // A stable dev "anchor" account for the sandbox (where the user would send funds).
 const sandboxAnchor = Keypair.random().publicKey();
 
-const sandboxProvider: OffRampProvider = {
+// ── Ramp providers (widget-based) ─────────────────────────────────────
+
+const rampSandboxProvider: OffRampProvider = {
+  name: 'ramp',
   sandbox: true,
   async start(session) {
     session.fiatAmountEstimate = (Number(session.amount) * env.ramp.indicativeRate).toFixed(2);
@@ -64,7 +90,8 @@ const sandboxProvider: OffRampProvider = {
   },
 };
 
-const liveProvider: OffRampProvider = {
+const rampLiveProvider: OffRampProvider = {
+  name: 'ramp',
   sandbox: false,
   async start(session, ctx) {
     session.fiatAmountEstimate = (Number(session.amount) * env.ramp.indicativeRate).toFixed(2);
@@ -82,14 +109,95 @@ const liveProvider: OffRampProvider = {
   },
 };
 
-const provider: OffRampProvider = rampLive ? liveProvider : sandboxProvider;
+// ── Carret providers (server-driven REST) ─────────────────────────────
+
+/**
+ * Carret has no widget: the driver's flow is entirely backend-orchestrated.
+ * The `interactiveUrl` we set is a page in our own web app that shows the
+ * order status + Carret's crypto deposit address (fetched from the trading
+ * wallet endpoint in a later pass — mocked here for now).
+ */
+const carretSandboxProvider: OffRampProvider = {
+  name: 'carret',
+  sandbox: true,
+  async start(session) {
+    const s = session as SessionInternal;
+    const quote = carretMocks.quote(session.amount);
+    const order = carretMocks.order(quote.id, session.amount);
+    s.carretQuoteId = quote.id;
+    s.carretOrderId = order.id;
+    session.fiatAmountEstimate = quote.output_amount.amount.toFixed(2);
+    session.anchorAccount = sandboxAnchor;
+    session.merchantTransactionId = String(order.id); // reuse existing field for correlation
+    session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
+  },
+  async status(session) {
+    const s = session as SessionInternal;
+    if (!s.carretOrderId) return session.status;
+    // Simulate the order lifecycle from Carret's status vocabulary.
+    const carretStatus = carretMocks.advanceOrder(session.createdAt);
+    return mapCarretStatus(carretStatus) ?? session.status;
+  },
+};
+
+const carretLiveProvider: OffRampProvider = {
+  name: 'carret',
+  sandbox: false,
+  async start(session) {
+    const s = session as SessionInternal;
+    // 1. Fetch Carret's deposit address for our corridor (must include memo);
+    // 2. resolve route id; 3. lock a quote; 4. place order.
+    const deposit = await getConfiguredDepositAddress();
+    session.anchorAccount = deposit.address;
+    s.carretDepositMemo = deposit.memo_label;
+
+    const routeId = await resolveOfframpRouteId();
+    const quote = await createOfframpQuote({ routeId, amount: session.amount });
+    if (!env.carret.bankId) {
+      throw httpError(
+        'CARRET_BANK_ID not configured — register a bank first (POST /bank/) and set the env',
+        500,
+        'ConfigError',
+      );
+    }
+    const order = await placeOfframpOrder({ quoteId: quote.id, bankId: env.carret.bankId });
+    s.carretQuoteId = quote.id;
+    s.carretOrderId = order.id;
+    session.fiatAmountEstimate = quote.output_amount.amount.toFixed(2);
+    session.merchantTransactionId = String(order.id);
+    session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
+  },
+  async status(session) {
+    const s = session as SessionInternal;
+    if (!s.carretOrderId) return session.status;
+    let order: CarretOrder;
+    try {
+      order = await getOfframpOrder(s.carretOrderId);
+    } catch {
+      return session.status; // transient — keep last known
+    }
+    return mapCarretStatus(order.status) ?? session.status;
+  },
+};
+
+// ── Provider selection ────────────────────────────────────────────────
+
+function pickProvider(): OffRampProvider {
+  if (env.offrampProvider === 'carret') {
+    return carretLive ? carretLiveProvider : carretSandboxProvider;
+  }
+  return rampLive ? rampLiveProvider : rampSandboxProvider;
+}
+
+const provider: OffRampProvider = pickProvider();
 
 // ── in-memory index (links off-ramp events to settlement batches; feeds D8) ──
 const sessions = new Map<string, OffRampSession>();
 
 function assetOf(ref?: AssetRef): AssetRef {
   if (ref?.code) return ref;
-  return { code: env.ramp.crypto };
+  const code = provider.name === 'carret' ? env.carret.crypto : env.ramp.crypto;
+  return { code };
 }
 
 export async function createWithdrawal(
@@ -103,15 +211,16 @@ export async function createWithdrawal(
   if (req.settlementBatchId) getSettlementBatch(req.settlementBatchId); // 404 if unknown
 
   const now = new Date().toISOString();
-  const session: OffRampSession = {
+  const fiatFallback = provider.name === 'carret' ? env.carret.fiat : env.ramp.fiat;
+  const session: SessionInternal = {
     id: `ofr_${Date.now()}_${randomBytes(4).toString('hex')}`,
-    provider: 'ramp',
+    provider: provider.name,
     sandbox: provider.sandbox,
     status: 'pending_user_transfer_start',
     interactiveUrl: '',
     amount: req.amount,
     asset: assetOf(req.asset),
-    fiatCurrency: req.fiatCurrency ?? env.ramp.fiat,
+    fiatCurrency: req.fiatCurrency ?? fiatFallback,
     settlementBatchId: req.settlementBatchId,
     createdAt: now,
     updatedAt: now,
@@ -152,10 +261,37 @@ export async function listWithdrawals(cursor?: string, limit = 50): Promise<OffR
 export function applyCallback(sessionId: string, rampStatus: string): boolean {
   const s = sessions.get(sessionId);
   if (!s) return false;
+  // Terminal states are sticky — a late webhook can't regress completed → error.
+  if (s.status === 'completed' || s.status === 'error') return true;
   const mapped = mapRampStatus(rampStatus);
   if (mapped && mapped !== s.status) {
     s.status = mapped;
     s.updatedAt = new Date().toISOString();
   }
   return true;
+}
+
+/**
+ * Apply a verified Carret webhook. Carret webhooks carry the order_id (not our
+ * session id), so we look up the session by the carretOrderId meta field.
+ */
+export function applyCarretCallback(orderId: string, carretStatus: string): boolean {
+  const target = String(orderId);
+  const s = [...sessions.values()].find(
+    (v) => String((v as SessionInternal).carretOrderId ?? '') === target,
+  );
+  if (!s) return false;
+  // Terminal states are sticky — a late webhook can't regress completed → error.
+  if (s.status === 'completed' || s.status === 'error') return true;
+  const mapped = mapCarretStatus(carretStatus);
+  if (mapped && mapped !== s.status) {
+    s.status = mapped;
+    s.updatedAt = new Date().toISOString();
+  }
+  return true;
+}
+
+/** Expose the active provider name for the `/health` payload + routing decisions. */
+export function activeProvider(): 'ramp' | 'carret' {
+  return provider.name;
 }
