@@ -145,6 +145,19 @@ const carretLiveProvider: OffRampProvider = {
   sandbox: false,
   async start(session) {
     const s = session as SessionInternal;
+    // Refuse to run on Stellar testnet — Carret has no testnet, their dev env
+    // uses REAL mainnet USDC + real INR banking. Sending testnet USDC to their
+    // mainnet deposit address would silently vanish (no trustline on the
+    // testnet side). Fail loud here rather than letting funds disappear.
+    if (env.network === 'testnet') {
+      throw httpError(
+        'Carret off-ramp is mainnet-only (their dev uses real mainnet USDC). ' +
+          'PathPulse is on STELLAR_NETWORK=testnet — refusing to place order. ' +
+          'Switch STELLAR_NETWORK=mainnet, or set OFFRAMP_PROVIDER=ramp for testnet dev.',
+        500,
+        'ConfigError',
+      );
+    }
     // 1. Fetch Carret's deposit address for our corridor (must include memo);
     // 2. resolve route id; 3. lock a quote; 4. place order.
     const deposit = await getConfiguredDepositAddress();

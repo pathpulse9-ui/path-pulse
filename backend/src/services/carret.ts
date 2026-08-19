@@ -252,9 +252,26 @@ export async function placeOfframpOrder(params: {
   });
 }
 
-/** GET /offramp/orders/{id}/ — single-order status poll. */
+/**
+ * GET /offramp/orders/?account_id=<id> — Carret has no single-order-by-id
+ * retrieval endpoint; we list orders for the account and filter by id. Wasteful
+ * on accounts with many orders but works today; a targeted endpoint would be
+ * nice-to-have.
+ */
 export async function getOfframpOrder(orderId: number | string): Promise<CarretOrder> {
-  return carretFetch<CarretOrder>('GET', `/offramp/orders/${orderId}/`);
+  if (!env.carret.accountId) {
+    throw new Error('CARRET_ACCOUNT_ID required to fetch order status');
+  }
+  const page = await carretFetch<CarretPage<CarretOrder & { order_type?: string; side?: string }>>(
+    'GET',
+    '/offramp/orders/',
+    { query: { account_id: env.carret.accountId } },
+  );
+  const match = (page.results ?? []).find((o) => String(o.id) === String(orderId));
+  if (!match) {
+    throw new Error(`Carret order ${orderId} not found for account ${env.carret.accountId}`);
+  }
+  return match;
 }
 
 /** POST /bank/ — register a bank on the given account; returns the new bank id. */
