@@ -6,41 +6,119 @@ import type { OffRampStatus } from '@pathpulse/contract';
  * Carret Infra off-ramp (D4 · alt provider).
  *
  * Carret Infra is a full-stack crypto↔fiat backend for the Indian corridor
- * (KYC + custodial wallets + INR banking + ramp). Their Supported Assets page
- * lists USDC on Stellar for both on-ramp and off-ramp — a native match for
- * PathPulse's settlement asset, no bridge required.
+ * (KYC + custodial wallets + INR banking + ramp). Base path is
+ * `/api/v1/taas/` (Transactions-as-a-Service).
  *
  * Off-ramp flow (all server-driven, `API-KEY` header, no widget):
- *   1. GET  /supported_routes/            → { id, from_asset, to_asset }[]
+ *   1. GET  /offramp/supported_routes/    → DRF page of { id, from_asset, to_asset }[]
  *   2. GET  /exchange_rate/               → indicative rate (optional)
  *   3. POST /offramp/quote/               → { id: quote_id, output_amount, ... }
  *   4. POST /offramp/place_order/         → { id: order_id, status }
- *   5. GET  /offramp/orders/?status=open  → poll; status: open|filled|cancelled|...
+ *   5. GET  /offramp/orders/{id}/         → poll; status: open|filled|cancelled|...
  *   ↳ webhook (Partner Dashboard) fires on status transitions
+ *
+ * Corridor: prod target is USDC on Stellar; dev is USDT/TRX until Carret
+ * activates USDC/Stellar on the dev environment (per their Supported Assets
+ * page, which lists it — the dev route list currently omits it).
  *
  * Behind an `OffRampProvider` interface (see services/offramp.ts). Live mode
  * (`carretLive`) hits the real REST API; sandbox mode returns shape-accurate
- * mocked responses so the flow is demoable + testable until the API-KEY lands.
+ * mocked responses so the flow is demoable + testable without live creds.
  */
 
 // ── Types (shape-faithful to Carret's REST responses) ─────────────────
 
 export interface CarretRoute {
-  id: string;
+  /** Carret returns numeric ids in staging; loosened to string|number for safety. */
+  id: number | string;
   from_asset: string;
   from_chain?: string;
   to_asset: string;
   is_active: boolean;
 }
 
+/** Carret returns amounts as `{ amount, currency }` objects, not strings. */
+export interface CarretAmount {
+  amount: number;
+  currency: string;
+}
+
 export interface CarretQuote {
-  id: string;
-  route_id: string;
-  input_amount: string;
-  output_amount: string;
-  rate_info?: unknown;
+  id: number | string;
+  route_id?: number | string;
+  route_type?: string;
+  /** Epoch seconds (float) from the live API, e.g. 1786713764.782149. */
+  created_at?: number | string;
+  amount?: number | string;
+  base_rate?: number;
+  carret_fee_factor?: number;
+  tax_factor?: number;
+  asset?: string;
+  fiat?: string;
+  type?: string;
+  input_amount: CarretAmount;
+  output_amount: CarretAmount;
+  gross_output_amount?: CarretAmount;
+  rate_info?: { rate?: number; conversion?: string } | unknown;
   is_expired: boolean;
   expires_at?: string;
+}
+
+// ── Deposit addresses (where PathPulse sends crypto for off-ramp) ─────
+
+export interface CarretDepositAddress {
+  id: number;
+  address: string;
+  chain: string;
+  asset: string;
+  /**
+   * Stellar-style memo used to identify our account when we deposit. On
+   * Stellar this is a numeric string; other chains may return null.
+   * If present, EVERY deposit tx MUST include it or Carret can't credit us.
+   */
+  memo_label: string | null;
+}
+
+/** GET /deposit_addresses/?asset=X&chain=Y — Carret's crypto deposit surface. */
+export async function getDepositAddresses(
+  asset: string,
+  chain: string,
+): Promise<CarretDepositAddress[]> {
+  const res = await carretFetch<{ data?: CarretDepositAddress[] } | CarretDepositAddress[]>(
+    'GET',
+    '/deposit_addresses/',
+    { query: { asset, chain } },
+  );
+  if (Array.isArray(res)) return res;
+  return res.data ?? [];
+}
+
+/**
+ * Fetch the single deposit address for our configured corridor. Throws with
+ * a helpful message if Carret has no active wallet for the asset/chain (e.g.
+ * "No active wallet address found for USDC on stellar" — hint: use 'XLM').
+ */
+export async function getConfiguredDepositAddress(): Promise<CarretDepositAddress> {
+  const list = await getDepositAddresses(env.carret.crypto, env.carret.chain);
+  if (!list.length) {
+    throw new Error(
+      `Carret: no active deposit address for ${env.carret.crypto} on ${env.carret.chain} — ` +
+        `verify CARRET_CHAIN uses the token symbol (XLM for Stellar, TRX for Tron, etc.)`,
+    );
+  }
+  return list[0];
+}
+
+// ── Banking ────────────────────────────────────────────────────────────
+
+export interface CarretBank {
+  id: number;
+  account_id: number;
+  status: 'verified' | 'pending' | 'failed' | string;
+  bank_account_no: string;
+  bank_ifsc: string;
+  bank_account_name: string;
+  bank_name: string;
 }
 
 export type CarretOrderStatus =
@@ -51,17 +129,21 @@ export type CarretOrderStatus =
   | 'partially_cancelled';
 
 export interface CarretOrder {
-  id: string;
+  id: number | string;
   status: CarretOrderStatus;
   asked_quantity: string;
   blocked_fund?: string;
   payment_method: string;
-  bank_id?: string;
-  quote_id?: string;
+  bank_id?: number | string;
+  quote_id?: number | string;
 }
 
-interface CarretRoutesResponse {
-  results?: CarretRoute[];
+/** DRF-style pagination envelope Carret returns for list endpoints. */
+interface CarretPage<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
 }
 
 // ── HTTP client ────────────────────────────────────────────────────────
@@ -94,14 +176,22 @@ async function carretFetch<T>(
 
 // ── Live API surface ───────────────────────────────────────────────────
 
-/** GET /supported_routes/ — find the route_id for our corridor (e.g. USDC/Stellar → INR). */
+/** GET /offramp/supported_routes/ — DRF-paged list of active off-ramp routes. */
 export async function getSupportedRoutes(): Promise<CarretRoute[]> {
-  const res = await carretFetch<CarretRoutesResponse | CarretRoute[]>('GET', '/supported_routes/');
+  const res = await carretFetch<CarretPage<CarretRoute> | CarretRoute[]>(
+    'GET',
+    '/offramp/supported_routes/',
+  );
   return Array.isArray(res) ? res : res.results ?? [];
 }
 
-/** Find our configured USDC/Stellar → INR route id from the live list. */
-export async function resolveOfframpRouteId(): Promise<string> {
+/**
+ * Find our configured `from_asset → to_asset` route id from the live list.
+ * Chain match is best-effort: staging responses omit `from_chain`, so we only
+ * enforce it when the route object carries it. Chain is really determined by
+ * the deposit wallet we later fund, not by the route.
+ */
+export async function resolveOfframpRouteId(): Promise<number | string> {
   const routes = await getSupportedRoutes();
   const from = env.carret.crypto.toUpperCase();
   const chain = env.carret.chain.toLowerCase();
@@ -122,24 +212,35 @@ export async function resolveOfframpRouteId(): Promise<string> {
   return match.id;
 }
 
+/**
+ * Normalize a PathPulse 7-decimal Stellar amount to Carret's ≤2-decimal wire
+ * format. Truncates (does NOT round up) so we never send more crypto than the
+ * user requested. `"12.5000000"` → `"12.50"`, `"0.0000001"` → `"0.00"`.
+ */
+export function toCarretAmount(amount: string): string {
+  const [whole, frac = ''] = amount.split('.');
+  const truncated = (frac + '00').slice(0, 2);
+  return `${whole || '0'}.${truncated}`;
+}
+
 /** POST /offramp/quote/ — locks a rate for 10 minutes; returns quote_id. */
 export async function createOfframpQuote(params: {
-  routeId: string;
+  routeId: number | string;
   amount: string;
 }): Promise<CarretQuote> {
   return carretFetch<CarretQuote>('POST', '/offramp/quote/', {
     body: {
       account_id: env.carret.accountId,
       route_id: params.routeId,
-      amount: params.amount,
+      amount: toCarretAmount(params.amount),
     },
   });
 }
 
 /** POST /offramp/place_order/ — commits the quote against a registered bank_id. */
 export async function placeOfframpOrder(params: {
-  quoteId: string;
-  bankId: string;
+  quoteId: number | string;
+  bankId: number | string;
 }): Promise<CarretOrder> {
   return carretFetch<CarretOrder>('POST', '/offramp/place_order/', {
     body: {
@@ -152,8 +253,35 @@ export async function placeOfframpOrder(params: {
 }
 
 /** GET /offramp/orders/{id}/ — single-order status poll. */
-export async function getOfframpOrder(orderId: string): Promise<CarretOrder> {
+export async function getOfframpOrder(orderId: number | string): Promise<CarretOrder> {
   return carretFetch<CarretOrder>('GET', `/offramp/orders/${orderId}/`);
+}
+
+/** POST /bank/ — register a bank on the given account; returns the new bank id. */
+export async function registerBank(params: {
+  accountId: number | string;
+  bankAccountNo: string;
+  bankIfsc: string;
+  bankAccountName: string;
+  bankName: string;
+}): Promise<CarretBank> {
+  return carretFetch<CarretBank>('POST', '/bank/', {
+    body: {
+      account_id: Number(params.accountId),
+      bank_account_no: params.bankAccountNo,
+      bank_ifsc: params.bankIfsc,
+      bank_account_name: params.bankAccountName,
+      bank_name: params.bankName,
+    },
+  });
+}
+
+/** GET /bank/?account_id=<id> — list registered banks for an account. */
+export async function listBanks(accountId: number | string): Promise<CarretBank[]> {
+  const res = await carretFetch<CarretPage<CarretBank> | CarretBank[]>('GET', '/bank/', {
+    query: { account_id: String(accountId) },
+  });
+  return Array.isArray(res) ? res : res.results ?? [];
 }
 
 // ── Status mapping (Carret → PathPulse OffRampStatus lifecycle) ───────
@@ -218,18 +346,27 @@ export const carretMocks = {
     };
   },
   quote(amount: string): CarretQuote {
-    const out = (Number(amount) * env.carret.indicativeRate).toFixed(2);
+    const outNumeric = Number(amount) * env.carret.indicativeRate;
     return {
       id: mockId('quote'),
       route_id: 'route_mock_usdc_stellar_inr',
-      input_amount: amount,
-      output_amount: out,
+      route_type: 'offramp',
+      created_at: Date.now() / 1000,
+      amount: Number(amount),
+      base_rate: env.carret.indicativeRate,
+      carret_fee_factor: 0,
+      tax_factor: 0,
+      asset: env.carret.crypto,
+      fiat: env.carret.fiat,
+      type: 'sell',
+      input_amount: { amount: Number(amount), currency: env.carret.crypto },
+      output_amount: { amount: outNumeric, currency: env.carret.fiat },
       is_expired: false,
       expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      rate_info: { base_rate: env.carret.indicativeRate, carret_fee_factor: 0, tax_factor: 0 },
+      rate_info: { rate: env.carret.indicativeRate, conversion: `1 ${env.carret.crypto} = ${env.carret.indicativeRate} ${env.carret.fiat}` },
     };
   },
-  order(quoteId: string, amount: string): CarretOrder {
+  order(quoteId: number | string, amount: string): CarretOrder {
     return {
       id: mockId('ord'),
       status: 'open',
