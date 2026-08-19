@@ -42,6 +42,11 @@ private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {
 
 object PpIcons {
 
+    val ArrowRight: ImageVector = ppIcon("ArrowRight") {
+        moveTo(5f, 12f); lineTo(19f, 12f)
+        moveTo(13f, 6f); lineTo(19f, 12f); lineTo(13f, 18f)
+    }
+
     val Dashboard: ImageVector = ppIcon("Dashboard") {
         rect(3f, 3f, 7f, 7f)
         rect(14f, 3f, 7f, 7f)

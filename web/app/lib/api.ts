@@ -19,6 +19,9 @@ import type {
   ScoutConfig,
   ScoutAssignment,
   ScoutTierLookup,
+  RoutingQuote,
+  RoutingSwapRequest,
+  RoutingSwapResult,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -140,4 +143,18 @@ export function assignScoutTier(score: number) {
 
 export function getScoutTier(address: string) {
   return apiFetch<ScoutTierLookup>(`/v1/scout/${address}`);
+}
+
+// ── Aquarius liquidity routing (D5) ───────────────────────────────────
+
+export function getRoutingQuote(from: string, to: string, amount: string) {
+  const q = new URLSearchParams({ from, to, amount });
+  return apiFetch<RoutingQuote>(`/v1/routing/quote?${q}`);
+}
+
+export function executeRoutingSwap(req: RoutingSwapRequest) {
+  return apiFetch<RoutingSwapResult>('/v1/routing/swap', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
 }

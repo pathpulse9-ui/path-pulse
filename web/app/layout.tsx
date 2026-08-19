@@ -5,6 +5,11 @@ import { SessionProvider } from "./lib/session";
 export const metadata: Metadata = {
   title: "PathPulse",
   description: "Stellar wallet integration and transaction management",
+  icons: {
+    icon: "/8.png",
+    shortcut: "/8.png",
+    apple: "/8.png",
+  },
 };
 
 export default function RootLayout({

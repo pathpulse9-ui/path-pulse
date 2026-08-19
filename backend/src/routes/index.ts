@@ -45,6 +45,8 @@ import {
 import { verifyRampWebhook } from '../services/ramp.js';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
+import { quoteSwap, executeSwap } from '../routing/swap.js';
+import { listRoutableAssets } from '../routing/assets.js';
 
 export const router = Router();
 
@@ -322,6 +324,48 @@ router.get('/v1/offramp/sessions', async (req, res, next) => {
 router.get('/v1/offramp/sessions/:id', async (req, res, next) => {
   try {
     res.json(await getWithdrawal(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Aquarius AMM routing (D5): quote a swap route, then execute it through the router contract.
+const routableSchema = z.enum(['XLM', 'USDC']);
+const amountSchema = z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number');
+const routingQuoteSchema = z.object({
+  from: routableSchema,
+  to: routableSchema,
+  amount: amountSchema,
+});
+const routingSwapSchema = routingQuoteSchema;
+
+router.get('/v1/routing/assets', (_req, res, next) => {
+  try {
+    res.json({ items: listRoutableAssets().map((a) => ({ symbol: a.symbol, ...a.ref })) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/routing/quote', async (req, res, next) => {
+  try {
+    const { from, to, amount } = routingQuoteSchema.parse(req.query);
+    res.json(await quoteSwap(from, to, amount));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/routing/swap', async (req, res, next) => {
+  try {
+    if (!getSessionFromRequest(req)) {
+      const denied = new Error('Sign in to execute a conversion') as Error & { status: number };
+      denied.name = 'Unauthorized';
+      denied.status = 401;
+      throw denied;
+    }
+    const { from, to, amount } = routingSwapSchema.parse(req.body);
+    res.status(201).json(await executeSwap(from, to, amount));
   } catch (e) {
     next(e);
   }

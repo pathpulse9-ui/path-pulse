@@ -26,9 +26,6 @@ export default function ProfilePage() {
   if (!user) {
     return (
       <div className="space-y-6">
-        <h1 className="text-black text-3xl font-medium" style={{ letterSpacing: '-0.03em' }}>
-          Profile
-        </h1>
         <div className="rounded-2xl bg-white p-6 max-w-xl">
           <p className="text-sm text-black/60 mb-4">You are not signed in.</p>
           <Link
@@ -44,10 +41,6 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-black text-3xl font-medium" style={{ letterSpacing: '-0.03em' }}>
-        Profile
-      </h1>
-
       <div className="rounded-2xl bg-white p-6 max-w-xl space-y-5">
         <div className="flex items-center gap-4">
           <span className="w-12 h-12 rounded-full bg-black text-white text-lg font-medium flex items-center justify-center">

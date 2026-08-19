@@ -1,6 +1,12 @@
 package com.pathpulse.driver.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import com.pathpulse.driver.ui.icons.PpIcons
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -78,6 +84,48 @@ fun PpSecondaryButton(
                 Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
             }
             Text(text, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Composable
+fun PpArrowButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    fillWidth: Boolean = false,
+) {
+    Button(
+        onClick = onClick,
+        shape = PpPillShape,
+        contentPadding = PaddingValues(start = 28.dp, end = 6.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Black,
+            contentColor = Color.White,
+        ),
+        modifier = modifier
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+            .height(PpSize.control),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(text, style = MaterialTheme.typography.labelLarge)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color.White),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    PpIcons.ArrowRight,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

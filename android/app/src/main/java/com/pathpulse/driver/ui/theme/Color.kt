@@ -7,6 +7,8 @@ val PpSurface = Color(0xFFFFFFFF)
 val PpBlack = Color(0xFF000000)
 val PpWhite = Color(0xFFFFFFFF)
 val PpGray800 = Color(0xFF1F2937)
+val PpInk = Color(0xFF2B2644)
+val PpWhite60 = Color(0x99FFFFFF)
 
 val PpBlack70 = Color(0xB3000000)
 val PpBlack60 = Color(0x99000000)

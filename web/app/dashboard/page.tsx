@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import type { SettlementBatch, OffRampSession } from '@pathpulse/contract';
 import { listSettlementBatches, listOffRampSessions } from '../lib/api';
+import { usePageActions } from '../components/dashboard/PageActions';
+import { T } from '../components/dashboard/typography';
 
 const SERIES = [
   { key: 'authorities', label: 'Authorities', pct: '50%', color: '#2563EB' },
@@ -90,32 +92,28 @@ export default function DashboardOverview() {
   );
   const drivers = batches.reduce((n, b) => n + b.driverPayouts.length, 0);
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-black text-3xl font-medium" style={{ letterSpacing: '-0.03em' }}>
-          Dashboard
-        </h1>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="rounded-full border border-black/10 bg-white px-5 h-10 text-sm hover:bg-black/5 transition-colors duration-200 disabled:opacity-50"
-        >
-          {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
+  usePageActions(
+    () => (
+      <button onClick={load} disabled={loading} className={T.buttonSecondary}>
+        {loading ? 'Refreshing…' : 'Refresh'}
+      </button>
+    ),
+    [load, loading],
+  );
 
+  return (
+    <div className="space-y-6">
       {error && (
         <div className="rounded-2xl bg-white p-6">
           <p className="text-sm text-red-600">{error}</p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 rounded-2xl bg-white p-6">
           <div className="flex items-start justify-between flex-wrap gap-4 mb-6">
             <div>
-              <div className="text-4xl font-medium text-black" style={{ letterSpacing: '-0.03em' }}>
+              <div className="text-4xl font-medium text-black tracking-[-0.03em]">
                 {fmt(totals.gross)} <span className="text-2xl text-black/40">XLM</span>
               </div>
               <p className="text-sm text-black/50 mt-1">
@@ -208,8 +206,7 @@ export default function DashboardOverview() {
                 {s.label} · {s.pct}
               </div>
               <div
-                className="text-2xl font-medium text-black mt-1"
-                style={{ letterSpacing: '-0.02em' }}
+                className="text-2xl font-medium text-black tracking-[-0.02em] mt-1"
               >
                 {fmt(totals[s.key])} XLM
               </div>
@@ -224,7 +221,7 @@ export default function DashboardOverview() {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="rounded-2xl bg-white p-6">
-          <h2 className="text-black font-medium mb-1" style={{ letterSpacing: '-0.02em' }}>
+          <h2 className="text-black text-lg font-medium tracking-[-0.02em] mb-1">
             Split composition
           </h2>
           <p className="text-sm text-black/50 mb-5">Share of all settled volume to date.</p>
@@ -265,7 +262,7 @@ export default function DashboardOverview() {
 
         <div className="rounded-2xl bg-white p-6">
           <div className="flex items-center justify-between mb-5">
-            <h2 className="text-black font-medium" style={{ letterSpacing: '-0.02em' }}>
+            <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
               Recent activity
             </h2>
             <Link

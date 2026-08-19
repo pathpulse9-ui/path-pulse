@@ -215,6 +215,8 @@ export interface ScoutAssignment {
   score: number;
   issuer: string;
   assetCode: string;
+  txHash: string;
+  horizonUrl: string;
 }
 
 export interface GroupPayoutRecipient {
@@ -340,4 +342,38 @@ export interface CreatePayoutBatchRequest {
 export interface PayoutBatchPage {
   items: PayoutBatch[];
   nextCursor: string | null;
+}
+
+export interface RoutingQuote {
+  from: AssetRef;
+  to: AssetRef;
+  sourceAmount: string;
+  destinationAmount: string;
+  minDestinationAmount: string;
+  slippageBps: number;
+  hops: number;
+  pools: string[];
+  route: string[];
+}
+
+export interface RoutingSwapRequest {
+  from: string;
+  to: string;
+  amount: string;
+}
+
+export interface RoutingSwapResult {
+  id: string;
+  createdAt: string;
+  network: StellarNetwork;
+  sourceAddress: string;
+  from: AssetRef;
+  to: AssetRef;
+  sourceAmount: string;
+  estimatedDestinationAmount: string;
+  minDestinationAmount: string;
+  hops: number;
+  pools: string[];
+  txHash: string;
+  horizonUrl: string;
 }
