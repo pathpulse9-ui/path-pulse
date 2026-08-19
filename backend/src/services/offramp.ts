@@ -148,12 +148,16 @@ const carretLiveProvider: OffRampProvider = {
     // Refuse to run on Stellar testnet — Carret has no testnet, their dev env
     // uses REAL mainnet USDC + real INR banking. Sending testnet USDC to their
     // mainnet deposit address would silently vanish (no trustline on the
-    // testnet side). Fail loud here rather than letting funds disappear.
-    if (env.network === 'testnet') {
+    // testnet side). Fail loud unless CARRET_ALLOW_TESTNET=true is set as an
+    // explicit dev override (lets devs click the UI end-to-end without any
+    // real crypto sends — every Carret API call still runs, but no on-chain
+    // deposit is expected).
+    if (env.network === 'testnet' && !env.carret.allowTestnet) {
       throw httpError(
         'Carret off-ramp is mainnet-only (their dev uses real mainnet USDC). ' +
           'PathPulse is on STELLAR_NETWORK=testnet — refusing to place order. ' +
-          'Switch STELLAR_NETWORK=mainnet, or set OFFRAMP_PROVIDER=ramp for testnet dev.',
+          'For dev clicking: set CARRET_ALLOW_TESTNET=true. ' +
+          'Otherwise: STELLAR_NETWORK=mainnet, or OFFRAMP_PROVIDER=ramp.',
         500,
         'ConfigError',
       );
