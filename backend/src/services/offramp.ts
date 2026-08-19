@@ -13,6 +13,7 @@ import { buildOfframpUrl, mapRampStatus } from './ramp.js';
 import {
   carretMocks,
   createOfframpQuote,
+  getConfiguredDepositAddress,
   getOfframpOrder,
   mapCarretStatus,
   placeOfframpOrder,
@@ -58,8 +59,10 @@ interface OffRampProvider {
  * contract. Today: Carret's order_id (webhook `ref` + polling handle).
  */
 interface CarretSessionMeta {
-  carretOrderId?: string;
-  carretQuoteId?: string;
+  carretOrderId?: string | number;
+  carretQuoteId?: string | number;
+  /** Stellar-style memo (numeric string) — required on every deposit tx. */
+  carretDepositMemo?: string | null;
 }
 type SessionInternal = OffRampSession & CarretSessionMeta;
 
@@ -123,9 +126,9 @@ const carretSandboxProvider: OffRampProvider = {
     const order = carretMocks.order(quote.id, session.amount);
     s.carretQuoteId = quote.id;
     s.carretOrderId = order.id;
-    session.fiatAmountEstimate = quote.output_amount;
+    session.fiatAmountEstimate = quote.output_amount.amount.toFixed(2);
     session.anchorAccount = sandboxAnchor;
-    session.merchantTransactionId = order.id; // reuse existing field for correlation
+    session.merchantTransactionId = String(order.id); // reuse existing field for correlation
     session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
   },
   async status(session) {
@@ -142,12 +145,17 @@ const carretLiveProvider: OffRampProvider = {
   sandbox: false,
   async start(session) {
     const s = session as SessionInternal;
-    // 1. Resolve route (USDC/Stellar → INR); 2. lock a quote; 3. place order.
+    // 1. Fetch Carret's deposit address for our corridor (must include memo);
+    // 2. resolve route id; 3. lock a quote; 4. place order.
+    const deposit = await getConfiguredDepositAddress();
+    session.anchorAccount = deposit.address;
+    s.carretDepositMemo = deposit.memo_label;
+
     const routeId = await resolveOfframpRouteId();
     const quote = await createOfframpQuote({ routeId, amount: session.amount });
     if (!env.carret.bankId) {
       throw httpError(
-        'CARRET_BANK_ID not configured — register a bank first (POST /banks/) and set the env',
+        'CARRET_BANK_ID not configured — register a bank first (POST /bank/) and set the env',
         500,
         'ConfigError',
       );
@@ -155,8 +163,8 @@ const carretLiveProvider: OffRampProvider = {
     const order = await placeOfframpOrder({ quoteId: quote.id, bankId: env.carret.bankId });
     s.carretQuoteId = quote.id;
     s.carretOrderId = order.id;
-    session.fiatAmountEstimate = quote.output_amount;
-    session.merchantTransactionId = order.id;
+    session.fiatAmountEstimate = quote.output_amount.amount.toFixed(2);
+    session.merchantTransactionId = String(order.id);
     session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
   },
   async status(session) {
@@ -253,6 +261,8 @@ export async function listWithdrawals(cursor?: string, limit = 50): Promise<OffR
 export function applyCallback(sessionId: string, rampStatus: string): boolean {
   const s = sessions.get(sessionId);
   if (!s) return false;
+  // Terminal states are sticky — a late webhook can't regress completed → error.
+  if (s.status === 'completed' || s.status === 'error') return true;
   const mapped = mapRampStatus(rampStatus);
   if (mapped && mapped !== s.status) {
     s.status = mapped;
@@ -266,8 +276,13 @@ export function applyCallback(sessionId: string, rampStatus: string): boolean {
  * session id), so we look up the session by the carretOrderId meta field.
  */
 export function applyCarretCallback(orderId: string, carretStatus: string): boolean {
-  const s = [...sessions.values()].find((v) => (v as SessionInternal).carretOrderId === orderId);
+  const target = String(orderId);
+  const s = [...sessions.values()].find(
+    (v) => String((v as SessionInternal).carretOrderId ?? '') === target,
+  );
   if (!s) return false;
+  // Terminal states are sticky — a late webhook can't regress completed → error.
+  if (s.status === 'completed' || s.status === 'error') return true;
   const mapped = mapCarretStatus(carretStatus);
   if (mapped && mapped !== s.status) {
     s.status = mapped;

@@ -100,19 +100,23 @@ export const env = {
   // API-KEY + Partner Dashboard access; then register the webhook URL there.
   carret: {
     apiKey: process.env.CARRET_API_KEY ?? '',
-    // Staging: https://dev.carret.in/api ; production: https://prod.carret.in/api.
-    baseUrl: process.env.CARRET_BASE_URL ?? 'https://dev.carret.in/api',
+    // Staging: dev.carret.in ; production: prod.carret.in. Path prefix is
+    // /api/v1/taas/ (confirmed via `GET .../taas/main_account/` returning 200).
+    baseUrl: process.env.CARRET_BASE_URL ?? 'https://dev.carret.in/api/v1/taas',
     // The Partner account id (main or sub) that owns the trading wallet + orders.
     accountId: process.env.CARRET_ACCOUNT_ID ?? '',
-    // Corridor: Carret's Supported Assets page lists USDC on Stellar in on-ramp + off-ramp.
+    // Corridor. Carret uses the *token symbol* for `chain` (XLM = Stellar,
+    // TRX = Tron, ETH = Ethereum, etc.), not the network name. USDC/XLM is
+    // active in both dev and prod as of 2026-08 (routes ids: off-ramp 7,
+    // on-ramp 8).
     crypto: process.env.CARRET_CRYPTO ?? 'USDC',
-    chain: process.env.CARRET_CHAIN ?? 'Stellar',
+    chain: process.env.CARRET_CHAIN ?? 'XLM',
     fiat: process.env.CARRET_FIAT ?? 'INR',
     // Registered bank_id used for the off-ramp order's bank_transfer payout.
     bankId: process.env.CARRET_BANK_ID ?? '',
     // Optional webhook shared secret (signature scheme TBD — pending Carret docs/team).
     webhookSecret: process.env.CARRET_WEBHOOK_SECRET ?? '',
-    // Indicative fiat per 1 USDC — sandbox stub estimate only (live: Carret quote).
+    // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live: Carret quote).
     indicativeRate: Number(process.env.CARRET_INDICATIVE_RATE ?? 84),
   },
 
