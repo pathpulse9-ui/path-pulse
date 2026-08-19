@@ -126,6 +126,14 @@ export const env = {
     webhookSecret: process.env.CARRET_WEBHOOK_SECRET ?? '',
     // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live: Carret quote).
     indicativeRate: Number(process.env.CARRET_INDICATIVE_RATE ?? 84),
+    // DEV-ONLY escape hatch. Carret is mainnet-only (their dev env uses real
+    // mainnet USDC). The provider refuses to run when STELLAR_NETWORK=testnet
+    // to prevent testnet USDC vanishing into a mainnet deposit address. Setting
+    // CARRET_ALLOW_TESTNET=true lets the guard through so devs can click the
+    // web UI end-to-end without shipping mainnet — the send just won't reach
+    // Carret, but every Carret API call still fires and the order flow works.
+    // Never set this in production.
+    allowTestnet: process.env.CARRET_ALLOW_TESTNET === 'true',
   },
 
   // Which off-ramp provider is active: 'ramp' (default, current) or 'carret'.

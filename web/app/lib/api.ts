@@ -111,7 +111,7 @@ export function createGroupPayout(req: CreateGroupPayoutRequest) {
   });
 }
 
-// ── Off-ramp (D4 — Mercuryo SEP-24) ───────────────────────────────────
+// ── Off-ramp (D4 — Carret Infra, USDC on Stellar → INR) ──────────────
 
 export function listOffRampSessions(limit = 50) {
   return apiFetch<OffRampSessionPage>(`/v1/offramp/sessions?limit=${limit}`);

@@ -8,7 +8,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 const STATUS_LABEL: Record<OffRampStatus, string> = {
   pending_user_transfer_start: 'Awaiting your crypto transfer',
-  pending_anchor: 'Ramp converting → fiat',
+  pending_anchor: 'Carret converting → INR',
   completed: 'Completed',
   error: 'Error',
 };
@@ -23,7 +23,7 @@ function statusClasses(s: OffRampStatus) {
 export default function OffRampPage() {
   const [sessions, setSessions] = useState<OffRampSession[]>([]);
   const [selected, setSelected] = useState<OffRampSession | null>(null);
-  const [amount, setAmount] = useState('30');
+  const [amount, setAmount] = useState('10');
   const [batchId, setBatchId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +87,7 @@ export default function OffRampPage() {
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="rounded-xl border border-black/10 px-3 py-2 text-sm w-32 focus:outline-none focus:border-black/30"
+              className="rounded-xl border border-black/10 bg-white text-black placeholder:text-black/30 px-3 py-2 text-sm w-32 focus:outline-none focus:border-black/30"
             />
           </label>
           <label className="text-sm flex-1 min-w-48">
@@ -96,7 +96,7 @@ export default function OffRampPage() {
               value={batchId}
               onChange={(e) => setBatchId(e.target.value)}
               placeholder="stl_… (links the off-ramp to a settlement)"
-              className="rounded-xl border border-black/10 px-3 py-2 text-sm w-full font-mono focus:outline-none focus:border-black/30"
+              className="rounded-xl border border-black/10 bg-white text-black placeholder:text-black/30 px-3 py-2 text-sm w-full font-mono focus:outline-none focus:border-black/30"
             />
           </label>
           <button
