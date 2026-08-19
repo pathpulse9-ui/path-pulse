@@ -26,7 +26,7 @@ export const SECTIONS = [
     href: '/dashboard/offramp',
     icon: Banknote,
     description:
-      'Ramp Network off-ramp (sell XLM → fiat, incl. INR). Running against the sandbox stub until a Ramp host API key lands.',
+      'Carret Infra off-ramp (sell USDC on Stellar → INR to a registered bank). Server-driven, no widget.',
   },
   {
     label: 'Treasury',

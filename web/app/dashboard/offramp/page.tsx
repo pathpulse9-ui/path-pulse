@@ -8,7 +8,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 const STATUS_LABEL: Record<OffRampStatus, string> = {
   pending_user_transfer_start: 'Awaiting your crypto transfer',
-  pending_anchor: 'Ramp converting → fiat',
+  pending_anchor: 'Carret converting → INR',
   completed: 'Completed',
   error: 'Error',
 };
@@ -23,7 +23,7 @@ function statusClasses(s: OffRampStatus) {
 export default function OffRampPage() {
   const [sessions, setSessions] = useState<OffRampSession[]>([]);
   const [selected, setSelected] = useState<OffRampSession | null>(null);
-  const [amount, setAmount] = useState('30');
+  const [amount, setAmount] = useState('10');
   const [batchId, setBatchId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
