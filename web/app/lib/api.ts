@@ -10,12 +10,18 @@ import type {
   SettlementBatch,
   SettlementBatchPage,
   CreateSettlementBatchRequest,
+  GroupPayoutBatch,
+  GroupPayoutBatchPage,
+  CreateGroupPayoutRequest,
   OffRampSession,
   OffRampSessionPage,
   CreateOffRampWithdrawalRequest,
   ScoutConfig,
   ScoutAssignment,
   ScoutTierLookup,
+  RoutingQuote,
+  RoutingSwapRequest,
+  RoutingSwapResult,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -88,6 +94,23 @@ export function createSettlementBatch(req: CreateSettlementBatchRequest) {
   });
 }
 
+// ── Group payouts (bulk CSV/Excel upload) ─────────────────────────────
+
+export function listGroupPayouts(limit = 50) {
+  return apiFetch<GroupPayoutBatchPage>(`/v1/settlement/group-payouts?limit=${limit}`);
+}
+
+export function getGroupPayout(id: string) {
+  return apiFetch<GroupPayoutBatch>(`/v1/settlement/group-payouts/${id}`);
+}
+
+export function createGroupPayout(req: CreateGroupPayoutRequest) {
+  return apiFetch<GroupPayoutBatch>('/v1/settlement/group-payouts', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
 // ── Off-ramp (D4 — Mercuryo SEP-24) ───────────────────────────────────
 
 export function listOffRampSessions(limit = 50) {
@@ -120,4 +143,18 @@ export function assignScoutTier(score: number) {
 
 export function getScoutTier(address: string) {
   return apiFetch<ScoutTierLookup>(`/v1/scout/${address}`);
+}
+
+// ── Aquarius liquidity routing (D5) ───────────────────────────────────
+
+export function getRoutingQuote(from: string, to: string, amount: string) {
+  const q = new URLSearchParams({ from, to, amount });
+  return apiFetch<RoutingQuote>(`/v1/routing/quote?${q}`);
+}
+
+export function executeRoutingSwap(req: RoutingSwapRequest) {
+  return apiFetch<RoutingSwapResult>('/v1/routing/swap', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
 }

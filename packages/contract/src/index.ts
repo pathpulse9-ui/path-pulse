@@ -219,23 +219,55 @@ export interface ScoutAssignment {
   horizonUrl: string;
 }
 
+export interface GroupPayoutRecipient {
+  name: string;
+  address: string;
+  amount: string;
+}
+
+export interface CreateGroupPayoutRequest {
+  asset?: AssetRef;
+  recipients: GroupPayoutRecipient[];
+}
+
+export interface GroupPayoutReceipt {
+  name: string;
+  address: string;
+  amount: string;
+}
+
+export interface GroupPayoutBatch {
+  id: string;
+  createdAt: string;
+  network: StellarNetwork;
+  asset: AssetRef;
+  totalAmount: string;
+  sourceAddress: string;
+  receipts: GroupPayoutReceipt[];
+  txHash: string;
+  horizonUrl: string;
+}
+
 export interface ScoutTierLookup {
   address: string;
   tier: ScoutTier | null;
   multiplier: number;
 }
 
+export interface GroupPayoutBatchPage {
+  items: GroupPayoutBatch[];
+  nextCursor: string | null;
+}
+
 // ── Fiat off-ramp (D4 — Mercuryo SEP-24) ──────────────────────────────
 
-/** SEP-24 interactive withdrawal lifecycle (subset used by PathPulse). */
 export type OffRampStatus =
-  | 'pending_user_transfer_start' // user must send stablecoin to the anchor
-  | 'pending_anchor' // anchor is converting + paying out fiat
+  | 'pending_user_transfer_start'
+  | 'pending_anchor'
   | 'completed'
   | 'error';
 
 export interface CreateOffRampWithdrawalRequest {
-  /** Stablecoin amount to off-ramp, 7-decimal string. */
   amount: string;
   /** Stablecoin to withdraw (defaults to USDC on testnet). */
   asset?: AssetRef;
@@ -310,4 +342,38 @@ export interface CreatePayoutBatchRequest {
 export interface PayoutBatchPage {
   items: PayoutBatch[];
   nextCursor: string | null;
+}
+
+export interface RoutingQuote {
+  from: AssetRef;
+  to: AssetRef;
+  sourceAmount: string;
+  destinationAmount: string;
+  minDestinationAmount: string;
+  slippageBps: number;
+  hops: number;
+  pools: string[];
+  route: string[];
+}
+
+export interface RoutingSwapRequest {
+  from: string;
+  to: string;
+  amount: string;
+}
+
+export interface RoutingSwapResult {
+  id: string;
+  createdAt: string;
+  network: StellarNetwork;
+  sourceAddress: string;
+  from: AssetRef;
+  to: AssetRef;
+  sourceAmount: string;
+  estimatedDestinationAmount: string;
+  minDestinationAmount: string;
+  hops: number;
+  pools: string[];
+  txHash: string;
+  horizonUrl: string;
 }

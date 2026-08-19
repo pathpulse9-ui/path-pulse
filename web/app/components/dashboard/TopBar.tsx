@@ -1,12 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, LogOut, User as UserIcon } from 'lucide-react';
 import type { HealthResponse } from '@pathpulse/contract';
 import { getHealth } from '../../lib/api';
 import { useSession } from '../../lib/session';
+import { sectionFor } from './sections';
+import { usePageActionsSlot } from './PageActions';
+import { T } from './typography';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -14,6 +17,9 @@ const METHOD_LABEL = { google: 'Google', wallet: 'Wallet', guest: 'Guest' } as c
 
 export function TopBar() {
   const router = useRouter();
+  const pathname = usePathname();
+  const section = sectionFor(pathname);
+  const pageActions = usePageActionsSlot();
   const { user, loading, logout } = useSession();
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [open, setOpen] = useState(false);
@@ -45,20 +51,27 @@ export function TopBar() {
     : 'Not signed in';
 
   return (
-    <header className="h-[72px] shrink-0 flex items-center justify-between gap-4 px-6">
-      <div className="flex items-center gap-3">
+    <header className="shrink-0 flex items-start justify-between gap-6 px-6 pt-6 pb-5">
+      <div className="min-w-0 flex-1">
+        <h1 className={T.pageTitle}>{section?.label ?? 'Dashboard'}</h1>
+        {section?.description && (
+          <p className={`${T.pageDescription} mt-1.5 max-w-3xl`}>{section.description}</p>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 shrink-0">
+        {pageActions}
         {health ? (
           <span className="inline-flex items-center gap-2 rounded-full bg-white border border-black/5 px-4 h-10 text-sm text-black/60">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            Backend Core · {health.network} · v{health.version}
+            {health.network} · v{health.version}
           </span>
         ) : (
           <span className="inline-flex items-center gap-2 rounded-full bg-white border border-black/5 px-4 h-10 text-sm text-black/40">
             <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-            Backend Core unreachable
+            Backend unreachable
           </span>
         )}
-      </div>
 
       <div className="relative" ref={menuRef}>
         {loading ? (
@@ -124,6 +137,7 @@ export function TopBar() {
             Sign in
           </Link>
         )}
+        </div>
       </div>
     </header>
   );

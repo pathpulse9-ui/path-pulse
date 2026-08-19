@@ -54,23 +54,9 @@ export default function ScoutPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-black text-3xl md:text-4xl font-medium leading-tight" style={{ letterSpacing: '-0.03em' }}>
-          SCOUT Reputation{' '}
-          <span className="align-middle text-xs font-medium rounded-full border border-blue-300 bg-blue-100 text-blue-700 px-2 py-0.5">
-            TESTNET
-          </span>
-        </h1>
-        <p className="text-sm text-black/60 mt-2">
-          On-chain reputation tiers as Classic Assets (AUTH_REQUIRED · REVOCABLE · CLAWBACK).
-          Tier is assigned from a PulseGen validation score; the settlement engine reads the
-          badge on-chain for the reward multiplier.
-        </p>
-      </div>
-
       {config && (
         <div className="rounded-2xl bg-white p-6">
-          <h2 className="text-black text-lg font-medium mb-1" style={{ letterSpacing: '-0.02em' }}>
+          <h2 className="text-black text-lg font-medium tracking-[-0.02em] mb-1">
             Issuer &amp; tiers
           </h2>
           <p className="text-sm text-black/60 mb-3">
@@ -90,7 +76,7 @@ export default function ScoutPage() {
       )}
 
       <div className="rounded-2xl bg-white p-6 space-y-4">
-        <h2 className="text-black text-lg font-medium" style={{ letterSpacing: '-0.02em' }}>
+        <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
           Assign a tier (PulseGen score → badge)
         </h2>
         <div className="flex flex-wrap gap-4 items-end">
@@ -150,7 +136,7 @@ export default function ScoutPage() {
       </div>
 
       <div className="rounded-2xl bg-white p-6 space-y-3">
-        <h2 className="text-black text-lg font-medium" style={{ letterSpacing: '-0.02em' }}>
+        <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
           Look up a driver&apos;s tier
         </h2>
         <div className="flex flex-wrap gap-3 items-end">

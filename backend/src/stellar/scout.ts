@@ -9,7 +9,7 @@ import {
   AuthClawbackEnabledFlag,
   type AuthFlag,
 } from '@stellar/stellar-sdk';
-import { SCOUT_MULTIPLIER, type ScoutTier } from '@pathpulse/contract';
+import { SCOUT_MULTIPLIER, type ScoutTier, type ScoutAssignment } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { horizon, fundWithFriendbot, accountExists } from './network.js';
 import { provisionManagedWallet, getManagedSigner } from './managed.js';
@@ -88,18 +88,6 @@ export async function getOnchainTier(address: string): Promise<{ tier: ScoutTier
     if (held) return { tier, multiplier: SCOUT_MULTIPLIER[tier] };
   }
   return { tier: null, multiplier: 1 };
-}
-
-export interface ScoutAssignment {
-  userId: string;
-  address: string;
-  tier: ScoutTier;
-  multiplier: number;
-  score: number;
-  issuer: string;
-  assetCode: string;
-  txHash: string;
-  horizonUrl: string;
 }
 
 /**

@@ -276,6 +276,46 @@ paths:
           description: OK
         '401':
           description: Invalid signature
+  /v1/routing/assets:
+    get:
+      summary: Assets routable through Aquarius on this network
+      operationId: listRoutableAssets
+      responses:
+        '200':
+          description: OK
+  /v1/routing/quote:
+    get:
+      summary: Aquarius path-payment quote (testnet)
+      operationId: getRoutingQuote
+      parameters:
+        - { in: query, name: from, required: true, schema: { type: string, enum: [XLM, USDC] } }
+        - { in: query, name: to, required: true, schema: { type: string, enum: [XLM, USDC] } }
+        - { in: query, name: amount, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingQuote' }
+        '422':
+          description: No route available
+  /v1/routing/swap:
+    post:
+      summary: Execute a swap through the Aquarius router contract (testnet)
+      operationId: executeRoutingSwap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoutingSwapRequest' }
+      responses:
+        '201':
+          description: Swap settled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingSwapResult' }
+        '422':
+          description: No route, simulation failure, or on-chain failure
 components:
   schemas:
     HealthResponse:
@@ -543,3 +583,40 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OffRampSession' }
         nextCursor: { type: string, nullable: true }
+    RoutingQuote:
+      type: object
+      required: [from, to, sourceAmount, destinationAmount, minDestinationAmount, slippageBps, hops, pools, route]
+      properties:
+        from: { $ref: '#/components/schemas/AssetRef' }
+        to: { $ref: '#/components/schemas/AssetRef' }
+        sourceAmount: { type: string }
+        destinationAmount: { type: string }
+        minDestinationAmount: { type: string }
+        slippageBps: { type: integer }
+        hops: { type: integer }
+        pools: { type: array, items: { type: string } }
+        route: { type: array, items: { type: string } }
+    RoutingSwapRequest:
+      type: object
+      required: [from, to, amount]
+      properties:
+        from: { type: string, enum: [XLM, USDC] }
+        to: { type: string, enum: [XLM, USDC] }
+        amount: { type: string }
+    RoutingSwapResult:
+      type: object
+      required: [id, createdAt, network, sourceAddress, from, to, sourceAmount, estimatedDestinationAmount, minDestinationAmount, hops, pools, txHash, horizonUrl]
+      properties:
+        id: { type: string }
+        createdAt: { type: string, format: date-time }
+        network: { type: string, enum: [testnet, mainnet] }
+        sourceAddress: { type: string }
+        from: { $ref: '#/components/schemas/AssetRef' }
+        to: { $ref: '#/components/schemas/AssetRef' }
+        sourceAmount: { type: string }
+        estimatedDestinationAmount: { type: string }
+        minDestinationAmount: { type: string }
+        hops: { type: integer }
+        pools: { type: array, items: { type: string } }
+        txHash: { type: string }
+        horizonUrl: { type: string }

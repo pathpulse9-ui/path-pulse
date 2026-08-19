@@ -55,6 +55,14 @@ export const env = {
 
   signerBackend: process.env.SIGNER_BACKEND ?? 'dev',
 
+  // Aquarius AMM routing (D5). Testnet only — mainnet pools are gated behind Phase 5.
+  routing: {
+    sorobanRpcUrl: process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org',
+    aquaApiUrl: process.env.AQUA_API_URL ?? 'https://amm-api-testnet.aqua.network/api/external/v2',
+    aquaRouterContract: process.env.AQUA_ROUTER_CONTRACT ?? '',
+    slippageBps: Number(process.env.ROUTING_SLIPPAGE_BPS ?? 100),
+  },
+
   webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',
 
   session: {
