@@ -80,12 +80,12 @@ which anyone can submit to Horizon directly, so it confers no privilege.
 `GADPEI5OQHNMU5KZ4WBC4QK5N6OQSEZJQLRF5X2NIVHL74KVLWGREN4M`
 
 Thresholds 2/2/2 with four signers at weight 1 — **master key included**, so it is
-**2-of-4, not 2-of-3**. The three non-master secrets exist nowhere: the provisioning script
-printed them to stdout and never persisted them.
+**2-of-4, not 2-of-3**. On Stellar the master key is itself a signer, so the three
+configured keys (`TREASURY_SIGNER_{1,2,3}_PUBLIC`) plus the master give four.
+`buildTreasuryMultisigTx` now sets `masterWeight: 0`.
 
-On Stellar the master key is itself a signer, so three configured signer keys
-(`TREASURY_SIGNER_{1,2,3}_PUBLIC`) plus the master give four signers of weight 1 against a
-threshold of 2. `buildTreasuryMultisigTx` now sets `masterWeight: 0`.
+The three non-master secrets exist nowhere: the provisioning script printed them to stdout
+and never persisted them.
 
 Master alone is weight 1 against a threshold of 2, so it can authorize neither a payment
 **nor a `set_options` to repair its own signer set**. The account is permanently frozen.
