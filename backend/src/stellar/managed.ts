@@ -6,15 +6,9 @@ import { DevSigner, type Signer } from './signing.js';
 import { logger } from '../config/logger.js';
 
 /**
- * Dev-tier managed wallet provider — simulates Privy embedded wallets so the
- * delegated-signing flow works end-to-end on testnet before live Privy is wired.
- *
- * Each userId maps to a testnet keypair the backend controls (the "managed" key),
- * generated + Friendbot-funded on first provision. Secrets live in-process only,
- * never on disk. Phase 2+ swaps this for real Privy embedded wallets behind the
- * same `Signer` interface, so `/v1/tx/*` code does not change.
- *
- * Disabled on mainnet: managed keys there come from Privy/KMS, never generated here.
+ * Custodial managed wallets. The backend generates and holds the key; this is not
+ * self-custody. Secrets live in process memory only and do not survive a restart.
+ * Testnet only — see docs/CUSTODY.md.
  */
 
 interface ManagedRecord {
@@ -35,7 +29,7 @@ function toWallet(userId: string, rec: ManagedRecord): ManagedWallet {
 
 export async function provisionManagedWallet(userId: string): Promise<ManagedWallet> {
   if (env.network !== 'testnet') {
-    throw new Error('Dev managed wallet provisioning is testnet-only (mainnet uses Privy/KMS)');
+    throw new Error('Managed wallet provisioning is testnet-only');
   }
   let rec = store.get(userId);
   if (!rec) {

@@ -42,13 +42,13 @@ PathPulse makes the arithmetic the ledger. A settlement batch computes its split
 
 ### Accounts & custody
 - **Protocol-governed distribution accounts** — Partner Revenue, Driver Pool and Treasury are provisioned as distinct on-chain accounts, so every flow of funds has a named, auditable origin and destination.
-- **Multisig treasury** — the treasury carries a signer set with a ≥ 2-of-3 threshold. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set.
-- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend.
-- **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits. The client never holds a key.
+- **Multisig treasury** — the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set. (An earlier treasury shipped at 2-of-**4** with the master key still active and its signer secrets unrecoverable — it is frozen on testnet and superseded. See [`docs/CUSTODY.md`](docs/CUSTODY.md).)
+- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. **The KMS/HSM backends are declared but not implemented**; the live signer everywhere today is the in-memory dev tier.
+- **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits, for the account named by the caller's own session. The client never holds a key — which also means this path is **custodial**, not self-custody.
 
 ### Identity & wallet interop
 - **Non-custodial sign-in via SEP-10** — the wallet proves account ownership by signing a challenge transaction. Freighter, Lobstr, xBull and Albedo are wired through Stellar Wallets Kit.
-- **Custodial sign-in via Google** — Google Identity Services returns an ID token, verified server-side against the client ID; no OAuth secret is ever needed or stored.
+- **Custodial sign-in via Google** — Google Identity Services returns an ID token, verified server-side against the client ID; no OAuth secret is ever needed or stored. The resulting wallet is **platform-held**: PathPulse generates and keeps the key, and it does not survive a redeploy.
 - **Guest sessions** — the console is explorable without an account, so a reviewer can inspect settlement traceability before committing to a wallet.
 - **httpOnly session cookies** — session identity is server-verified and signed; the browser never holds a bearer token it could leak.
 

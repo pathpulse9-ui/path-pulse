@@ -2,12 +2,11 @@ import { Keypair, Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 
 /**
- * Signer abstraction. Phase 1 ships the `dev` backend (in-process keypairs on
- * testnet). Phases 5–6 swap in aws-kms / gcp-kms / hsm implementations behind
- * this same interface — the calling code never changes.
+ * Signer abstraction. Only the `dev` backend is implemented; aws-kms / gcp-kms /
+ * hsm are declared and throw. No KMS or HSM is in service — see docs/CUSTODY.md.
  *
  * HARD RULE: no signer will produce a mainnet signature without an explicit,
- * human-gated backend (KMS/HSM). The dev signer refuses mainnet outright.
+ * human-gated backend. The dev signer refuses mainnet outright.
  */
 export interface Signer {
   /** Public key this signer can sign for. */

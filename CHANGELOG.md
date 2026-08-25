@@ -2,6 +2,31 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.10.0] — 2026-08-25
+
+### Fixed (T1 review — delegated path was unreachable for end users)
+- `ensureAccountForEmail` now provisions through `provisionManagedWallet()` instead of generating its own keypair. The Google email/OAuth flow and the delegated signer previously wrote to and read from **two disconnected in-memory stores**, so every Google user received a funded managed address whose transactions all returned 404. Nothing wrote an end user into the signer's store — `provisionManagedWallet()` was called only by the four internal service accounts.
+- Stale 404 text on `/v1/tx/build` and `getManagedSigner` no longer directs callers to `POST /v1/onboard`, a route removed in the auth pivot.
+
+### Security
+- **`POST /v1/tx/build` now requires a session** and derives the signing identity from it; a `userId` in the request body is ignored. It previously took `userId` straight from the body with no session check, so any unauthenticated caller who knew a user id — a value returned to the client by `/v1/auth/google/verify` — could have the backend delegate-sign an arbitrary payment out of that user's managed wallet. Reachable in practice only after the store-wiring fix above, since before it no end-user account existed in the signer's store. `/v1/tx/submit` is deliberately left ungated: it relays an already-signed envelope, which anyone can submit to Horizon directly.
+- Contract: `BuildTransactionRequest` no longer requires `userId` on the wire.
+
+### Added
+- `docs/CUSTODY.md` — the authoritative statement of custody model, signer-backend status, delegated-path auth, known limitations, and both treasury accounts.
+- `backend/scripts/provision-treasury-v2.ts` — provisions a treasury with master weight 0 and a real 2-of-3, **persisting signer secrets to `secrets/treasury-v2.json`** (gitignored, mode 0600) rather than printing them to stdout.
+- Replacement treasury `GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2` — master weight 0, three weight-1 signers, thresholds 2/2/2. Config tx `9f93fc82…0856`; two-signer proof `4face5e7…3722` (exactly 2 signatures).
+
+### Changed (documentation accuracy — Privy substitution)
+- **Privy is formally substituted, not deferred.** It is not integrated in any branch: no SDK, no API call, no credential. `docs/ARCHITECTURE.md`, `docs/PHASE_PLAN.md`, `docs/AWS_COST_AND_KEY_STORAGE.md`, `docs/API_ARCHITECTURE.md`, `ios/README.md` and `README.md` no longer present it as the mainnet plan; it survives only as one unselected option in the vendor cost comparison.
+- Docs no longer imply KMS/HSM-backed signing is in service. The `aws-kms` / `gcp-kms` / `hsm` branches are declared and throw; the live signer is `dev` (`DevSigner`, in-memory) in every environment.
+- `README.md` multisig claim corrected: the ≥ 2-of-3 description applies to the replacement treasury. The original `GADPEI5O…` shipped as **2-of-4** with the master key retained at weight 1 and its three signer secrets unrecoverable — it is permanently frozen and cannot authorize even a `set_options` to repair itself.
+
+### Known limitations (unchanged, now documented)
+- Managed keys remain in process memory with no persistence: any redeploy orphans every managed account created before it, permanently. App Runner stays pinned to one instance for this reason.
+- `secrets/treasury-v2.json` is not in a managed secret store. It is a single point of failure.
+- The demo's distribution env vars still point at the original, frozen treasury; migration is outstanding.
+
 ## [0.1.9.0] — 2026-08-13
 
 ### Added (PAT-11 · D4 — Carret Infra off-ramp provider, mocked-first)

@@ -1,5 +1,10 @@
 # PathPulse — AWS Cost Estimate & Private-Key Storage Strategy
 
+> **Status note (2026-08-25).** This is a forward-looking cost model, not a description of
+> what runs today. **Privy is not integrated and is not planned** — it appears below only as
+> one unselected option in a vendor comparison. No KMS, HSM or Vault backend is in service
+> either; the live signer is the in-memory dev tier. See `docs/CUSTODY.md` for actual state.
+
 > Status: planning estimate · Region assumed **ap-south-1 (Mumbai)** · Prices are
 > **on-demand list** in USD/month and are **estimates for budgeting**, not quotes.
 > Validate against the [AWS Pricing Calculator](https://calculator.aws) before committing.
@@ -22,9 +27,10 @@ User tiers analysed: **50k**, **500k**, **1,000k (1M)** users.
 4. **Two key tiers, two strategies:**
    - **Treasury / protocol keys** (a handful, control real funds) → multisig with signers on
      **CloudHSM or KMS-envelope + hardware/offline co-signers**.
-   - **Driver wallets** (scales to millions) → **Privy** today (non-custodial, off your books),
-     migrate to **KMS envelope encryption self-custody** when Privy active-wallet fees cross the
-     break-even (see §5).
+   - **Driver wallets** (scales to millions) → today these are **custodial, backend-held and
+     in-memory** (prototype tier, see `docs/CUSTODY.md`). The two candidate destinations are a
+     managed vendor such as Privy (non-custodial, off your books) or **KMS envelope encryption
+     self-custody**; the break-even between them is §5. Neither is adopted yet.
 5. **Most cost-effective key mechanism: AWS KMS envelope encryption.** One (or a few) symmetric
    KMS keys encrypt every Ed25519 seed; ciphertext lives in Postgres. Marginal cost at 1M users
    is **pennies**, versus per-user KMS keys ($1M/mo) or per-active-wallet SaaS fees.
@@ -41,7 +47,7 @@ two very different buckets:
 | PathPulse Treasury (multisig master + signers) | ~3–6, fixed | **Very high** (all funds) | CloudHSM, or KMS-envelope + hardware co-signers |
 | Partner Revenue / Driver Pool distribution accounts | 2–3, fixed | High | Same as treasury |
 | Driver managed wallets (Ed25519 seed per driver) | **= user count** | Low–medium each | Privy (managed) **or** KMS envelope self-custody |
-| Service/API secrets (Privy, SDP, Mercuryo, DB) | ~10, fixed | Medium | AWS Secrets Manager |
+| Service/API secrets (SDP, Carret/Ramp, DB, SEP-10 signing) | ~10, fixed | Medium | AWS Secrets Manager |
 
 **The only thing that scales with users is the driver-wallet bucket.** Everything else is a
 fixed, small set. That is why per-user KMS keys are wrong and envelope encryption is right.
@@ -145,7 +151,7 @@ $50k / $500k / $1M per month respectively. Do not do this.
 data key; the Ed25519 seed is stored AES-encrypted in Postgres; decrypt only in memory at sign
 time behind the existing `Signer` interface ([backend/src/stellar/signing.ts](../backend/src/stellar/signing.ts)).
 
-- **50k users (~$1.2k/mo AWS + Horizon).** KMS envelope for everything. Keep **Privy** for driver
+- **50k users (~$1.2k/mo AWS + Horizon).** KMS envelope for everything. Adopt **Privy** for driver
   wallets (cheap here, offloads security while you harden). Treasury: KMS-envelope signer + 2
   hardware co-signers for the 2/3 multisig — avoids the CloudHSM floor. **Skip CloudHSM.**
 - **500k users (~$3.5k/mo AWS + Horizon).** Same core. Re-evaluate Privy: at ~$10k–25k/mo it may

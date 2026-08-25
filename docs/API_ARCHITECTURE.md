@@ -7,7 +7,7 @@
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) (system), [PHASE_PLAN.md](PHASE_PLAN.md) (roadmap/ownership).
 
-> **Stack (current):** monorepo on **pnpm** (`workspace:*` deps). Backend = Node/TS + Express (`pnpm --filter @pathpulse/backend dev`, :8080). Web = **Next.js 16 / React 19 / Tailwind v4**, app-router (`pnpm --dir web dev`, :3000). Auth = **Google sign-in (custodial) + SEP-10 wallet (non-custodial)** — the "Non Custodial" pivot replaced the earlier Privy/`/v1/onboard` model.
+> **Stack (current):** monorepo on **pnpm** (`workspace:*` deps). Backend = Node/TS + Express (`pnpm --filter @pathpulse/backend dev`, :8080). Web = **Next.js 16 / React 19 / Tailwind v4**, app-router (`pnpm --dir web dev`, :3000). Auth = **Google sign-in (custodial) + SEP-10 wallet (non-custodial)** — the "Non Custodial" pivot replaced the earlier Privy/`/v1/onboard` model. Privy is **substituted, not deferred**; custody model and signer-backend state are in [`CUSTODY.md`](./CUSTODY.md).
 
 ---
 
@@ -116,7 +116,7 @@ sequenceDiagram
 
 Clients **never** hold treasury/protocol keys and never build settlement transactions. Two paths, by custody:
 
-- **Custodial (Google) accounts** → `POST /v1/tx/build` constructs the transaction and **delegate-signs** it (the backend holds that key), returning base64 **XDR** + hash; then `POST /v1/tx/submit`.
+- **Custodial (Google) accounts** → `POST /v1/tx/build` constructs the transaction and **delegate-signs** it (the backend holds that key), returning base64 **XDR** + hash; then `POST /v1/tx/submit`. **`/v1/tx/build` requires a session** and takes the signing identity from it — a `userId` in the body is ignored.
 - **Non-custodial (SEP-10 wallet) users** → the backend builds/returns an unsigned XDR (or the client builds its own), the **user signs client-side** with their wallet, then `POST /v1/tx/submit` relays the signed envelope to Horizon.
 
 `POST /v1/tx/submit` returns `{ hash, successful, ledger, horizonUrl }`.
@@ -126,7 +126,7 @@ sequenceDiagram
   participant App as Client
   participant API as Backend Core
   participant HZ as Horizon
-  App->>API: POST /v1/tx/build { userId, operations[] }  (Idempotency-Key)
+  App->>API: POST /v1/tx/build { operations[] } + session cookie  (Idempotency-Key)
   API->>API: build tx; delegate-sign (managed) OR return unsigned XDR
   API-->>App: { xdr, hash }
   App->>API: POST /v1/tx/submit { xdr }  (Idempotency-Key)
@@ -154,8 +154,8 @@ Legend: **[live]** implemented on testnet · **[planned]** contract-defined, not
 | POST | `/v1/auth/wallet/verify` | verify signed SEP-10 challenge → session | **[live]** |
 | GET | `/v1/auth/me` | current session user (or `null`) | **[live]** |
 | POST | `/v1/auth/logout` | clear the session cookie | **[live]** |
-| POST | `/v1/tx/build` | build (+delegate-sign) a tx | **[live]** |
-| POST | `/v1/tx/submit` | submit signed XDR to Horizon | **[live]** |
+| POST | `/v1/tx/build` | build (+delegate-sign) a tx — **session required** | **[live]** |
+| POST | `/v1/tx/submit` | submit signed XDR to Horizon (relay; no session) | **[live]** |
 | GET | `/v1/wallets/me` | the caller's wallet + balances | **[planned]** |
 
 ### Phase 2 — Wallet interop & payout rails (D2, D3)
@@ -272,7 +272,7 @@ Clients read the base URL from config (never hardcode): web `NEXT_PUBLIC_API_URL
 - **Contract-first**: no field ships that isn't in `openapi.yaml`. Client models are generated, not hand-written.
 - **Money is strings, 7 decimals.** Never parse Stellar amounts into a float/double anywhere.
 - **Session is a cookie, not a header.** Send `credentials: 'include'`; never put session/secrets in URLs or query strings.
-- **Custody boundary:** the backend delegate-signs only for **custodial (Google)** accounts; **non-custodial (SEP-10 wallet)** users sign client-side. Clients never sign settlement/treasury tx.
+- **Custody boundary:** the backend delegate-signs only for **custodial (Google)** accounts, and only for the account named by the caller's own session; **non-custodial (SEP-10 wallet)** users sign client-side. Clients never sign settlement/treasury tx. Custodial keys are in-memory and do not survive a redeploy — see [`CUSTODY.md`](./CUSTODY.md).
 - **Idempotency-Key on every value-moving POST** (target convention). Retries must not double-pay.
 - **Switch on `error` codes, not messages.** Handle `401` → re-authenticate (no refresh token), `429` → back off, `422` → show the reason.
 - **Testnet only through Phase 4.** No client hardcodes a mainnet URL before Phase 5.

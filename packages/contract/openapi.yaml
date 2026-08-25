@@ -407,9 +407,11 @@ components:
         network: { type: string, enum: [testnet, mainnet] }
     BuildTransactionRequest:
       type: object
-      required: [userId, operations]
+      required: [operations]
+      description: >-
+        Signing identity is taken from the session cookie. A userId sent in the body is
+        ignored; the endpoint returns 401 without a session.
       properties:
-        userId: { type: string }
         memo: { type: string }
         operations:
           type: array
