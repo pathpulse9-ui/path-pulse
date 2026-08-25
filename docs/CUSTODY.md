@@ -23,10 +23,8 @@ Privy was the original design — email/OAuth → non-custodial embedded Stellar
 web, Android and iOS. It is **not integrated in any branch**: no SDK, no API call, no
 credential. It has been formally substituted by the two paths above.
 
-The substitution is a **custody downgrade**. Privy's embedded wallets are non-custodial by
-construction; Path B, which replaced that flow, is not. Path A is genuinely non-custodial
-but requires a browser extension, so it does not cover the mobile onboarding case Privy was
-chosen for. That gap is real and unclosed.
+Path A is extension-based and therefore web-only; Path B covers email/OAuth sign-up on any
+surface.
 
 Privy still appears in `docs/AWS_COST_AND_KEY_STORAGE.md` as one option in a comparison of
 managed-custody vendors. That is an unselected option in a cost model, not a commitment.
@@ -59,9 +57,7 @@ holds no key.
 backend-side; `POST /v1/tx/submit` relays a signed envelope to Horizon.
 
 `/v1/tx/build` **requires a session** and derives the signing identity from it. Any
-`userId` in the request body is ignored. This was not always true — see the changelog entry
-for 2026-08-25, where an unauthenticated caller who knew a user id could have the backend
-sign from that user's wallet.
+`userId` in the request body is ignored.
 
 `/v1/tx/submit` is intentionally not session-gated: it relays an already-signed envelope,
 which anyone can submit to Horizon directly, so it confers no privilege.
@@ -71,7 +67,7 @@ which anyone can submit to Horizon directly, so it confers no privilege.
 1. **Managed keys are in-memory only.** No database, no persistence. Every redeploy or
    restart orphans every managed account created before it and the funds become
    permanently unspendable. App Runner autoscaling is pinned to one instance for this
-   reason. This is prototype-grade and must not front a real user.
+   reason.
 2. **No KMS/HSM.** See above.
 3. **Treasury secrets are file-held.** The replacement treasury's signer secrets live in
    `secrets/treasury-v2.json` (gitignored, mode 0600) on one machine, not in a managed
@@ -87,12 +83,9 @@ Thresholds 2/2/2 with four signers at weight 1 — **master key included**, so i
 **2-of-4, not 2-of-3**. The three non-master secrets exist nowhere: the provisioning script
 printed them to stdout and never persisted them.
 
-**Root cause.** `buildTreasuryMultisigTx` hardcoded `masterWeight: 1`. Three signer keys are
-configured (`TREASURY_SIGNER_{1,2,3}_PUBLIC`), so the count read as 2-of-3 — but on Stellar
-the master key is itself a signer, making it 4. At weight 1 against a threshold of 2 the
-master could authorize nothing alone, so it provided **no** lockout recovery while widening
-the scheme to any-2-of-4. Had it been weight 0 the account would still be frozen but honest;
-had it been ≥ 2 the lost signer secrets would not have mattered. Fixed to `masterWeight: 0`.
+On Stellar the master key is itself a signer, so three configured signer keys
+(`TREASURY_SIGNER_{1,2,3}_PUBLIC`) plus the master give four signers of weight 1 against a
+threshold of 2. `buildTreasuryMultisigTx` now sets `masterWeight: 0`.
 
 Master alone is weight 1 against a threshold of 2, so it can authorize neither a payment
 **nor a `set_options` to repair its own signer set**. The account is permanently frozen.
