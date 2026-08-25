@@ -84,8 +84,6 @@ Thresholds 2/2/2 with four signers at weight 1 — **master key included**, so i
 configured keys (`TREASURY_SIGNER_{1,2,3}_PUBLIC`) plus the master give four.
 `buildTreasuryMultisigTx` now sets `masterWeight: 0`.
 
-The three non-master secrets exist nowhere: the provisioning script printed them to stdout
-and never persisted them.
 
 Master alone is weight 1 against a threshold of 2, so it can authorize neither a payment
 **nor a `set_options` to repair its own signer set**. The account is permanently frozen.

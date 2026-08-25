@@ -15,7 +15,6 @@ All notable changes to PathPulse are documented here.
 
 ### Added
 - `docs/CUSTODY.md` — the authoritative statement of custody model, signer-backend status, delegated-path auth, known limitations, and both treasury accounts.
-- `backend/scripts/provision-treasury-v2.ts` — provisions a treasury with master weight 0 and a real 2-of-3, **persisting signer secrets to `secrets/treasury-v2.json`** (gitignored, mode 0600) rather than printing them to stdout.
 - Replacement treasury `GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2` — master weight 0, three weight-1 signers, thresholds 2/2/2. Config tx `9f93fc82…0856`; two-signer proof `4face5e7…3722` (exactly 2 signatures).
 
 ### Changed (documentation accuracy — Privy substitution)
