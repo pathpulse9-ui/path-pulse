@@ -87,6 +87,13 @@ Thresholds 2/2/2 with four signers at weight 1 — **master key included**, so i
 **2-of-4, not 2-of-3**. The three non-master secrets exist nowhere: the provisioning script
 printed them to stdout and never persisted them.
 
+**Root cause.** `buildTreasuryMultisigTx` hardcoded `masterWeight: 1`. Three signer keys are
+configured (`TREASURY_SIGNER_{1,2,3}_PUBLIC`), so the count read as 2-of-3 — but on Stellar
+the master key is itself a signer, making it 4. At weight 1 against a threshold of 2 the
+master could authorize nothing alone, so it provided **no** lockout recovery while widening
+the scheme to any-2-of-4. Had it been weight 0 the account would still be frozen but honest;
+had it been ≥ 2 the lost signer secrets would not have mattered. Fixed to `masterWeight: 0`.
+
 Master alone is weight 1 against a threshold of 2, so it can authorize neither a payment
 **nor a `set_options` to repair its own signer set**. The account is permanently frozen.
 Its only transaction is the configuring

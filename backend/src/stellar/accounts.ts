@@ -56,10 +56,11 @@ export async function getTreasuryConfig(): Promise<TreasuryConfig> {
 }
 
 /**
- * Build the multisig-configuration transaction for the treasury account
- * (add signers, set thresholds ≥ 2/3). This BUILDS the transaction only —
- * it is human-gated: a signatory reviews and signs/submits it. We never
- * auto-provision the treasury signer set.
+ * Build the multisig-configuration transaction for the treasury account:
+ * add the named signers at weight 1 and disable the master key (weight 0),
+ * so the account is a true 2-of-3 rather than 2-of-4. This BUILDS the
+ * transaction only — it is human-gated: a signatory reviews and signs/submits
+ * it. We never auto-provision the treasury signer set.
  *
  * Returns base64 XDR for review.
  */
@@ -69,7 +70,7 @@ export async function buildTreasuryMultisigTx(): Promise<{ xdr: string }> {
   if (!publicKey) throw new Error('TREASURY_PUBLIC not configured');
   const signers = env.treasury.signers;
   if (signers.length < 3) {
-    throw new Error('Treasury multisig requires at least 3 signer public keys (2/3 threshold)');
+    throw new Error('Treasury multisig requires at least 3 signer public keys for a 2-of-3');
   }
 
   const account = await horizon.loadAccount(publicKey);
@@ -89,7 +90,7 @@ export async function buildTreasuryMultisigTx(): Promise<{ xdr: string }> {
 
   builder.addOperation(
     Operation.setOptions({
-      masterWeight: 1,
+      masterWeight: 0,
       lowThreshold: env.treasury.thresholds.low,
       medThreshold: env.treasury.thresholds.medium,
       highThreshold: env.treasury.thresholds.high,
