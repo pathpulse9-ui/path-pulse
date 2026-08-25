@@ -146,6 +146,7 @@ export const env = {
     assetId: process.env.SDP_ASSET_ID ?? '',
     registrationContactType: process.env.SDP_REGISTRATION_CONTACT_TYPE ?? 'PHONE_NUMBER_AND_WALLET_ADDRESS',
     verificationField: process.env.SDP_VERIFICATION_FIELD ?? 'DATE_OF_BIRTH',
+    contactDomain: process.env.SDP_CONTACT_DOMAIN ?? 'pathpulse.local',
   },
 } as const;
 

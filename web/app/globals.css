@@ -47,3 +47,8 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+::placeholder {
+  color: rgba(0, 0, 0, 0.45);
+  opacity: 1;
+}

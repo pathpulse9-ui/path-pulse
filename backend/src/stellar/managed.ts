@@ -58,6 +58,6 @@ export function getManagedWallet(userId: string): ManagedWallet | null {
 /** Signer for a provisioned managed wallet (dev tier — refuses mainnet via DevSigner). */
 export function getManagedSigner(userId: string): Signer {
   const rec = store.get(userId);
-  if (!rec) throw new Error(`No managed wallet for user ${userId} — onboard first`);
+  if (!rec) throw new Error(`No managed wallet for user ${userId} — sign in first`);
   return new DevSigner(rec.keypair.secret());
 }

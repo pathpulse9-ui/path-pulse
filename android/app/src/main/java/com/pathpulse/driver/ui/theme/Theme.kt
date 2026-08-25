@@ -12,11 +12,11 @@ val PpShapes = Shapes(
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(50),
+    extraLarge = RoundedCornerShape(28.dp),
 )
 
 val PpPillShape = RoundedCornerShape(50)
-val PpCardShape = RoundedCornerShape(16.dp)
+val PpCardShape = RoundedCornerShape(28.dp)
 val PpTileShape = RoundedCornerShape(12.dp)
 val PpBadgeShape = RoundedCornerShape(10.dp)
 

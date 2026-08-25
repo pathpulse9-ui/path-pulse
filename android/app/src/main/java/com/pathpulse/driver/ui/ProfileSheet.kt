@@ -21,6 +21,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -117,13 +118,13 @@ fun ProfileSheet(
                 Icon(
                     PpIcons.SignOut,
                     contentDescription = null,
-                    tint = PpBlack70,
+                    tint = Color.Black,
                     modifier = Modifier.size(18.dp),
                 )
                 Text(
                     if (user.method == "guest") "Exit guest session" else "Sign out",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = PpBlack70,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.Black,
                 )
             }
         }

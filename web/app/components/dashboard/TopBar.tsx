@@ -51,7 +51,7 @@ export function TopBar() {
     : 'Not signed in';
 
   return (
-    <header className="shrink-0 flex items-start justify-between gap-6 px-6 pt-6 pb-5">
+    <header className="sticky top-0 z-20 shrink-0 flex items-start justify-between gap-6 px-6 pt-6 pb-5 bg-[#F5F5F5]">
       <div className="min-w-0 flex-1">
         <h1 className={T.pageTitle}>{section?.label ?? 'Dashboard'}</h1>
         {section?.description && (
@@ -104,7 +104,7 @@ export function TopBar() {
                 <Link
                   href="/dashboard/profile"
                   onClick={() => setOpen(false)}
-                  className="flex items-center gap-2 rounded-xl px-3 h-10 text-sm text-black/70 hover:bg-black/[0.03] hover:text-black transition-colors duration-200"
+                  className="flex items-center gap-2 rounded-xl px-3 h-10 text-sm text-black hover:bg-black/[0.03] transition-colors duration-200"
                 >
                   <UserIcon className="w-4 h-4" />
                   Profile
@@ -113,7 +113,7 @@ export function TopBar() {
                   <Link
                     href="/signin"
                     onClick={() => setOpen(false)}
-                    className="flex items-center gap-2 rounded-xl px-3 h-10 text-sm text-black/70 hover:bg-black/[0.03] hover:text-black transition-colors duration-200"
+                    className="flex items-center gap-2 rounded-xl px-3 h-10 text-sm text-black hover:bg-black/[0.03] transition-colors duration-200"
                   >
                     <UserIcon className="w-4 h-4" />
                     Sign in properly
@@ -121,7 +121,7 @@ export function TopBar() {
                 )}
                 <button
                   onClick={signOut}
-                  className="w-full flex items-center gap-2 rounded-xl px-3 h-10 text-sm text-black/70 hover:bg-black/[0.03] hover:text-black transition-colors duration-200"
+                  className="w-full flex items-center gap-2 rounded-xl px-3 h-10 text-sm text-black hover:bg-black/[0.03] transition-colors duration-200"
                 >
                   <LogOut className="w-4 h-4" />
                   {user.method === 'guest' ? 'Exit guest session' : 'Sign out'}

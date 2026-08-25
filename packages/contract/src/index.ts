@@ -223,17 +223,20 @@ export interface GroupPayoutRecipient {
   name: string;
   address: string;
   amount: string;
+  remark?: string;
 }
 
 export interface CreateGroupPayoutRequest {
   asset?: AssetRef;
   recipients: GroupPayoutRecipient[];
+  memo?: string;
 }
 
 export interface GroupPayoutReceipt {
   name: string;
   address: string;
   amount: string;
+  remark?: string;
 }
 
 export interface GroupPayoutBatch {
@@ -243,6 +246,7 @@ export interface GroupPayoutBatch {
   asset: AssetRef;
   totalAmount: string;
   sourceAddress: string;
+  memo?: string;
   receipts: GroupPayoutReceipt[];
   txHash: string;
   horizonUrl: string;
@@ -376,4 +380,23 @@ export interface RoutingSwapResult {
   pools: string[];
   txHash: string;
   horizonUrl: string;
+}
+
+export interface OffRampQuoteFee {
+  label: string;
+  amount: string;
+}
+
+export interface OffRampQuote {
+  provider: 'ramp' | 'carret';
+  /** true when priced by the provider's live API; false = indicative estimate. */
+  live: boolean;
+  quoteId?: string;
+  asset: string;
+  fiatCurrency: string;
+  amount: string;
+  grossFiatAmount: string;
+  fiatAmount: string;
+  rate: string;
+  fees: OffRampQuoteFee[];
 }

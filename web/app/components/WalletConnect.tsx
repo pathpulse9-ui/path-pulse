@@ -75,7 +75,7 @@ export default function WalletConnect() {
         });
         log(`Account loaded from Horizon (${native?.balance ?? '0'} XLM)`);
       } catch (e: unknown) {
-        if (e instanceof Error && e.name === 'NotFoundError') {
+        if ((e as { response?: { status?: number } })?.response?.status === 404) {
           setAccount({ status: 'not-found' });
           log('Account not found on testnet; needs Friendbot funding', 'err');
         } else {

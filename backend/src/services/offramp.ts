@@ -10,6 +10,19 @@ import type {
 import { env, rampLive, carretLive } from '../config/env.js';
 import { getSettlementBatch } from '../stellar/settlement.js';
 import { buildOfframpUrl, mapRampStatus } from './ramp.js';
+import type { OffRampQuote } from '@pathpulse/contract';
+
+interface CarretQuoteShape {
+  id?: number | string;
+  asset?: string;
+  fiat?: string;
+  base_rate?: number;
+  rate_info?: { rate?: number };
+  output_amount?: { amount?: number };
+  gross_output_amount?: { amount?: number };
+  fee_details?: { carret_fee_amount?: number; tax_amount?: number };
+}
+
 import {
   carretMocks,
   createOfframpQuote,
@@ -306,6 +319,51 @@ export function applyCarretCallback(orderId: string, carretStatus: string): bool
     s.updatedAt = new Date().toISOString();
   }
   return true;
+}
+
+/**
+ * Price a withdrawal without committing anything. Carret quotes are read-only —
+ * no order, no funds — so this stays available on testnet even though placing an
+ * order does not.
+ */
+export async function quoteWithdrawal(amount: string): Promise<OffRampQuote> {
+  if (activeProvider() === 'carret' && carretLive) {
+    const routeId = await resolveOfframpRouteId();
+    const q = (await createOfframpQuote({ routeId, amount })) as CarretQuoteShape;
+    const fees: OffRampQuote['fees'] = [];
+    if (q.fee_details?.carret_fee_amount !== undefined) {
+      fees.push({ label: 'Carret fee', amount: String(q.fee_details.carret_fee_amount) });
+    }
+    if (q.fee_details?.tax_amount !== undefined) {
+      fees.push({ label: 'Tax', amount: String(q.fee_details.tax_amount) });
+    }
+    return {
+      provider: 'carret',
+      live: true,
+      quoteId: q.id === undefined ? undefined : String(q.id),
+      asset: q.asset ?? env.carret.crypto,
+      fiatCurrency: q.fiat ?? env.carret.fiat,
+      amount,
+      grossFiatAmount: String(q.gross_output_amount?.amount ?? ''),
+      fiatAmount: String(q.output_amount?.amount ?? ''),
+      rate: String(q.rate_info?.rate ?? q.base_rate ?? ''),
+      fees,
+    };
+  }
+
+  const rate = env.ramp.indicativeRate;
+  const gross = Number(amount) * rate;
+  return {
+    provider: activeProvider(),
+    live: false,
+    asset: env.ramp.crypto,
+    fiatCurrency: env.ramp.fiat,
+    amount,
+    grossFiatAmount: gross.toFixed(2),
+    fiatAmount: gross.toFixed(2),
+    rate: String(rate),
+    fees: [],
+  };
 }
 
 /** Expose the active provider name for the `/health` payload + routing decisions. */

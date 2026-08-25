@@ -55,7 +55,7 @@ export async function buildTransaction(req: BuildTransactionRequest): Promise<Bu
   const wallet = getManagedWallet(req.userId);
   if (!wallet || !wallet.provisioned) {
     throw httpError(
-      `No provisioned managed wallet for user ${req.userId} — call /v1/onboard first`,
+      `No provisioned managed wallet for user ${req.userId} — sign in first`,
       404,
       'AccountNotFound',
     );

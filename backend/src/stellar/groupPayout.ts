@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { TransactionBuilder, Operation, Asset, BASE_FEE, StrKey } from '@stellar/stellar-sdk';
+import { TransactionBuilder, Operation, Asset, Memo, BASE_FEE, StrKey } from '@stellar/stellar-sdk';
 import type {
   CreateGroupPayoutRequest,
   GroupPayoutBatch,
@@ -61,6 +61,9 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
     builder.addOperation(Operation.payment({ destination: r.address, asset, amount: fromStroops(stroops) }));
   }
 
+  const memo = req.memo?.trim();
+  if (memo) builder.addMemo(Memo.text(memo));
+
   let tx = builder.setTimeout(180).build();
   tx = (await getManagedSigner(GROUP_PAYOUT_SOURCE_USER).sign(tx)) as typeof tx;
 
@@ -84,7 +87,13 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
     asset: ref,
     totalAmount: fromStroops(totalStroops),
     sourceAddress: source.address,
-    receipts: req.recipients.map((r) => ({ name: r.name, address: r.address, amount: r.amount })),
+    memo: memo || undefined,
+    receipts: req.recipients.map((r) => ({
+      name: r.name,
+      address: r.address,
+      amount: r.amount,
+      remark: r.remark?.trim() || undefined,
+    })),
     txHash: res.hash,
     horizonUrl: horizonTxUrl(res.hash),
   };

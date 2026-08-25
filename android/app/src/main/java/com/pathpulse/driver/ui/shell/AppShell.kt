@@ -38,10 +38,13 @@ import com.pathpulse.driver.ui.theme.PpBackground
 import com.pathpulse.driver.ui.theme.PpBlack05
 import com.pathpulse.driver.ui.theme.PpBlack40
 import com.pathpulse.driver.ui.theme.PpGreen500
+import com.pathpulse.driver.ui.theme.PpMint
+import com.pathpulse.driver.ui.theme.PpMintInk
 import com.pathpulse.driver.ui.theme.PpRed500
 import com.pathpulse.driver.ui.theme.PpSize
 import com.pathpulse.driver.ui.theme.PpSpace
 import com.pathpulse.driver.ui.theme.PpSurface
+import com.pathpulse.driver.ui.theme.PpTileShape
 
 enum class PpTab(val label: String, val icon: ImageVector) {
     Dashboard("Dashboard", PpIcons.Dashboard),
@@ -100,23 +103,24 @@ private fun PpTopBar(
 
 @Composable
 private fun PpBottomNav(selected: PpTab, onSelect: (PpTab) -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth().background(PpSurface)) {
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(PpBlack05))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .height(PpSize.bottomNav),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PpTab.entries.forEach { tab ->
-                PpNavItem(
-                    tab = tab,
-                    selected = tab == selected,
-                    onClick = { onSelect(tab) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = PpSize.screenPadding, vertical = PpSpace.md)
+            .clip(RoundedCornerShape(50))
+            .background(PpSurface)
+            .padding(PpSpace.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PpSpace.xs),
+    ) {
+        PpTab.entries.forEach { tab ->
+            PpNavItem(
+                tab = tab,
+                selected = tab == selected,
+                onClick = { onSelect(tab) },
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -128,10 +132,12 @@ private fun PpNavItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val tint = if (selected) Color.Black else PpBlack40
+    val tint = if (selected) PpMintInk else PpBlack40
     Column(
         modifier = modifier
-            .fillMaxSize()
+            .height(56.dp)
+            .clip(PpTileShape)
+            .background(if (selected) PpMint else Color.Transparent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -140,10 +146,10 @@ private fun PpNavItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(tab.icon, contentDescription = tab.label, tint = tint, modifier = Modifier.size(22.dp))
+        Icon(tab.icon, contentDescription = tab.label, tint = tint, modifier = Modifier.size(20.dp))
         Text(
             tab.label,
-            style = if (selected) MaterialTheme.typography.labelMedium else MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = tint,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = PpSpace.xs),

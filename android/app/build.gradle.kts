@@ -22,7 +22,7 @@ android {
 
     buildTypes {
         debug {
-            val apiBase = providers.gradleProperty("pathpulse.apiBase").getOrElse("http://10.73.95.160:8080")
+            val apiBase = providers.gradleProperty("pathpulse.apiBase").getOrElse("http://10.10.100.142:8080")
             buildConfigField("String", "API_BASE", "\"$apiBase\"")
         }
         release {

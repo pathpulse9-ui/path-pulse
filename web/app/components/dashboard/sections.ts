@@ -1,4 +1,4 @@
-import { LayoutGrid, ArrowLeftRight, Award, Banknote, Landmark, User } from 'lucide-react';
+import { LayoutGrid, ArrowLeftRight, Award, Banknote, Landmark, Send, User } from 'lucide-react';
 
 export const SECTIONS = [
   {
@@ -20,6 +20,13 @@ export const SECTIONS = [
     icon: Award,
     description:
       'On-chain reputation tiers as Classic Assets. Tier is assigned from a PulseGen score; the settlement engine reads the badge for the reward multiplier.',
+  },
+  {
+    label: 'Payouts',
+    href: '/dashboard/payouts',
+    icon: Send,
+    description:
+      'Institutional disbursement through the Stellar Disbursement Platform — batch orchestration, per-recipient status and on-chain reconciliation.',
   },
   {
     label: 'Off-ramp',

@@ -1,0 +1,176 @@
+PATHPULSE - TRANCHE EVIDENCE (D1, D2, D3)
+=========================================
+
+Network: Stellar testnet ("Test SDF Network ; September 2015") throughout.
+Every hash below is on horizon-testnet.stellar.org and verifiable without us.
+
+
+SCOPE CORRECTIONS (please read first)
+-------------------------------------
+Two items in the original D1 commitment no longer describe what we built. We are
+flagging this ourselves rather than letting a re-review discover it.
+
+1. Privy is not integrated, and will not be. We moved to a non-custodial model:
+   contributors hold their own keys in Freighter / Lobstr / xBull / Albedo and
+   prove account ownership by signing a SEP-10 challenge. There is therefore no
+   Privy-provisioned contributor account to show. Delegated transaction
+   construction still exists (the client describes intent, the backend builds and
+   submits), but the signer is the user's own wallet, not a Privy embedded wallet.
+
+2. No HSM/KMS is in service, because the non-custodial pivot removed what it was
+   for. We no longer hold contributor keys at all. The only long-lived secrets
+   PathPulse holds are two service keys: the SDP distribution account, and the
+   SEP-10 server signing key. On testnet both are environment-held. The Signer
+   interface (backend/src/stellar/signing.ts) abstracts the backend, and the dev
+   signer refuses to produce a mainnet signature outright; the aws-kms / gcp-kms /
+   hsm branches are declared but not implemented. We would rather state this
+   plainly than describe a KMS setup that does not exist.
+
+
+D1 - ACCOUNTS, SIGNERS, WEIGHTS, THRESHOLDS
+--------------------------------------------
+Treasury         GADPEI5OQHNMU5KZ4WBC4QK5N6OQSEZJQLRF5X2NIVHL74KVLWGREN4M
+Partner Revenue  GA3XFACID4PFYYADQBXUVKT2B6OB3QQDVGUDHYBYFISBZKD5C45CGMAY
+Driver Pool      GD2J6WSBGITCNDH4AA3FMMQVUMHWIL2KL4DHQGXKENAJAR3TNDJXXGGU
+
+Treasury thresholds: low 2 / medium 2 / high 2
+Treasury signers (all weight 1):
+  GADPEI5OQHNMU5KZ4WBC4QK5N6OQSEZJQLRF5X2NIVHL74KVLWGREN4M  (master key)
+  GAYFE5VQBXSDWQ7QINYMY2DD7FTG3FQN3BME7FJW2GG67OM3FT4BAX2D
+  GCB7Q4M6ZCN4ZZXFVV6P2N2LEDMMTMGY7HTJX2MEFO2C25PRM7LQBTWX
+  GAJGAASW5BXBHFMUFVDHVKLU6CHC3CBFYLTNWQ3QJCU3GUW4XG5LWQK4
+
+Signer set configured by transaction:
+  96e0090852c6c0d2f5806a8657f92752b3133d11e52d717dad9fe3db27097dcd
+
+The running backend also serves this live from Horizon, so it can be cross-checked
+against the ledger:
+  https://demo-api.pathpulse.ai/v1/treasury/config
+
+KNOWN GAPS, D1:
+  (a) The master key was left at weight 1 and remains a signer, so the treasury is
+      currently 2-of-4, not the 2-of-3 originally described. We are correcting this
+      by dropping the master key weight to 0.
+  (b) Partner Revenue and Driver Pool are single-signer accounts with thresholds
+      0/0/0. Only the Treasury carries a multisig configuration.
+  (c) A transaction co-signed by two treasury signers is NOT yet available. Only
+      one transaction has ever been sourced by the treasury - the setOptions above,
+      signed by the master key alone before the thresholds took effect. We are
+      producing a co-signed transaction and will send the hash separately.
+
+
+D2 - DEMO URL AND EXTERNAL WALLET TRANSACTION
+----------------------------------------------
+Demo URL:  https://demo.pathpulse.ai
+Test page: https://demo.pathpulse.ai/dashboard/profile
+Backend:   https://demo-api.pathpulse.ai
+
+Before you start: set your wallet to the Stellar TESTNET network. The demo
+builds and submits testnet transactions only, and a wallet left on mainnet will
+fail to sign.
+
+Reviewer path (please follow in this order):
+  1. Go to https://demo.pathpulse.ai/signin and choose "Connect Wallet".
+     Your wallet signs a SEP-10 challenge; this establishes the session.
+  2. Go to https://demo.pathpulse.ai/dashboard/profile
+     The wallet panel is shown there, with your account balance read live
+     from Horizon.
+  3. If the panel reports "Account not found on testnet", click
+     "Fund with Friendbot". You do not need XLM from us.
+  4. Click "Reconnect wallet to send a payment". This is expected - the
+     signing connection is not carried across the page navigation, so the
+     wallet is re-attached for signing.
+  5. Leave the destination field empty (it defaults to your own account) or
+     paste any testnet address, then click "Send 1 XLM".
+  6. Your wallet prompts for a signature. The signed envelope is submitted
+     directly to Horizon and the resulting hash is displayed in the panel,
+     with a stellar.expert testnet link next to it.
+
+Freighter is the wallet we have exercised end to end. Lobstr's SEP-10 flow
+requires a stellar.toml at the home domain, which we are adding - if you are
+testing today, please use Freighter, xBull or Albedo.
+
+The payment is built client-side, signed inside your own wallet extension, and
+submitted directly to Horizon - the backend never holds a key and is not in the
+signing path. The resulting hash is displayed in the panel.
+
+Open endpoints for inspection:
+  /health                 service status and network
+  /v1/treasury/config     treasury signer set, read live from Horizon
+
+KNOWN GAPS, D2:
+  (a) An already-signed external-wallet transaction hash is not included in this
+      message. It will follow.
+  (b) None. Google sign-in and SEP-10 wallet sign-in both persist a session on
+      this host.
+
+
+D3 - SDP PAYOUTS
+-----------------
+SDP instance:         self-hosted Stellar Disbursement Platform, multi-tenant
+Tenant:               bluecorp  (id 6959c416-4712-40ad-bbc8-ad56553863aa)
+Distribution account: GBERALDP7TQISOQFHZOSQOVEXXE5GRSM4NZC57OHPJGI5ATQ4OKISYPR
+
+Four completed disbursements. Each is the 30% driver-pool leg of a 100 XLM
+settlement, so each batch reconciles to exactly 100.0000000 XLM.
+
+  B1  disbursement 44fa66b1-402e-4f55-b2f0-bd7a4a5bb9cd
+      settlement  b14fb2755c11b5af8563709bc4a9ac17c17596611008b914eb595fd48e2958e6
+      2 recipients, 30.0 XLM pool
+
+  B2  disbursement 2d5297aa-47fe-47d9-add6-a0ee2a692240
+      settlement  9c09024895486d088881679378b4d24f8a4d08e92307e83629cbc9243c0df438
+      2 recipients, 30.0 XLM pool
+
+  B3  disbursement 57d0028c-b02f-4e32-b0c1-d4064185307d
+      settlement  c166a2f6eff056e8f1c493a155148175175182dfbd11c47405ecb46b1805fece
+      3 recipients, 30.0 XLM pool
+
+  B4  disbursement b4f61ef6-9f64-4edb-bcbf-23a30bfba4aa
+      settlement  8977014c041505afd3dfce313daf00884420df9d5a2e0daea241d3bf487de6c8
+      2 recipients, 30.0 XLM pool
+
+Sample payment hashes to contributor accounts (full set in the attached CSV):
+  e78ee3caed58cb68e7a94d32e46ee44aa13cc33d74ad71fe0f94ee4f14fd0245
+      -> GC7ALTYY63FS3TAX7LXMJKITTQY3CFJG4JP4Y7DAC2FPUT7LZYQYSZMQ  13.3333334 XLM
+  a9aec1b478998c77da0eb9aa1dafb5895e0822efe2b243c7810188c1704b0e37
+      -> GBOFRUW3MUQ5DZKNJC47H3ARE2XU33S23FS74XUQ5GI6G2B6ER3VTMD6  16.6666666 XLM
+  1f276094fe5d0b7145660549b4ff9989503b87e55d021fa80c89ed7924b7f3bf
+      -> GCW6JIOQUBFDVY3ZQKCNW5CYSVGWLTWDBEXMVV7HCK7LFSONS2D6KLA2   8.1081082 XLM
+  c3fd1bbc7c48b402edd703b1d71cf35e1ae652642aa03b95c0248c104e9bdcd4
+      -> GAKVJQWNLAFW4XCWSUN37FVRFFH6VL6VGGQMXABCUFJ7ROFPBJSPGRNC   9.7297297 XLM
+  ea966c4fdf34c5f99eeb522fb3ce13638a794d445c67faa8daaa8b2ef636af94
+      -> GAGYCYR7RRKREL3L7XHPTCBPRWHB3NBD5AJZN62CYXV3YQECQUZMPGHA  12.1621621 XLM
+
+Reconciliation export: pathpulse-testnet-reconciliation.csv (attached), one row per
+leg - 50% authorities, 20% treasury, 30% driver pool - with the settlement hash,
+the SDP disbursement id, the destination and the payout hash. Every SDP
+stellar_transaction_id in that export matches the payment recorded on Horizon.
+
+KNOWN GAP, D3:
+  The driver-pool weightings in these four batches (1.0x / 1.2x / 1.5x) were taken
+  from the settlement request, not from on-chain SCOUT badges. The recipient
+  accounts hold no SCOUT trustline. The engine reads the chain first and falls back
+  to the supplied tier when no badge is held (backend/src/stellar/settlement.ts:110)
+  and in these runs it fell back. The split arithmetic is exact and verifiable; the
+  reputation input to it was not chain-sourced in these particular batches. We are
+  re-running a batch with badges actually issued so the multiplier is verifiable
+  end to end.
+
+
+EVIDENCE MAP
+-------------
+Measure                              Evidence
+-----------------------------------  ------------------------------------------
+D1 distribution accounts             3 addresses above, live on Horizon
+D1 multisig signer set + thresholds  tx 96e0090852c6c0... ; /v1/treasury/config
+D1 two-signer transaction            PENDING - to follow
+D1 Privy contributor account         WITHDRAWN - non-custodial pivot
+D1 HSM/KMS setup                     WITHDRAWN - no contributor keys held
+D2 demo URL                          https://demo.pathpulse.ai
+D2 external wallet tx hash           PENDING - to follow
+D3 SDP instance                      self-hosted, tenant bluecorp
+D3 disbursement ids                  4 ids listed above
+D3 distribution account              GBERALDP7TQ...
+D3 contributor payment hashes        5 sampled above, 9 total in CSV
+D3 reconciliation export             pathpulse-testnet-reconciliation.csv

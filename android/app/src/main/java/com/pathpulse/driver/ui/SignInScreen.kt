@@ -70,7 +70,7 @@ fun SignInScreen(
             )
 
             Text(
-                "Settlement starts here",
+                "Payments starts here",
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.padding(bottom = PpSpace.md),
             )

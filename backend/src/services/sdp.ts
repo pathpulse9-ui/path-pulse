@@ -39,17 +39,18 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function createDisbursement(name: string): Promise<DisbursementRef> {
+  // Receiver-supplied addresses pick the user-managed wallet themselves; SDP
+  // rejects an explicit wallet_id for those contact types.
+  const receiverSuppliesAddress = env.sdp.registrationContactType.endsWith('_AND_WALLET_ADDRESS');
   return call<DisbursementRef>('/disbursements', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name,
-      wallet_id: env.sdp.walletId,
+      wallet_id: receiverSuppliesAddress ? undefined : env.sdp.walletId,
       asset_id: env.sdp.assetId,
       registration_contact_type: env.sdp.registrationContactType,
-      verification_field: env.sdp.registrationContactType.endsWith('_AND_WALLET_ADDRESS')
-        ? undefined
-        : env.sdp.verificationField,
+      verification_field: receiverSuppliesAddress ? undefined : env.sdp.verificationField,
     }),
   });
 }
@@ -58,8 +59,13 @@ export async function uploadDisbursementInstructions(
   disbursementId: string,
   payouts: SettlementDriverPayout[],
 ): Promise<void> {
-  const header = 'id,phone,amount,walletAddress';
-  const rows = payouts.map((p) => `${p.userId},,${p.amount},${p.address}`);
+  // SDP always requires a receiver contact alongside the wallet address. Settlement
+  // carries no phone/email, so derive a stable per-driver address from the userId.
+  const usesEmail = env.sdp.registrationContactType.startsWith('EMAIL');
+  const contact = (userId: string) =>
+    usesEmail ? `${userId}@${env.sdp.contactDomain}` : '';
+  const header = `id,${usesEmail ? 'email' : 'phone'},amount,walletAddress`;
+  const rows = payouts.map((p) => `${p.userId},${contact(p.userId)},${p.amount},${p.address}`);
   const csv = [header, ...rows].join('\n');
 
   const form = new FormData();

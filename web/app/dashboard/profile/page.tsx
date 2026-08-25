@@ -100,11 +100,9 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {user.method === 'wallet' && (
-        <div className="max-w-xl">
-          <WalletConnect />
-        </div>
-      )}
+      <div className="max-w-xl">
+        <WalletConnect />
+      </div>
     </div>
   );
 }

@@ -1,16 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { Keypair } from '@stellar/stellar-sdk';
 import type { ManagedWallet } from '@pathpulse/contract';
-import { env } from '../config/env.js';
-import { fundWithFriendbot } from '../stellar/network.js';
+import { provisionManagedWallet } from '../stellar/managed.js';
 
-interface Account {
-  userId: string;
-  email: string;
-  keypair: Keypair;
-}
-
-const accountsByEmail = new Map<string, Account>();
+const userIdsByEmail = new Map<string, string>();
 
 function normalizeEmail(email: string): string {
   const trimmed = (email ?? '').trim().toLowerCase();
@@ -22,22 +14,10 @@ export async function ensureAccountForEmail(
   email: string,
 ): Promise<{ userId: string; wallet: ManagedWallet }> {
   const normalized = normalizeEmail(email);
-  let account = accountsByEmail.get(normalized);
-  if (!account) {
-    const keypair = Keypair.random();
-    account = { userId: randomUUID(), email: normalized, keypair };
-    accountsByEmail.set(normalized, account);
-    if (env.network === 'testnet') {
-      await fundWithFriendbot(keypair.publicKey()).catch(() => undefined);
-    }
+  let userId = userIdsByEmail.get(normalized);
+  if (!userId) {
+    userId = randomUUID();
+    userIdsByEmail.set(normalized, userId);
   }
-  return {
-    userId: account.userId,
-    wallet: {
-      userId: account.userId,
-      address: account.keypair.publicKey(),
-      provisioned: true,
-      network: env.network,
-    },
-  };
+  return { userId, wallet: await provisionManagedWallet(userId) };
 }

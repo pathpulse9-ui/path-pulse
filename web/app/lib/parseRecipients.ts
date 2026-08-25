@@ -6,6 +6,7 @@ export interface ParsedRecipient {
   name: string;
   address: string;
   amount: string;
+  remark: string;
   addressValid: boolean;
   amountValid: boolean;
 }
@@ -13,6 +14,7 @@ export interface ParsedRecipient {
 const NAME_KEYS = ['name', 'person', 'worker', 'driver', 'recipient'];
 const ADDRESS_KEYS = ['address', 'publicaddress', 'publickey', 'wallet', 'stellaraddress'];
 const AMOUNT_KEYS = ['amount', 'pay', 'payout', 'amountxlm'];
+const REMARK_KEYS = ['remark', 'remarks', 'note', 'notes', 'memo', 'reference', 'description'];
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/[\s_-]+/g, '');
 
@@ -23,12 +25,18 @@ function matchColumn(headers: string[], keys: string[]): number {
 
 const AMOUNT_RE = /^\d+(\.\d{1,7})?$/;
 
-function toRecipient(name: string, address: string, amount: string): ParsedRecipient {
+function toRecipient(
+  name: string,
+  address: string,
+  amount: string,
+  remark: string,
+): ParsedRecipient {
   const trimmedAmount = amount.trim();
   return {
     name: name.trim(),
     address: address.trim(),
     amount: trimmedAmount,
+    remark: remark.trim(),
     addressValid: StrKey.isValidEd25519PublicKey(address.trim()),
     amountValid: AMOUNT_RE.test(trimmedAmount) && Number(trimmedAmount) > 0,
   };
@@ -38,6 +46,7 @@ function rowsToRecipients(headers: string[], rows: string[][]): ParsedRecipient[
   const nameCol = matchColumn(headers, NAME_KEYS);
   const addressCol = matchColumn(headers, ADDRESS_KEYS);
   const amountCol = matchColumn(headers, AMOUNT_KEYS);
+  const remarkCol = matchColumn(headers, REMARK_KEYS);
   if (addressCol === -1) {
     throw new Error('Could not find an "Address" column in the uploaded file.');
   }
@@ -51,6 +60,7 @@ function rowsToRecipients(headers: string[], rows: string[][]): ParsedRecipient[
         nameCol === -1 ? '' : String(r[nameCol] ?? ''),
         String(r[addressCol] ?? ''),
         String(r[amountCol] ?? ''),
+        remarkCol === -1 ? '' : String(r[remarkCol] ?? ''),
       ),
     );
 }

@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.pathpulse.driver.ui.theme.PpBlack10
+import com.pathpulse.driver.ui.theme.PpMint
+import com.pathpulse.driver.ui.theme.PpMintInk
 import com.pathpulse.driver.ui.theme.PpPillShape
 import com.pathpulse.driver.ui.theme.PpSize
 import com.pathpulse.driver.ui.theme.PpSurface
@@ -43,8 +45,8 @@ fun PpPrimaryButton(
         enabled = enabled,
         shape = PpPillShape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = Color.Black,
-            contentColor = Color.White,
+            containerColor = PpMint,
+            contentColor = PpMintInk,
         ),
         modifier = modifier
             .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
@@ -100,8 +102,8 @@ fun PpArrowButton(
         shape = PpPillShape,
         contentPadding = PaddingValues(start = 28.dp, end = 6.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = Color.Black,
-            contentColor = Color.White,
+            containerColor = PpMint,
+            contentColor = PpMintInk,
         ),
         modifier = modifier
             .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
@@ -116,13 +118,13 @@ fun PpArrowButton(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(Color.White),
+                    .background(PpMintInk),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     PpIcons.ArrowRight,
                     contentDescription = null,
-                    tint = Color.Black,
+                    tint = PpMint,
                     modifier = Modifier.size(18.dp),
                 )
             }

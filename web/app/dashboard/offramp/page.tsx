@@ -1,8 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { OffRampSession, OffRampStatus } from '@pathpulse/contract';
-import { listOffRampSessions, getOffRampSession, createOffRampWithdrawal } from '../../lib/api';
+import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
+import {
+  listOffRampSessions,
+  getOffRampSession,
+  createOffRampWithdrawal,
+  getOffRampQuote,
+} from '../../lib/api';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -27,6 +32,9 @@ export default function OffRampPage() {
   const [batchId, setBatchId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [quote, setQuote] = useState<OffRampQuote | null>(null);
+  const [quoting, setQuoting] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -57,6 +65,37 @@ export default function OffRampPage() {
     }, 4000);
     return () => clearInterval(t);
   }, [selected]);
+
+  useEffect(() => {
+    const valid = /^\d+(\.\d{1,7})?$/.test(amount.trim()) && Number(amount) > 0;
+    if (!valid) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setQuote(null);
+      return;
+    }
+    let cancelled = false;
+    setQuoting(true);
+    const t = setTimeout(async () => {
+      try {
+        const q = await getOffRampQuote(amount.trim());
+        if (!cancelled) {
+          setQuote(q);
+          setQuoteError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setQuote(null);
+          setQuoteError(e instanceof Error ? e.message : 'Quote failed');
+        }
+      } finally {
+        if (!cancelled) setQuoting(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [amount]);
 
   async function startWithdrawal() {
     setBusy(true);
@@ -108,6 +147,60 @@ export default function OffRampPage() {
           </button>
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
+
+        {quoteError && <p className="text-sm text-red-600">{quoteError}</p>}
+
+        {quote && (
+          <div className="rounded-xl bg-black/[0.03] p-4 space-y-3">
+            <div className="flex items-baseline justify-between flex-wrap gap-2">
+              <div className="text-black">
+                <span className="text-xl font-medium">{quote.amount}</span>{' '}
+                <span className="text-sm text-black/50">{quote.asset}</span>
+                <span className="text-black/30 mx-2">→</span>
+                <span className="text-xl font-medium">{quote.fiatAmount}</span>{' '}
+                <span className="text-sm text-black/50">{quote.fiatCurrency}</span>
+              </div>
+              <span className="text-xs text-black/50">
+                {quoting
+                  ? 'refreshing…'
+                  : quote.live
+                    ? `live · ${quote.provider}${quote.quoteId ? ` · #${quote.quoteId}` : ''}`
+                    : 'indicative estimate'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="text-xs text-black/50">Rate</div>
+                <div className="text-black mt-1">
+                  1 {quote.asset} = {quote.rate} {quote.fiatCurrency}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-black/50">Gross</div>
+                <div className="text-black mt-1">
+                  {quote.grossFiatAmount} {quote.fiatCurrency}
+                </div>
+              </div>
+            </div>
+
+            {quote.fees.length > 0 && (
+              <div>
+                <div className="text-xs text-black/50 mb-1">Deductions</div>
+                <div className="space-y-1">
+                  {quote.fees.map((f: OffRampQuote['fees'][number]) => (
+                    <div key={f.label} className="flex justify-between text-sm">
+                      <span className="text-black/60">{f.label}</span>
+                      <span className="text-black">
+                        −{f.amount} {quote.fiatCurrency}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {selected && (

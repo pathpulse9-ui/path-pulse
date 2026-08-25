@@ -37,6 +37,7 @@ export default function SettlementPage() {
   const [payingGroup, setPayingGroup] = useState(false);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [groupResult, setGroupResult] = useState<GroupPayoutBatch | null>(null);
+  const [memo, setMemo] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -101,6 +102,20 @@ export default function SettlementPage() {
     }
   }, []);
 
+  const updateRecipient = useCallback((index: number, patch: Partial<ParsedRecipient>) => {
+    setRecipients((rows) =>
+      rows.map((r, i) => {
+        if (i !== index) return r;
+        const next = { ...r, ...patch };
+        if (patch.amount !== undefined) {
+          next.amountValid = /^\d+(\.\d{1,7})?$/.test(next.amount.trim()) && Number(next.amount) > 0;
+        }
+        return next;
+      }),
+    );
+    setGroupResult(null);
+  }, []);
+
   const validRecipients = useMemo(
     () => recipients.filter((r) => r.addressValid && r.amountValid),
     [recipients],
@@ -114,7 +129,13 @@ export default function SettlementPage() {
     setGroupError(null);
     try {
       const batch = await createGroupPayout({
-        recipients: validRecipients.map((r) => ({ name: r.name, address: r.address, amount: r.amount })),
+        memo: memo.trim() || undefined,
+        recipients: validRecipients.map((r) => ({
+          name: r.name,
+          address: r.address,
+          amount: r.amount,
+          remark: r.remark.trim() || undefined,
+        })),
       });
       setGroupResult(batch);
     } catch (err) {
@@ -122,7 +143,7 @@ export default function SettlementPage() {
     } finally {
       setPayingGroup(false);
     }
-  }, [validRecipients]);
+  }, [validRecipients, memo]);
 
   return (
     <div className="space-y-6">
@@ -176,9 +197,27 @@ export default function SettlementPage() {
                     <div className="min-w-0 flex-1">
                       <div className="text-black font-medium truncate">{r.name || 'Unnamed'}</div>
                       <div className="text-xs text-black/40 font-mono truncate">{r.address}</div>
+                      <input
+                        value={r.remark}
+                        onChange={(e) => updateRecipient(i, { remark: e.target.value })}
+                        placeholder="Add a remark"
+                        maxLength={120}
+                        className="mt-2 w-full max-w-sm rounded-full border border-black/10 bg-white px-3 h-8 text-xs outline-none focus:border-black/30 transition-colors duration-200"
+                      />
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-black">{r.amountValid ? r.amount : '—'} XLM</div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <input
+                        value={r.amount}
+                        onChange={(e) => updateRecipient(i, { amount: e.target.value })}
+                        inputMode="decimal"
+                        aria-label={`Amount for ${r.name || 'recipient'}`}
+                        className={`w-28 text-right rounded-full border bg-white px-3 h-9 text-sm outline-none transition-colors duration-200 ${
+                          r.amountValid
+                            ? 'border-black/10 focus:border-black/30'
+                            : 'border-red-300 focus:border-red-400'
+                        }`}
+                      />
+                      <span className="text-sm text-black/50">XLM</span>
                     </div>
                     <span
                       className={`text-xs rounded-full border px-2 py-0.5 shrink-0 ${
@@ -197,6 +236,19 @@ export default function SettlementPage() {
                 );
               })}
             </div>
+
+            <label className="flex flex-col gap-2 max-w-sm">
+              <span className="text-xs text-black/50">
+                Batch memo · written on-chain, max 28 characters
+              </span>
+              <input
+                value={memo}
+                onChange={(e) => setMemo(e.target.value)}
+                maxLength={28}
+                placeholder="e.g. Aug payout run"
+                className="rounded-full border border-black/10 bg-white px-4 h-10 text-sm outline-none focus:border-black/30 transition-colors duration-200"
+              />
+            </label>
 
             <button
               onClick={payGroup}

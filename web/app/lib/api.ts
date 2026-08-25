@@ -12,8 +12,11 @@ import type {
   CreateSettlementBatchRequest,
   GroupPayoutBatch,
   GroupPayoutBatchPage,
+  PayoutBatch,
+  PayoutBatchPage,
   CreateGroupPayoutRequest,
   OffRampSession,
+  OffRampQuote,
   OffRampSessionPage,
   CreateOffRampWithdrawalRequest,
   ScoutConfig,
@@ -156,5 +159,26 @@ export function executeRoutingSwap(req: RoutingSwapRequest) {
   return apiFetch<RoutingSwapResult>('/v1/routing/swap', {
     method: 'POST',
     body: JSON.stringify(req),
+  });
+}
+
+export function getOffRampQuote(amount: string) {
+  return apiFetch<OffRampQuote>(`/v1/offramp/quotes?amount=${encodeURIComponent(amount)}`);
+}
+
+// ── SDP institutional payouts (D3) ────────────────────────────────────
+
+export function listPayoutBatches(limit = 50) {
+  return apiFetch<PayoutBatchPage>(`/v1/ops/payouts/batches?limit=${limit}`);
+}
+
+export function getPayoutBatch(id: string) {
+  return apiFetch<PayoutBatch>(`/v1/ops/payouts/batches/${id}`);
+}
+
+export function createPayoutBatch(settlementBatchId: string) {
+  return apiFetch<PayoutBatch>('/v1/ops/payouts/batches', {
+    method: 'POST',
+    body: JSON.stringify({ settlementBatchId }),
   });
 }

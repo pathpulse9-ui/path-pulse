@@ -2,13 +2,16 @@ package com.pathpulse.driver.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val PpBackground = Color(0xFFF5F5F5)
+val PpBackground = Color(0xFFF3F7F5)
 val PpSurface = Color(0xFFFFFFFF)
+
+val PpMint = Color(0xFF03C394)
+val PpMint58 = Color(0x9403C394)
+val PpMint26 = Color(0x4203C394)
+val PpMintInk = Color(0xFF032018)
 val PpBlack = Color(0xFF000000)
 val PpWhite = Color(0xFFFFFFFF)
 val PpGray800 = Color(0xFF1F2937)
-val PpInk = Color(0xFF2B2644)
-val PpWhite60 = Color(0x99FFFFFF)
 
 val PpBlack70 = Color(0xB3000000)
 val PpBlack60 = Color(0x99000000)

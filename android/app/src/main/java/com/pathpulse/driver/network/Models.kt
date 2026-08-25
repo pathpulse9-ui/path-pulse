@@ -71,7 +71,7 @@ data class SettlementSplit(
 data class SettlementDriverPayout(
     val userId: String,
     val address: String,
-    val tier: String,
+    val tier: Int,
     val multiplier: Double,
     val amount: String,
 )

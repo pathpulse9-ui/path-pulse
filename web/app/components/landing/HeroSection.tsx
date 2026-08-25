@@ -21,16 +21,16 @@ export function HeroSection() {
           loop
           playsInline
           className="object-cover absolute inset-0 w-full h-full"
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260423_161253_c72b1869-400f-45ed-ac0c-52f68c2ed5bd.mp4"
+          src="/hero-coins.mp4"
         />
         <div className="relative z-10 flex flex-col items-start justify-start h-full p-12 pt-36">
           <h1
             className="text-black text-5xl md:text-6xl font-medium leading-tight max-w-xl mb-4"
             style={{ letterSpacing: '-0.04em' }}
           >
-            Settlement,
+            Global Payments
             <br />
-            Made Verifiable
+            Made In Seconds
           </h1>
           <p
             className="text-black/70 text-base md:text-lg max-w-md mb-8 leading-relaxed"

@@ -23,6 +23,10 @@ interface WalletUser {
 
 const usersByAddress = new Map<string, WalletUser>();
 
+export function serverSigningKey(): string {
+  return serverKeypair.publicKey();
+}
+
 export function buildChallenge(account: string): { transaction: string; networkPassphrase: string } {
   const transaction = WebAuth.buildChallengeTx(
     serverKeypair,

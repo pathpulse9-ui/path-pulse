@@ -138,7 +138,7 @@ export default function SignInPanel() {
           className="text-black text-4xl md:text-5xl font-medium leading-tight mb-3"
           style={{ letterSpacing: '-0.04em' }}
         >
-          Settlement starts here
+          Payments starts here
         </h1>
         <p className="text-black/60 text-base mb-10">
           Connect a wallet to sign in, or browse the console as a guest.

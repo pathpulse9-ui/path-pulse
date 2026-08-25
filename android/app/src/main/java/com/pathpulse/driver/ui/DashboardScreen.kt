@@ -40,9 +40,9 @@ import com.pathpulse.driver.ui.components.PpSecondaryButton
 import com.pathpulse.driver.ui.components.PpSquareBadge
 import com.pathpulse.driver.ui.icons.PpIcons
 import com.pathpulse.driver.ui.theme.PathPulseTheme
-import com.pathpulse.driver.ui.theme.PpAccentAmber
-import com.pathpulse.driver.ui.theme.PpAccentBlue
-import com.pathpulse.driver.ui.theme.PpAccentTeal
+import com.pathpulse.driver.ui.theme.PpMint
+import com.pathpulse.driver.ui.theme.PpMint26
+import com.pathpulse.driver.ui.theme.PpMint58
 import com.pathpulse.driver.ui.theme.PpBackground
 import com.pathpulse.driver.ui.theme.PpBlack05
 import com.pathpulse.driver.ui.theme.PpBlack40
@@ -61,9 +61,9 @@ import java.util.Locale
 private data class Series(val label: String, val pct: String, val color: Color)
 
 private val SERIES = listOf(
-    Series("Authorities", "50%", PpAccentBlue),
-    Series("Driver rewards", "30%", PpAccentAmber),
-    Series("Treasury", "20%", PpAccentTeal),
+    Series("Authorities", "50%", PpMint),
+    Series("Driver rewards", "30%", PpMint58),
+    Series("Treasury", "20%", PpMint26),
 )
 
 private data class DayBucket(

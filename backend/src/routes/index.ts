@@ -19,7 +19,7 @@ import {
 } from '../stellar/accounts.js';
 import { ensureAccountForEmail } from '../services/account.js';
 import { verifyGoogleIdToken } from '../services/googleAuth.js';
-import { buildChallenge, verifyChallenge } from '../services/walletAuth.js';
+import { buildChallenge, verifyChallenge, serverSigningKey } from '../services/walletAuth.js';
 import {
   setSessionCookie,
   clearSessionCookie,
@@ -43,6 +43,7 @@ import {
   applyCallback,
   applyCarretCallback,
   activeProvider,
+  quoteWithdrawal,
 } from '../services/offramp.js';
 import { verifyRampWebhook } from '../services/ramp.js';
 import { verifyCarretWebhook } from '../services/carret.js';
@@ -74,11 +75,24 @@ const operationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('changeTrust'), asset: assetSchema, limit: z.string().optional() }),
 ]);
 const buildTxSchema = z.object({
-  userId: z.string().min(1),
   operations: z.array(operationSchema).min(1),
   memo: z.string().max(28).optional(),
 });
 const submitTxSchema = z.object({ xdr: z.string().min(1) });
+
+router.get('/.well-known/stellar.toml', (_req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.type('text/plain').send(
+    [
+      'VERSION="2.0.0"',
+      `NETWORK_PASSPHRASE="${env.networkPassphrase}"`,
+      `HORIZON_URL="${env.horizonUrl}"`,
+      `WEB_AUTH_ENDPOINT="https://${env.sep10.homeDomain}/v1/auth/challenge"`,
+      `SIGNING_KEY="${serverSigningKey()}"`,
+      '',
+    ].join('\n'),
+  );
+});
 
 router.get('/health', (_req, res) => {
   const body: HealthResponse = {
@@ -173,8 +187,13 @@ router.post('/v1/auth/logout', (_req, res) => {
 // Delegated signing: build (+delegate-sign) a tx from the caller's managed wallet.
 router.post('/v1/tx/build', async (req, res, next) => {
   try {
-    const parsed = buildTxSchema.parse(req.body) as BuildTransactionRequest;
-    res.json(await buildTransaction(parsed));
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'unauthorized', message: 'sign in first' });
+      return;
+    }
+    const parsed = buildTxSchema.parse(req.body);
+    res.json(await buildTransaction({ ...parsed, userId: session.userId } as BuildTransactionRequest));
   } catch (e) {
     next(e);
   }
@@ -223,11 +242,14 @@ const groupPayoutRecipientSchema = z.object({
   name: z.string().min(1),
   address: z.string().min(1),
   amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  remark: z.string().max(120).optional(),
 });
 const createGroupPayoutSchema = z.object({
   asset: assetRefOptional(),
+  memo: z.string().max(28, 'memo must be 28 characters or fewer').optional(),
   recipients: z.array(groupPayoutRecipientSchema).min(1).max(100),
 });
+
 
 router.post('/v1/settlement/group-payouts', async (req, res, next) => {
   try {
@@ -294,6 +316,21 @@ const createWithdrawalSchema = z.object({
   asset: assetRefOptional(),
   fiatCurrency: z.string().optional(),
   settlementBatchId: z.string().optional(),
+});
+
+router.get('/v1/offramp/quotes', async (req, res, next) => {
+  try {
+    const amount = typeof req.query.amount === 'string' ? req.query.amount : '';
+    if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) {
+      const e = new Error('amount must be a positive 7-decimal number') as Error & { status: number };
+      e.name = 'ValidationError';
+      e.status = 400;
+      throw e;
+    }
+    res.json(await quoteWithdrawal(amount));
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post('/v1/offramp/sessions', async (req, res, next) => {

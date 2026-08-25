@@ -22,7 +22,7 @@ export default function SignInPage() {
             loop
             playsInline
             className="object-cover absolute inset-0 w-full h-full"
-            src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260423_161253_c72b1869-400f-45ed-ac0c-52f68c2ed5bd.mp4"
+            src="/signin-keys.mp4"
           />
         </div>
         <div className="px-12 py-14">
