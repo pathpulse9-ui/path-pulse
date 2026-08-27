@@ -182,3 +182,122 @@ export function createPayoutBatch(settlementBatchId: string) {
     body: JSON.stringify({ settlementBatchId }),
   });
 }
+
+// ── Carret KYC (D4 · dev-onboarding) ─────────────────────────────────
+
+export interface CarretSubAccountInput {
+  email: string;
+  phone_number: string;
+  first_name: string;
+  last_name: string;
+  annual_income: string;
+  country: string;
+  gender: 'male' | 'female' | 'other';
+  occupation: string;
+  dob: string; // dd/mm/yyyy
+  is_email_verified?: boolean;
+  is_mobile_number_verified?: boolean;
+  is_politicaly_exposed_person?: boolean;
+}
+
+export interface CarretSubAccountResponse {
+  id: number;
+  reference_id: string;
+  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  aml_status: string;
+  user: { id: number; email: string; first_name: string; last_name: string };
+}
+
+export interface CarretKycSession {
+  session_id: string;
+  status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  initiated_at: string;
+}
+
+export interface CarretKycInitiate {
+  success: boolean;
+  message: string;
+  session: CarretKycSession;
+}
+
+export interface CarretKycOvd {
+  document_type: string;
+  status?: string;
+  [k: string]: unknown;
+}
+
+export interface CarretKycStatus {
+  kyc_session?: string;
+  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  ovd_documents?: CarretKycOvd[];
+}
+
+export function createCarretSubAccount(input: CarretSubAccountInput) {
+  return apiFetch<CarretSubAccountResponse>('/v1/carret/subaccount', {
+    method: 'POST',
+    body: JSON.stringify({
+      is_email_verified: true,
+      is_mobile_number_verified: true,
+      is_politicaly_exposed_person: false,
+      ...input,
+    }),
+  });
+}
+
+export function initiateCarretKyc(accountId: number | string) {
+  return apiFetch<CarretKycInitiate>('/v1/carret/kyc/initiate', {
+    method: 'POST',
+    body: JSON.stringify({ account_id: accountId }),
+  });
+}
+
+export function submitCarretKycDocument(kycSessionId: string, document: {
+  document_type: 'pan' | 'aadhaar' | 'voter_id' | 'passport' | 'driving_license' | 'selfie';
+  document_number?: string;
+  name?: string;
+  dob?: string;
+  surname_from_passport?: string;
+  file_number?: string;
+  date_of_issue?: string;
+}) {
+  return apiFetch<unknown>('/v1/carret/kyc/document', {
+    method: 'POST',
+    body: JSON.stringify({ kyc_session_id: kycSessionId, document }),
+  });
+}
+
+export async function uploadCarretKycFile(params: {
+  kycSession: string;
+  docType: 'pan' | 'aadhaar' | 'voter_id' | 'passport' | 'driving_license' | 'selfie';
+  fileType: 'image' | 'xml';
+  file: File;
+  docBack?: File;
+}): Promise<unknown> {
+  const form = new FormData();
+  form.append('kyc_session', params.kycSession);
+  form.append('doc_type', params.docType);
+  form.append('file_type', params.fileType);
+  form.append('doc_front', params.file, params.file.name);
+  if (params.docBack) form.append('doc_back', params.docBack, params.docBack.name);
+  const res = await fetch(`${API_BASE_URL}/v1/carret/kyc/file`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Upload failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export function getCarretKycStatus(accountId: number | string) {
+  return apiFetch<CarretKycStatus>(`/v1/carret/kyc/status/${accountId}`);
+}
+
+export function cleanupCarretKyc(accountId: number | string) {
+  return apiFetch<unknown>('/v1/carret/kyc/cleanup', {
+    method: 'POST',
+    body: JSON.stringify({ account_id: accountId }),
+  });
+}

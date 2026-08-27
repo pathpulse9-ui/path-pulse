@@ -46,7 +46,16 @@ import {
   quoteWithdrawal,
 } from '../services/offramp.js';
 import { verifyRampWebhook } from '../services/ramp.js';
-import { verifyCarretWebhook } from '../services/carret.js';
+import {
+  verifyCarretWebhook,
+  createSubAccount,
+  initiateKyc,
+  submitKycDocument,
+  uploadKycFile,
+  getKycStatus,
+  cleanupKyc,
+} from '../services/carret.js';
+import multer from 'multer';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { quoteSwap, executeSwap } from '../routing/swap.js';
@@ -479,4 +488,161 @@ router.post('/v1/offramp/callback', (req, res) => {
   const status = body.type ?? body.status ?? body.payload?.status;
   if (ref && status) applyCallback(ref, status);
   res.status(200).json({ ok: true });
+});
+
+// ── Carret KYC proxy (D4 dev-onboarding) ──────────────────────────────
+// Thin proxies to Carret Infra's /api/v2.0/taas/kyc/* endpoints so the web
+// UI can drive the full KYC flow (initiate → PAN JSON → Aadhaar XML file →
+// selfie image → poll status) without exposing the API-KEY to the browser.
+// Multer stores files in memory only — they're forwarded to Carret in the
+// same request, never written to disk.
+
+const kycUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
+
+const createSubAccountSchema = z.object({
+  email: z.string().email(),
+  phone_number: z.string().min(10).max(12),
+  first_name: z.string().min(1),
+  last_name: z.string().min(1),
+  user_ip_address: z.string().min(1).optional(),
+  annual_income: z.string().min(1),
+  is_email_verified: z.boolean().default(true),
+  is_mobile_number_verified: z.boolean().default(true),
+  country: z.string().length(2),
+  gender: z.enum(['male', 'female', 'other']),
+  occupation: z.string().min(1),
+  is_politicaly_exposed_person: z.boolean().default(false),
+  dob: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/),
+});
+
+router.post('/v1/carret/subaccount', async (req, res, next) => {
+  try {
+    const parsed = createSubAccountSchema.parse(req.body);
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '0.0.0.0';
+    const account = await createSubAccount({
+      email: parsed.email,
+      phone_number: parsed.phone_number,
+      first_name: parsed.first_name,
+      last_name: parsed.last_name,
+      user_ip_address: parsed.user_ip_address ?? clientIp,
+      annual_income: parsed.annual_income,
+      is_email_verified: parsed.is_email_verified,
+      is_mobile_number_verified: parsed.is_mobile_number_verified,
+      country: parsed.country,
+      gender: parsed.gender,
+      occupation: parsed.occupation,
+      is_politicaly_exposed_person: parsed.is_politicaly_exposed_person,
+      dob: parsed.dob,
+    });
+    res.json(account);
+  } catch (e) {
+    next(e);
+  }
+});
+
+const initiateKycSchema = z.object({ account_id: z.union([z.number(), z.string()]) });
+
+router.post('/v1/carret/kyc/initiate', async (req, res, next) => {
+  try {
+    const { account_id } = initiateKycSchema.parse(req.body);
+    res.json(await initiateKyc(account_id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+const submitDocSchema = z.object({
+  kyc_session_id: z.string().min(1),
+  document: z.object({
+    document_type: z.enum(['pan', 'aadhaar', 'voter_id', 'passport', 'driving_license', 'selfie']),
+    document_number: z.string().optional(),
+    name: z.string().optional(),
+    dob: z.string().optional(),
+    surname_from_passport: z.string().optional(),
+    file_number: z.string().optional(),
+    date_of_issue: z.string().optional(),
+  }),
+});
+
+router.post('/v1/carret/kyc/document', async (req, res, next) => {
+  try {
+    const { kyc_session_id, document } = submitDocSchema.parse(req.body);
+    res.json(await submitKycDocument({ kycSessionId: kyc_session_id, document }));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Multipart file upload — multer parses `doc_front` (and optional `doc_back`)
+// alongside the JSON-ish fields (kyc_session, doc_type, file_type).
+router.post(
+  '/v1/carret/kyc/file',
+  kycUpload.fields([
+    { name: 'doc_front', maxCount: 1 },
+    { name: 'doc_back', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    try {
+      const kyc_session = String(req.body.kyc_session ?? '');
+      const doc_type = String(req.body.doc_type ?? '');
+      const file_type = String(req.body.file_type ?? '');
+      if (!kyc_session || !doc_type || !file_type) {
+        res.status(400).json({ error: 'bad_request', message: 'kyc_session, doc_type, file_type all required' });
+        return;
+      }
+      if (!['pan', 'aadhaar', 'voter_id', 'passport', 'driving_license', 'selfie'].includes(doc_type)) {
+        res.status(400).json({ error: 'bad_request', message: `unsupported doc_type: ${doc_type}` });
+        return;
+      }
+      if (!['image', 'xml'].includes(file_type)) {
+        res.status(400).json({ error: 'bad_request', message: `file_type must be image or xml, got: ${file_type}` });
+        return;
+      }
+      const files = req.files as { [k: string]: Express.Multer.File[] } | undefined;
+      const front = files?.doc_front?.[0];
+      if (!front) {
+        res.status(400).json({ error: 'bad_request', message: 'doc_front file missing' });
+        return;
+      }
+      const back = files?.doc_back?.[0];
+      res.json(
+        await uploadKycFile({
+          kycSessionId: kyc_session,
+          docType: doc_type as 'pan' | 'aadhaar' | 'voter_id' | 'passport' | 'driving_license' | 'selfie',
+          fileType: file_type as 'image' | 'xml',
+          filename: front.originalname,
+          fileBuffer: front.buffer,
+          contentType: front.mimetype,
+          docBack: back
+            ? { filename: back.originalname, fileBuffer: back.buffer, contentType: back.mimetype }
+            : undefined,
+        }),
+      );
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+router.get('/v1/carret/kyc/status/:accountId', async (req, res, next) => {
+  try {
+    res.json(await getKycStatus(req.params.accountId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/carret/kyc/cleanup', async (req, res, next) => {
+  try {
+    const { account_id } = initiateKycSchema.parse(req.body);
+    res.json(await cleanupKyc(account_id));
+  } catch (e) {
+    next(e);
+  }
 });
