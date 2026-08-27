@@ -105,10 +105,25 @@ protocol service accounts — settlement, group payout, SCOUT issuer and AMM rou
 `GAKYXUFDWZ6Q…` (the address derived from the KMS key) as an authorized signer. Their
 transactions are signed by KMS; the key never enters the process.
 
-**Not applied to driver wallets, by design.** Per-user KMS keys would cost $1 per driver per
-month. Driver seeds stay encrypted at rest with AES-256-GCM and are decrypted in memory only at
-signing time. `getManagedSigner` selects per tier: service accounts route through
-`SIGNER_BACKEND`, per-user wallets always sign with their own sealed seed.
+**Driver keys are protected by KMS, but not one key each.** Per-user KMS keys would cost $1 per
+driver per month — $10,000/month at 10,000 drivers. Instead, driver seeds are encrypted at rest
+with AES-256-GCM under a single key-encryption key, and that KEK is itself wrapped by KMS key
+`alias/pathpulse-kek` (symmetric, `ENCRYPT_DECRYPT`). The backend unwraps it via KMS `Decrypt`
+at startup; the plaintext KEK is never stored in configuration. `getManagedSigner` selects per
+tier: service accounts route through `SIGNER_BACKEND`, per-user wallets always sign with their
+own sealed seed, decrypted in memory only at signing time.
+
+## Keys in use
+
+| Alias | Spec | Usage | Protects |
+|---|---|---|---|
+| `alias/pathpulse-stellar-signer` | `ECC_NIST_EDWARDS25519` | `SIGN_VERIFY` | Signs for the four protocol service accounts |
+| `alias/pathpulse-kek` | `SYMMETRIC_DEFAULT` | `ENCRYPT_DECRYPT` | Wraps the key-encryption key that seals every driver seed |
+
+Two keys, $2/month total, flat in user count.
+
+**Ed25519 keys cannot encrypt.** `SIGN_VERIFY` is the only usage available on
+`ECC_NIST_EDWARDS25519`, so wrapping the KEK requires the separate symmetric key above.
 
 **To put it in service:** create a durable key, add its derived address as a signer on the
 target Stellar account via `setOptions`, remove the old signer, and set `SIGNER_BACKEND=aws-kms`

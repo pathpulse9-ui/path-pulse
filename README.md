@@ -28,9 +28,9 @@
 
 ## What is PathPulse?
 
-Pathpulse is a global payments protocol meants to server clients from around the world with a dedicated payments products suite for users. Institutional reward programmes have the same failure mode everywhere: money goes in one end, recipients are told what came out the other, and the arithmetic in between is a spreadsheet nobody outside the operator can inspect. Disputes are unanswerable because there is nothing to check.
+Pathpulse is a global payments protocol meants to server clients from around the world with a dedicated payments products suite for users. 
 
-PathPulse makes the arithmetic the ledger. A settlement batch computes its split deterministically, applies each contributor's on-chain reputation multiplier, and lands as **one multi-operation Stellar transaction**. The split is not reported — it is executed. Anyone holding the transaction hash can reconstruct the entire distribution, from treasury deposit down to an individual payout.
+Institutional reward programmes have the same failure mode everywhere: money goes in one end, recipients are told what came out the other, and the arithmetic in between is a spreadsheet nobody outside the operator can inspect. Disputes are unanswerable because there is nothing to check. PathPulse makes the arithmetic the ledger. A settlement batch computes its split deterministically, applies each contributor's on-chain reputation multiplier, and lands as **one multi-operation Stellar transaction**. The split is not reported — it is executed. Anyone holding the transaction hash can reconstruct the entire distribution, from treasury deposit down to an individual payout.
 
 > **Why the split is on-chain.** An off-chain split is a claim; an on-chain split is a receipt. Once the 50 / 30 / 20 is a transaction rather than a row in a database, the operator loses the ability to quietly restate it, and the recipient gains the ability to verify it without asking.
 
@@ -41,7 +41,7 @@ PathPulse makes the arithmetic the ledger. A settlement batch computes its split
 ### Accounts & custody
 - **Protocol-governed distribution accounts** — Partner Revenue, Driver Pool and Treasury are provisioned as distinct on-chain accounts, so every flow of funds has a named, auditable origin and destination.
 - **Multisig treasury** — the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set.
-- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware. Protocol service accounts sign through it today (`SIGNER_BACKEND=aws-kms`); per-user wallets sign with their own encrypted seed, since a KMS key per driver would cost $1 per driver per month.
+- **Human-gated signing** — the `Signer` interface abstracts keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware. Protocol service accounts sign through it today (`SIGNER_BACKEND=aws-kms`).
 - **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits, for the account named by the caller's own session. The client never holds a key — which also means this path is **custodial**, not self-custody.
 
 ### Identity & wallet interop
@@ -186,6 +186,32 @@ high 2**. No single key can move funds, and the account holds **9,998.9999500 XL
 Signer keys are not themselves funded accounts, so they do not resolve on Horizon — only
 the treasury account does.
 
+### Verifiable transactions
+
+Every claim below is a real transaction on Stellar testnet. Each link opens the transaction on
+a public explorer.
+
+| What it proves | Transaction |
+|---|---|
+| **Protocol signing runs on AWS KMS.** Payment from the settlement source account, signed by the KMS-held Ed25519 key. The signature hint matches the KMS key and verifies against `GAKYXUFDWZ6Q…`; no key material existed in the application. | [`3b73c013…`](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47) |
+| **The KMS key can sign for Stellar at all.** Payment from an account whose address is derived from the KMS public key, for which no seed has ever existed anywhere — the only way to produce this signature is a `Sign` call to KMS. | [`07dc33d4…`](https://stellar.expert/explorer/testnet/tx/07dc33d4caa6a1a74c317c9c796c097c348baeaa7717e2595cb7ab0257d02cfb) |
+| **The treasury multisig requires two signers.** Payment from `GBRXUTNC…` carrying **2 signatures** against a threshold of 2. No single key can move treasury funds. | [`4face5e7…`](https://stellar.expert/explorer/testnet/tx/4face5e7ffaa2c77bf9477a8ba775b773c33ef24ff6c9114861d3d6c28a93722) |
+| **The delegated flow works end to end.** A contributor account provisioned through Google sign-in, with a payment built and signed backend-side via `/v1/tx/build`. The client never held a key. | [`be1ebcd9…`](https://stellar.expert/explorer/testnet/tx/be1ebcd95632c063eb425a64116fa659e64b46b01024c5007cf74b37b5850718) |
+
+**Signers carrying the KMS key.** `GAKYXUFDWZ6Q3FKIA7GCOGZVH5VBGMOLEGKNPZZGKJU36D3GPEM2TLSS` —
+the address derived from KMS key `alias/pathpulse-stellar-signer` — is an authorized signer on
+each protocol service account, verifiable on Horizon:
+
+| Service account | Address |
+|---|---|
+| Settlement source | [`GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC`](https://stellar.expert/explorer/testnet/account/GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC) |
+| Group payout source | [`GBRAS4T5A3HGOYCN6TC6CZLOSUM5Y265MF6DXVSZNR3Z5LJHODC3K3O4`](https://stellar.expert/explorer/testnet/account/GBRAS4T5A3HGOYCN6TC6CZLOSUM5Y265MF6DXVSZNR3Z5LJHODC3K3O4) |
+| SCOUT issuer | [`GBKGCHRV3YOPTRUR6SDVL46GWWZNXQ6WGOSTVR46HLE5XQMOAS7P6SF4`](https://stellar.expert/explorer/testnet/account/GBKGCHRV3YOPTRUR6SDVL46GWWZNXQ6WGOSTVR46HLE5XQMOAS7P6SF4) |
+| AMM routing source | [`GB2ATSCL5MS6TTT5TRUGXUP4AK2MRKUST5E6S6W7UO4XG2Y56BXVKCM7`](https://stellar.expert/explorer/testnet/account/GB2ATSCL5MS6TTT5TRUGXUP4AK2MRKUST5E6S6W7UO4XG2Y56BXVKCM7) |
+
+Each account kept its original signer alongside the KMS one, so losing the KMS key degrades
+signing but cannot strand an account.
+
 ### Stellar Disbursement Platform
 
 | | |
@@ -209,7 +235,7 @@ the treasury account does.
 
 **Protocol accounts sign through AWS KMS.** Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware — key spec `ECC_NIST_EDWARDS25519`, algorithm `ED25519_SHA_512` over `MessageType: RAW`, so the private key never enters the application process. The four protocol service accounts each carry the KMS-derived address as an authorized signer; live proof is transaction [`3b73c013…`](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47), whose signature verifies against the KMS key. Full record in [`docs/KMS_VERIFICATION.md`](docs/KMS_VERIFICATION.md).
 
-**Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. Only the root key remains to be moved to a managed KMS, a change confined to a single function with no change to the storage format, the schema, or any call site.
+**Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. That key-encryption key is itself wrapped by AWS KMS (`alias/pathpulse-kek`) and unwrapped at startup, so **KMS is the root of trust for every user key**. A separate KMS key per driver is deliberately avoided: at $1 per key per month it would cost $10,000/month at 10,000 drivers.
 
 **Secrets stay out of the repo.** `.env` and `secrets/` are gitignored and have never been committed. Testnet provisioning writes only public keys to disk; treasury provisioning writes signer secrets to `secrets/treasury-v2.json` at mode 0600, which is a single point of failure until it moves to a managed secret store.
 
