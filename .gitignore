@@ -15,6 +15,7 @@ build/
 *.key
 secrets/
 docs/CUSTODY.md
+/scripts/
 keys/
 .testnet-accounts.json
 
