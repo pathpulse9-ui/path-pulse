@@ -124,7 +124,7 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     builder.addOperation(Operation.payment({ destination: treasuryAddress, asset, amount: fromStroops(split.treasury) }));
 
   let tx = builder.setTimeout(180).build();
-  tx = (await getManagedSigner(SETTLEMENT_SOURCE_USER).sign(tx)) as typeof tx;
+  tx = (await (await getManagedSigner(SETTLEMENT_SOURCE_USER)).sign(tx)) as typeof tx;
 
   let res;
   try {

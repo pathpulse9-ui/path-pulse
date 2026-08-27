@@ -77,7 +77,7 @@ async function ensureTrustline(address: string, symbol: RoutableSymbol): Promise
   });
   builder.addOperation(Operation.changeTrust({ asset: target.asset }));
   let tx = builder.setTimeout(180).build();
-  tx = (await getManagedSigner(swapSourceUser).sign(tx)) as typeof tx;
+  tx = (await (await getManagedSigner(swapSourceUser)).sign(tx)) as typeof tx;
   await horizon.submitTransaction(tx);
 }
 
@@ -113,7 +113,7 @@ export async function executeSwap(
     .setTimeout(180)
     .build();
 
-  const result = await simulateAndSubmit(tx, getManagedSigner(swapSourceUser));
+  const result = await simulateAndSubmit(tx, await getManagedSigner(swapSourceUser));
 
   return {
     id: `swp_${Date.now()}_${randomBytes(4).toString('hex')}`,

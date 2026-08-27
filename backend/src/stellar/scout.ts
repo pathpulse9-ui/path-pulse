@@ -46,7 +46,7 @@ export async function ensureIssuer(): Promise<string> {
       .addOperation(Operation.setOptions({ setFlags: AUTH_FLAGS }))
       .setTimeout(120)
       .build();
-    await getManagedSigner(SCOUT_ISSUER_USER).sign(tx);
+    await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(tx);
     await horizon.submitTransaction(tx);
     logger.info({ issuer, flags: AUTH_FLAGS }, 'SCOUT issuer flags set');
   }
@@ -119,7 +119,7 @@ export async function assignSampleTier(score: number): Promise<ScoutAssignment> 
     .addOperation(Operation.payment({ destination: driver.publicKey(), asset, amount: '1' }))
     .setTimeout(120)
     .build();
-  await getManagedSigner(SCOUT_ISSUER_USER).sign(grantTx);
+  await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(grantTx);
   const res = await horizon.submitTransaction(grantTx);
 
   return {
