@@ -14,6 +14,7 @@ build/
 *.pem
 *.key
 secrets/
+docs/CUSTODY.md
 keys/
 .testnet-accounts.json
 

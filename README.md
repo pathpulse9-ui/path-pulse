@@ -42,13 +42,13 @@ PathPulse makes the arithmetic the ledger. A settlement batch computes its split
 
 ### Accounts & custody
 - **Protocol-governed distribution accounts** — Partner Revenue, Driver Pool and Treasury are provisioned as distinct on-chain accounts, so every flow of funds has a named, auditable origin and destination.
-- **Multisig treasury** — the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set. (An earlier treasury shipped at 2-of-**4** with the master key still active and its signer secrets unrecoverable — it is frozen on testnet and superseded. See [`docs/CUSTODY.md`](docs/CUSTODY.md).)
-- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. **The KMS/HSM backends are declared but not implemented**; the live signer everywhere today is the in-memory dev tier.
+- **Multisig treasury** — the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set.
+- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend.
 - **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits, for the account named by the caller's own session. The client never holds a key — which also means this path is **custodial**, not self-custody.
 
 ### Identity & wallet interop
 - **Non-custodial sign-in via SEP-10** — the wallet proves account ownership by signing a challenge transaction. Freighter, Lobstr, xBull and Albedo are wired through Stellar Wallets Kit.
-- **Custodial sign-in via Google** — Google Identity Services returns an ID token, verified server-side against the client ID; no OAuth secret is ever needed or stored. The resulting wallet is **platform-held**: PathPulse generates and keeps the key, and it does not survive a redeploy.
+- **Custodial sign-in via Google** — Google Identity Services returns an ID token, verified server-side against the client ID; no OAuth secret is ever needed or stored. The resulting wallet is **platform-held**:
 - **Guest sessions** — the console is explorable without an account, so a reviewer can inspect settlement traceability before committing to a wallet.
 - **httpOnly session cookies** — session identity is server-verified and signed; the browser never holds a bearer token it could leak.
 
@@ -158,6 +158,47 @@ revenue ─▶ split 50/30/20 ─▶ weight by SCOUT tier ─▶ one Stellar tx 
 
 ---
 
+## Deployed on testnet
+
+**Demo:** <https://demo.pathpulse.ai>
+
+All accounts below are on the Stellar **testnet**. Addresses are public keys.
+
+### Distribution accounts
+
+| Account | Address |
+|---|---|
+| **Partner Revenue** | [`GA3XFACID4PFYYADQBXUVKT2B6OB3QQDVGUDHYBYFISBZKD5C45CGMAY`](https://stellar.expert/explorer/testnet/account/GA3XFACID4PFYYADQBXUVKT2B6OB3QQDVGUDHYBYFISBZKD5C45CGMAY) |
+| **Driver Pool** | [`GD2J6WSBGITCNDH4AA3FMMQVUMHWIL2KL4DHQGXKENAJAR3TNDJXXGGU`](https://stellar.expert/explorer/testnet/account/GD2J6WSBGITCNDH4AA3FMMQVUMHWIL2KL4DHQGXKENAJAR3TNDJXXGGU) |
+| **Treasury** | [`GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2`](https://stellar.expert/explorer/testnet/account/GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2) |
+
+### Treasury multisig
+
+`GBRXUTNC…` is a **2-of-3**: the master key is at **weight 0** and three signers carry
+weight 1 each, giving total signing weight 3 against thresholds of **low 2 · medium 2 ·
+high 2**. No single key can move funds, and the account holds **9,998.9999500 XLM**.
+
+| Signer | Weight |
+|---|---|
+| [`GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2`](https://stellar.expert/explorer/testnet/account/GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2) — master key | **0** |
+| [`GD674BNVGTOXPLGG3AOMAFBKDO46RSP4DKHSJ45TF6WZRWYVAYR7IKWT`](https://stellar.expert/explorer/testnet/account/GD674BNVGTOXPLGG3AOMAFBKDO46RSP4DKHSJ45TF6WZRWYVAYR7IKWT) | 1 |
+| [`GDPFOIWSZLD7RNFTK7CBHSX3JXARVJJ6UHWRPGZWQATI7PXKQVLFO2V4`](https://stellar.expert/explorer/testnet/account/GDPFOIWSZLD7RNFTK7CBHSX3JXARVJJ6UHWRPGZWQATI7PXKQVLFO2V4) | 1 |
+| [`GB3REMIRMULZPN3DIBF2WIFQF3LLVYNOPZTLSJOUCWRD4SLNWUCJVWWZ`](https://stellar.expert/explorer/testnet/account/GB3REMIRMULZPN3DIBF2WIFQF3LLVYNOPZTLSJOUCWRD4SLNWUCJVWWZ) | 1 |
+
+Signer keys are not themselves funded accounts, so they do not resolve on Horizon — only
+the treasury account does.
+
+### Stellar Disbursement Platform
+
+| | |
+|---|---|
+| **Tenant** | `bluecorp` |
+| **Tenant ID** | `6959c416-4712-40ad-bbc8-ad56553863aa` |
+| **Distribution account** | [`GBERALDP7TQISOQFHZOSQOVEXXE5GRSM4NZC57OHPJGI5ATQ4OKISYPR`](https://stellar.expert/explorer/testnet/account/GBERALDP7TQISOQFHZOSQOVEXXE5GRSM4NZC57OHPJGI5ATQ4OKISYPR) |
+| **Trustlines** | USDC, EURC |
+
+---
+
 ## 🔒 Security & trust
 
 **The signer is the boundary.** Every mainnet-capable path goes through the `Signer` interface, and the dev implementation throws on mainnet by construction. Promoting to production means supplying a KMS or HSM backend, not flipping a flag.
@@ -168,7 +209,9 @@ revenue ─▶ split 50/30/20 ─▶ weight by SCOUT tier ─▶ one Stellar tx 
 
 **Webhooks are verified against raw bytes.** Off-ramp callbacks check `X-Body-Signature` before any status is applied, and correlation happens on a server-issued reference rather than a caller-supplied id.
 
-**Secrets stay out of the repo.** Provisioning prints secret keys to stdout for a secret manager and writes only public keys to disk.
+**Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. Only the root key remains to be moved to a managed KMS, a change confined to a single function with no change to the storage format, the schema, or any call site.
+
+**Secrets stay out of the repo.** `.env` and `secrets/` are gitignored and have never been committed. Testnet provisioning writes only public keys to disk; treasury provisioning writes signer secrets to `secrets/treasury-v2.json` at mode 0600, which is a single point of failure until it moves to a managed secret store.
 
 ---
 

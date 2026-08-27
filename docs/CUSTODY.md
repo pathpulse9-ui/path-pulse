@@ -1,6 +1,6 @@
 # PathPulse — Custody & Key Management
 
-> Status as of 2026-08-25, testnet. This document describes what is **actually running**,
+> Status as of 2026-08-27, testnet. This document describes what is **actually running**,
 > not what is planned. Where something is aspirational it says so.
 
 ## Summary
@@ -8,11 +8,11 @@
 | | Path A — wallet connect | Path B — Google email/OAuth |
 |---|---|---|
 | Custody | **Self-custody** (user's) | **Custodial** (PathPulse holds the key) |
-| Key location | User's browser extension | Backend process memory |
+| Key location | User's browser extension | Sealed in Postgres (AES-256-GCM) |
 | Who signs | The user, in their wallet | The backend, on the user's behalf |
 | User can export key | Yes — it is theirs | **No** |
 | User can recover | Yes — their wallet's seed | **No** |
-| Survives a redeploy | Yes | **No — key is lost permanently** |
+| Survives a redeploy | Yes | Yes — sealed seed is persisted |
 | Auth | SEP-10 challenge → httpOnly cookie | Google ID token → httpOnly cookie |
 
 Platform-managed keys are **not** self-custody. Path B is custody and PathPulse holds it.
@@ -40,8 +40,7 @@ managed-custody vendors. That is an unselected option in a cost model, not a com
 | `gcp-kms` | Declared, **not implemented** — throws. |
 | `hsm` | Declared, **not implemented** — throws. |
 
-**No KMS or HSM is in service in any environment.** The only real hardening today is
-negative: the dev signer will not produce a mainnet signature at all.
+**No KMS or HSM is in service in any environment.**
 
 What the dev signer signs for is the platform's own **service accounts** — settlement
 (`stellar/settlement.ts`), group payout (`stellar/groupPayout.ts`), SCOUT issuance
@@ -50,6 +49,27 @@ accounts via the delegated path.
 
 `GET /v1/treasury/config` has **no signer behind it**. It is a read-through to Horizon and
 holds no key.
+
+## Where managed keys are stored
+
+Path B seeds are sealed with **AES-256-GCM** under a 32-byte `KEY_ENCRYPTION_KEY` and stored
+in Postgres (`managed_wallets`), one row per user. The stored format is
+`v1.base64(iv‖tag‖ciphertext)` with a fresh 12-byte IV per seal, so the same seed never
+produces the same ciphertext and any tampering fails the GCM auth check on unseal. Rows carry
+the network they were created on and are refused if `STELLAR_NETWORK` no longer matches.
+
+The database is managed **Postgres**, reached over TLS with `sslmode=verify-full`. The
+connection string and the encryption key live in `.env`, which is gitignored and has never
+been committed.
+
+The account a seed belongs to is resolved through a `users` table mapping email to user id,
+so a returning sign-in recovers the existing wallet rather than minting a new one. Both tables
+are required: persisting seeds alone would keep the key safe and still lose the pointer to it.
+
+This replaces the previous in-memory `Map`, under which every redeploy orphaned all managed
+accounts permanently. **App Runner must still be pinned to one instance** — settlement
+batches, group payouts, payout batches, off-ramp sessions and wallet-auth users all remain in
+process memory. Key durability no longer requires the pin; those do.
 
 ## The delegated path
 
@@ -64,12 +84,14 @@ which anyone can submit to Horizon directly, so it confers no privilege.
 
 ## Known limitations — read before trusting this with value
 
-1. **Managed keys are in-memory only.** No database, no persistence. Every redeploy or
-   restart orphans every managed account created before it and the funds become
-   permanently unspendable. App Runner autoscaling is pinned to one instance for this
-   reason.
-2. **No KMS/HSM.** See above.
-3. **Treasury secrets are file-held.** The replacement treasury's signer secrets live in
+1. **Seeds decrypt into application memory to sign.** The seed is unsealed inside
+   `stellar/managed.ts` only long enough to build a `Keypair`. Encryption-at-rest protects
+   a leaked database dump; it does not protect against compromise of the running process.
+2. **The key-encryption key is an env var.** `KEY_ENCRYPTION_KEY` sits beside the
+   application, not in a KMS or HSM, so the root of trust is the environment. Losing it
+   makes every stored seed permanently unrecoverable — back it up with the database.
+3. **No KMS/HSM.** See above.
+4. **Treasury secrets are file-held.** The replacement treasury's signer secrets live in
    `secrets/treasury-v2.json` (gitignored, mode 0600) on one machine, not in a managed
    secret store. That file is a single point of failure.
 

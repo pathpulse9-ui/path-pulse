@@ -52,7 +52,7 @@ function toOperation(op: TransactionOperation) {
  * The client never holds the key — the backend signs on the managed account's behalf.
  */
 export async function buildTransaction(req: BuildTransactionRequest): Promise<BuildTransactionResponse> {
-  const wallet = getManagedWallet(req.userId);
+  const wallet = await getManagedWallet(req.userId);
   if (!wallet || !wallet.provisioned) {
     throw httpError(
       `No provisioned managed wallet for user ${req.userId} — sign in first`,
@@ -70,7 +70,7 @@ export async function buildTransaction(req: BuildTransactionRequest): Promise<Bu
   if (req.memo) builder.addMemo(Memo.text(req.memo));
 
   let tx = builder.setTimeout(180).build();
-  tx = (await getManagedSigner(req.userId).sign(tx)) as typeof tx; // delegated signing
+  tx = (await (await getManagedSigner(req.userId)).sign(tx)) as typeof tx; // delegated signing
 
   return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') };
 }

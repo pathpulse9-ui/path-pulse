@@ -22,6 +22,14 @@ if (network !== 'testnet' && network !== 'mainnet') {
   throw new Error(`STELLAR_NETWORK must be testnet|mainnet, got: ${network}`);
 }
 
+const SIGNER_BACKENDS = ['dev', 'aws-kms', 'gcp-kms', 'hsm'] as const;
+export type SignerBackend = (typeof SIGNER_BACKENDS)[number];
+
+const signerBackend = (process.env.SIGNER_BACKEND ?? 'dev') as SignerBackend;
+if (!SIGNER_BACKENDS.includes(signerBackend)) {
+  throw new Error(`SIGNER_BACKEND must be ${SIGNER_BACKENDS.join('|')}, got: ${signerBackend}`);
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: Number(process.env.PORT ?? 8080),
@@ -53,7 +61,14 @@ export const env = {
     },
   },
 
-  signerBackend: process.env.SIGNER_BACKEND ?? 'dev',
+  signerBackend,
+
+  kms: {
+    keyId: process.env.KMS_KEY_ID ?? '',
+  },
+
+  databaseUrl: process.env.DATABASE_URL ?? '',
+  keyEncryptionKey: process.env.KEY_ENCRYPTION_KEY ?? '',
 
   // Aquarius AMM routing (D5). Testnet only — mainnet pools are gated behind Phase 5.
   routing: {
@@ -163,5 +178,9 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
 }
 
 export const isMainnet = env.network === 'mainnet';
+
+if (isMainnet && env.signerBackend === 'dev') {
+  throw new Error('SIGNER_BACKEND=dev is prohibited on mainnet — configure a KMS/HSM backend');
+}
 export const horizonTxUrl = (hash: string) =>
   `https://stellar.expert/explorer/${env.network === 'testnet' ? 'testnet' : 'public'}/tx/${hash}`;

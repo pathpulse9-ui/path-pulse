@@ -14,19 +14,19 @@ export interface Signer {
   sign(tx: Transaction): Promise<Transaction>;
 }
 
-/** Dev-tier signer: holds a testnet secret key in memory. NEVER for mainnet. */
+/** Dev-tier signer: holds a testnet keypair in memory. NEVER for mainnet. */
 export class DevSigner implements Signer {
   private readonly keypair: Keypair;
   readonly publicKey: string;
 
-  constructor(secretKey: string) {
+  constructor(keypair: Keypair) {
     if (env.network === 'mainnet') {
       throw new Error(
         'DevSigner is prohibited on mainnet — configure a KMS/HSM signer backend (human-gated).',
       );
     }
-    this.keypair = Keypair.fromSecret(secretKey);
-    this.publicKey = this.keypair.publicKey();
+    this.keypair = keypair;
+    this.publicKey = keypair.publicKey();
   }
 
   async sign(tx: Transaction): Promise<Transaction> {
@@ -36,20 +36,18 @@ export class DevSigner implements Signer {
 }
 
 /** Factory selecting the signer implementation from SIGNER_BACKEND. */
-export function createSigner(secretKeyForDev?: string): Signer {
+export function createSigner(keypair?: Keypair): Signer {
   switch (env.signerBackend) {
     case 'dev':
-      if (!secretKeyForDev) {
-        throw new Error('dev signer requires a testnet secret key');
+      if (!keypair) {
+        throw new Error('dev signer requires a keypair');
       }
-      return new DevSigner(secretKeyForDev);
+      return new DevSigner(keypair);
     case 'aws-kms':
     case 'gcp-kms':
     case 'hsm':
       throw new Error(
         `Signer backend "${env.signerBackend}" is not yet implemented (Phase 5, human-gated).`,
       );
-    default:
-      throw new Error(`Unknown SIGNER_BACKEND: ${env.signerBackend}`);
   }
 }

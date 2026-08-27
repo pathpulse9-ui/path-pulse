@@ -65,7 +65,7 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
   if (memo) builder.addMemo(Memo.text(memo));
 
   let tx = builder.setTimeout(180).build();
-  tx = (await getManagedSigner(GROUP_PAYOUT_SOURCE_USER).sign(tx)) as typeof tx;
+  tx = (await (await getManagedSigner(GROUP_PAYOUT_SOURCE_USER)).sign(tx)) as typeof tx;
 
   let res;
   try {

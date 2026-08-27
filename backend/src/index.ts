@@ -1,8 +1,11 @@
 import { createServer } from './server.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { migrate } from './db/client.js';
 
 const app = createServer();
+
+await migrate();
 
 app.listen(env.port, '0.0.0.0', () => {
   logger.info(
