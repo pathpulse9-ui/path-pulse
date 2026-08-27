@@ -43,4 +43,4 @@ Copy the printed `*_PUBLIC` keys into `.env`; store the secret keys in your secr
 ## Human-gated boundaries
 - **Treasury multisig** is *built* by the backend (`buildTreasuryMultisigTx`) but signed by a
   human signatory — never auto-applied.
-- **Mainnet signing** requires a KMS/HSM signer backend; the `dev` signer refuses mainnet.
+- **Mainnet signing** requires `SIGNER_BACKEND=aws-kms`; the `dev` signer refuses mainnet.

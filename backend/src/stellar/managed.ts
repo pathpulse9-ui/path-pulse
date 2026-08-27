@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { keyFromEnv, seal, unseal } from '../crypto/seal.js';
 import { fundWithFriendbot, accountExists } from './network.js';
-import { createSigner, type Signer } from './signing.js';
+import { DevSigner, createSigner, type Signer } from './signing.js';
 import { logger } from '../config/logger.js';
 
 /**
@@ -107,9 +107,25 @@ export async function getManagedWallet(userId: string): Promise<ManagedWallet | 
   return row ? toWallet(row) : null;
 }
 
-/** Signer for a provisioned managed wallet (dev tier — refuses mainnet via DevSigner). */
+const SERVICE_ACCOUNTS = new Set([
+  '__settlement_source__',
+  '__group_payout_source__',
+  '__scout_issuer__',
+  '__routing_swap_source__',
+]);
+
+export function isServiceAccount(userId: string): boolean {
+  return SERVICE_ACCOUNTS.has(userId);
+}
+
+/**
+ * Protocol-owned service accounts sign through SIGNER_BACKEND, so they can use a KMS-held key.
+ * Per-user wallets always sign with their own sealed seed: a KMS key per driver would cost
+ * $1 per driver per month, so the per-user tier is encrypt-at-rest by design, not by omission.
+ */
 export async function getManagedSigner(userId: string): Promise<Signer> {
   const row = await findRow(userId);
   if (!row) throw new Error(`No managed wallet for user ${userId} — sign in first`);
-  return createSigner(Keypair.fromSecret(unseal(row.sealed_seed, await encryptionKey())));
+  if (isServiceAccount(userId)) return createSigner(Keypair.fromSecret(unseal(row.sealed_seed, await encryptionKey())));
+  return new DevSigner(Keypair.fromSecret(unseal(row.sealed_seed, await encryptionKey())));
 }

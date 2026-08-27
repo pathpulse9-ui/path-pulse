@@ -135,7 +135,7 @@ sequenceDiagram
   API-->>App: { hash, successful, ledger, horizonUrl }
 ```
 
-Guardrails baked into the backend: the signer **refuses mainnet** unless a KMS/HSM backend is configured, and treasury/mainnet actions are **human-gated** (no auto-signing). See [ARCHITECTURE.md](ARCHITECTURE.md) §human gates.
+Guardrails baked into the backend: the signer **refuses mainnet** unless `SIGNER_BACKEND=aws-kms` is configured, and treasury/mainnet actions are **human-gated** (no auto-signing). See [ARCHITECTURE.md](ARCHITECTURE.md) §human gates.
 
 ---
 

@@ -22,7 +22,7 @@ if (network !== 'testnet' && network !== 'mainnet') {
   throw new Error(`STELLAR_NETWORK must be testnet|mainnet, got: ${network}`);
 }
 
-const SIGNER_BACKENDS = ['dev', 'aws-kms', 'gcp-kms', 'hsm'] as const;
+const SIGNER_BACKENDS = ['dev', 'aws-kms'] as const;
 export type SignerBackend = (typeof SIGNER_BACKENDS)[number];
 
 const signerBackend = (process.env.SIGNER_BACKEND ?? 'dev') as SignerBackend;
@@ -181,7 +181,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
 export const isMainnet = env.network === 'mainnet';
 
 if (isMainnet && env.signerBackend === 'dev') {
-  throw new Error('SIGNER_BACKEND=dev is prohibited on mainnet — configure a KMS/HSM backend');
+  throw new Error('SIGNER_BACKEND=dev is prohibited on mainnet — set SIGNER_BACKEND=aws-kms');
 }
 export const horizonTxUrl = (hash: string) =>
   `https://stellar.expert/explorer/${env.network === 'testnet' ? 'testnet' : 'public'}/tx/${hash}`;

@@ -47,6 +47,7 @@ call to KMS.
 
 | | |
 |---|---|
+| Alias | `alias/pathpulse-stellar-signer` |
 | ARN | `arn:aws:kms:us-east-1:691650376162:key/bdf81ab2-d5dd-4be0-ac6b-f95b46d4f1d1` |
 | KeySpec | `ECC_NIST_EDWARDS25519` |
 | KeyUsage | `SIGN_VERIFY` |
@@ -99,10 +100,43 @@ wallet count.
 **Implemented and verified.** The signer works against real AWS KMS and the proof is a
 permanent, publicly verifiable testnet transaction.
 
-**Not in service.** `SIGNER_BACKEND` is `dev` in every environment. No service or treasury
-account has been migrated to a KMS-held signer, and the verification key above is temporary.
-Driver keys are encrypted at rest under an environment-held key, not a KMS-held one.
+**In service for protocol accounts, as of 2026-08-27.** `SIGNER_BACKEND=aws-kms`, and the four
+protocol service accounts — settlement, group payout, SCOUT issuer and AMM routing — each carry
+`GAKYXUFDWZ6Q…` (the address derived from the KMS key) as an authorized signer. Their
+transactions are signed by KMS; the key never enters the process.
+
+**Not applied to driver wallets, by design.** Per-user KMS keys would cost $1 per driver per
+month. Driver seeds stay encrypted at rest with AES-256-GCM and are decrypted in memory only at
+signing time. `getManagedSigner` selects per tier: service accounts route through
+`SIGNER_BACKEND`, per-user wallets always sign with their own sealed seed.
 
 **To put it in service:** create a durable key, add its derived address as a signer on the
 target Stellar account via `setOptions`, remove the old signer, and set `SIGNER_BACKEND=aws-kms`
 with `KMS_KEY_ID`. The account id never changes, so nothing downstream moves.
+
+**On HSMs.** AWS KMS keys are generated inside, and never leave, AWS-managed HSM hardware — the
+application can request a signature but can never read the key. A separate CloudHSM or PKCS#11
+backend is therefore not used: KMS provides the same hardware-backed guarantee for these key
+counts at a small fraction of the cost.
+
+
+## Migration — protocol accounts now sign through KMS
+
+Performed 2026-08-27. The KMS-derived address `GAKYXUFDWZ6Q3FKIA7GCOGZVH5VBGMOLEGKNPZZGKJU36D3GPEM2TLSS`
+was added as an authorized signer on each protocol service account via `setOptions`. Account ids
+were unchanged, and each account's original signer was left in place, so there is no path by
+which deleting the KMS key can strand an account.
+
+| Service account | Stellar address |
+|---|---|
+| `__settlement_source__` | `GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC` |
+| `__group_payout_source__` | `GBRAS4T5A3HGOYCN6TC6CZLOSUM5Y265MF6DXVSZNR3Z5LJHODC3K3O4` |
+| `__scout_issuer__` | `GBKGCHRV3YOPTRUR6SDVL46GWWZNXQ6WGOSTVR46HLE5XQMOAS7P6SF4` |
+| `__routing_swap_source__` | `GB2ATSCL5MS6TTT5TRUGXUP4AK2MRKUST5E6S6W7UO4XG2Y56BXVKCM7` |
+
+**Proof of live KMS signing:** tx `3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47`
+(ledger 4360517, memo `kms live`) — a payment from the settlement source account. The signature
+hint matches the KMS key and verifies against `GAKYXUFDWZ6Q…`; the signature was produced by a
+`Sign` call to KMS, with no key material in the application.
+
+One KMS key serves all four accounts, so the cost is $1/month rather than $1 per account.

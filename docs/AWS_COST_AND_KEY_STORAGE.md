@@ -3,10 +3,10 @@
 > **Status note (2026-08-25).** This is a forward-looking cost model, not a description of
 > what runs today. **Privy is not integrated and is not planned** — it appears below only as
 > one unselected option in a vendor comparison. No KMS, HSM or Vault backend is in service
-> either. **Updated 2026-08-27:** AWS KMS signs Ed25519 natively (since Nov 2025); an `aws-kms`
-> signer backend is **implemented and verified on testnet** but not yet in service, and driver
-> seeds are encrypted at rest rather than held in memory. §1's Ed25519 analysis has been
-> corrected. See `docs/KMS_VERIFICATION.md`.
+> either. **Updated 2026-08-27:** AWS KMS signs Ed25519 natively (since Nov 2025) and is now
+> **live for protocol service accounts** (`SIGNER_BACKEND=aws-kms`); driver seeds are encrypted
+> at rest rather than held in memory. §1's Ed25519 analysis has been corrected. See
+> `docs/KMS_VERIFICATION.md`.
 
 > Status: planning estimate · Region assumed **ap-south-1 (Mumbai)** · Prices are
 > **on-demand list** in USD/month and are **estimates for budgeting**, not quotes.
@@ -89,9 +89,8 @@ Heavy settlement + SDP means you should not rely on public SDF Horizon in produc
 
 | Option | Ed25519? | Key isolation | ~Cost @ 1M | Ops burden | Best for |
 |--------|:--------:|---------------|-----------|-----------|----------|
-| **KMS envelope encryption** | encrypt (per-user seeds) | Seed in app memory at sign time | ~$60/mo | Very low | Driver keys at any scale. | 
-| **KMS Ed25519 signing** | ✅ sign (`ECC_NIST_EDWARDS25519`) | Never leaves KMS | ~$1/key/mo | Very low | Protocol + treasury accounts. Verified on testnet. | 
-| ~~old row~~ | | | | | multisig. |
+| **KMS envelope encryption** | encrypt (per-user seeds) | Seed in app memory at sign time | ~$60/mo | Very low | Driver keys at any scale. |
+| **KMS Ed25519 signing** | ✅ sign (`ECC_NIST_EDWARDS25519`) | Never leaves KMS | ~$1/key/mo | Very low | Protocol + treasury accounts. Verified on testnet. |
 | **AWS CloudHSM** | ✅ sign | Never leaves HSM (FIPS L3) | ~$2,400/mo flat | High | Treasury / compliance-grade custody. |
 | **HashiCorp Vault (Transit)** | ✅ sign | Never leaves Vault | ~$150–300/mo | Medium-high | Ed25519 signing without CloudHSM cost, if you'll run Vault well. |
 | **MPC / custody SaaS** (Privy, Turnkey, DFNS, Fireblocks, Fordefi, Web3Auth) | ✅ | Sharded / provider-held | per-wallet or enterprise | Low (offloaded) | Fast launch, offloaded liability; watch per-MAW fees. |

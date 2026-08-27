@@ -8,12 +8,17 @@ All notable changes to PathPulse are documented here.
 - **Driver keys are now encrypted at rest.** Managed wallet seeds are sealed with AES-256-GCM (`crypto/seal.ts`, format `v1.base64(iv‖tag‖ciphertext)`, fresh 12-byte IV per seal, auth tag verified on read) and stored in Postgres. Decryption happens at exactly one call site, inside `getManagedSigner`, only at signing time.
 - **`users` table** maps email → user id, so a returning sign-in recovers its existing wallet. Persisting seeds alone kept the key safe while losing the pointer to it; both tables are required.
 - **`AwsKmsSigner`** (`stellar/kms.ts`) — signs Stellar transactions with an Ed25519 key held in AWS KMS (`ECC_NIST_EDWARDS25519`, `ED25519_SHA_512` over `MessageType: RAW`). The key never enters the process. `createSigner()` is now async and selects it on `SIGNER_BACKEND=aws-kms`.
-- `SIGNER_BACKEND` is validated at boot against its four legal values; `KMS_KEY_ID` is read into config; `dev` is rejected outright when `STELLAR_NETWORK=mainnet`, so a misconfigured mainnet deploy fails at startup rather than at the first signature.
+- **`SIGNER_BACKEND` reduced to `dev | aws-kms`.** The `gcp-kms` and `hsm` branches were declared but never implemented and are removed; AWS KMS keys are generated in and never leave AWS-managed HSM hardware, so a separate CloudHSM/PKCS#11 backend is not used. The switch is now exhaustive over two implemented backends.
+- `SIGNER_BACKEND` is validated at boot against its legal values; `KMS_KEY_ID` is read into config; `dev` is rejected outright when `STELLAR_NETWORK=mainnet`, so a misconfigured mainnet deploy fails at startup rather than at the first signature.
 
 ### Fixed
 - `createSigner()` was dead code — every signing path constructed `DevSigner` directly, so `SIGNER_BACKEND` selected nothing. All paths now route through the factory.
 - `managed.ts` no longer calls `keypair.secret()`; signers are built from a `Keypair`, so no plaintext seed string is materialised in application code.
 - Concurrent first sign-ins for one email no longer mint duplicate wallets or fail on duplicate Friendbot funding.
+
+### Migrated
+- **AWS KMS is live for protocol accounts.** `SIGNER_BACKEND=aws-kms`; the KMS-derived address `GAKYXUFDWZ6Q…` was added via `setOptions` as an authorized signer on all four service accounts (settlement, group payout, SCOUT issuer, AMM routing). Each account's original signer was left in place, so deleting the KMS key cannot strand an account. Live proof: tx `3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47` — signature hint matches the KMS key and verifies against it.
+- `getManagedSigner` now selects per tier: service accounts route through `SIGNER_BACKEND`, per-user wallets always sign with their own sealed seed. Without this, `aws-kms` would have signed every driver's transaction with one key from the wrong address.
 
 ### Verified
 - KMS end-to-end on testnet: tx `07dc33d4caa6a1a74c317c9c796c097c348baeaa7717e2595cb7ab0257d02cfb` (ledger 4358729, memo `kms-signed`), submitted from `GAKYXUFDWZ6Q…` — an address derived from the KMS public key, for which no seed exists. Record in `docs/KMS_VERIFICATION.md`.
@@ -21,7 +26,6 @@ All notable changes to PathPulse are documented here.
 - 18/18 unit tests pass; `tsc` clean across contract, backend and web.
 
 ### Known limitations
-- **KMS is not in service.** `SIGNER_BACKEND` is `dev` in every environment; the verification key is temporary.
 - The key-encryption key is an environment variable, not KMS-held — this protects a leaked database, not a compromised process. Losing it makes every stored seed unrecoverable.
 - App Runner must stay pinned to one instance: settlement batches, group payouts, payout batches, off-ramp sessions and wallet-auth users remain in process memory.
 

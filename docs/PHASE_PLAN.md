@@ -24,7 +24,7 @@ indexer directly (both TS, tightly coupled).
 | **2. Wallet Interop & Payout Rails** | 13–25 | Aug 2 – Aug 14 | Wallets Kit demo, SDP batch payouts, reward screens | D2, D3 |
 | **3. Off-Ramp & Liquidity Routing** | 26–40 | Aug 15 – Aug 29 | Mercuryo SEP-24, Stellar Broker + Aquarius routing | D4, D5 |
 | **4. Settlement Engine & SCOUT** | 41–55 | Aug 30 – Sep 13 | 50/30/20 engine, SCOUT reputation assets, indexer | D6 |
-| **5. Mainnet Readiness** | 56–65 | Sep 14 – Sep 23 | Security review, HSM prod signing, mainnet rollout, monitoring | D7 |
+| **5. Mainnet Readiness** | 56–65 | Sep 14 – Sep 23 | Security review, AWS KMS production signing, mainnet rollout, monitoring | D7 |
 | **6. Gov Gateway, QA & Handover** | 66–75 | Sep 24 – Oct 3 | Gov audit dashboard, compliance exports, E2E QA, handover | D8 |
 
 ## Phase 1 — task board (Days 1–12, covers D1)
@@ -34,7 +34,7 @@ indexer directly (both TS, tightly coupled).
 - [ ] Deploy protocol-governed distribution accounts: **Partner Revenue, Driver Pool, Treasury** (testnet)
 - [x] Multi-signature treasury config (threshold ≥ 2/3 signatories) on testnet  *(needs-human-gate: signer set approved manually)* — first attempt shipped 2-of-**4** and is unrecoverable; replacement `GBRXUTNC…` is a genuine 2-of-3. See the **Deployed on testnet** section of `README.md`.
 - [x] ~~Privy server-side integration~~ **SUBSTITUTED** — email/OAuth → *platform-managed* (custodial) Stellar wallet. Privy is not integrated and is not planned; see the **Accounts & custody** section of `README.md`.
-- [x] Delegated transaction construction & signing API; **AWS KMS Ed25519 signing implemented and verified on testnet** (`AwsKmsSigner`, tx `07dc33d4…` — see `docs/KMS_VERIFICATION.md`). The live signer is still the dev tier: KMS is not yet in service.
+- [x] Delegated transaction construction & signing API; **AWS KMS Ed25519 signing live for protocol accounts** (`SIGNER_BACKEND=aws-kms`, tx `3b73c013…` — see `docs/KMS_VERIFICATION.md`). Per-user wallets sign with their own encrypted seed by design.
 - [ ] Web: monorepo baseline (extend `d2-wallet-interop`), shared UI kit, internal ops shell with auth
 
 ### Android + iOS (Daiwik)
