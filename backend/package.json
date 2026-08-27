@@ -14,6 +14,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1118.0",
     "@pathpulse/contract": "workspace:*",
     "@stellar/stellar-sdk": "^13.1.0",
     "cookie-parser": "^1.4.7",

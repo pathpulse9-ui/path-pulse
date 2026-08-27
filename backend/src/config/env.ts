@@ -69,6 +69,7 @@ export const env = {
 
   databaseUrl: process.env.DATABASE_URL ?? '',
   keyEncryptionKey: process.env.KEY_ENCRYPTION_KEY ?? '',
+  keyEncryptionKeyCiphertext: process.env.KEY_ENCRYPTION_KEY_CIPHERTEXT ?? '',
 
   // Aquarius AMM routing (D5). Testnet only — mainnet pools are gated behind Phase 5.
   routing: {

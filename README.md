@@ -41,7 +41,7 @@ PathPulse makes the arithmetic the ledger. A settlement batch computes its split
 ### Accounts & custody
 - **Protocol-governed distribution accounts** — Partner Revenue, Driver Pool and Treasury are provisioned as distinct on-chain accounts, so every flow of funds has a named, auditable origin and destination.
 - **Multisig treasury** — the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set.
-- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend.
+- **Human-gated signing** — the `Signer` interface abstracts dev keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. The **`aws-kms` backend is implemented and verified on testnet**; `gcp-kms` and `hsm` remain declared and throw.
 - **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits, for the account named by the caller's own session. The client never holds a key — which also means this path is **custodial**, not self-custody.
 
 ### Identity & wallet interop
@@ -206,6 +206,8 @@ the treasury account does.
 **Keys never reach a client.** Managed accounts are signed server-side; the mobile and web clients describe intent and receive hashes. The one piece of client-side crypto is the user's own wallet signing a SEP-10 challenge.
 
 **Webhooks are verified against raw bytes.** Off-ramp callbacks check `X-Body-Signature` before any status is applied, and correlation happens on a server-issued reference rather than a caller-supplied id.
+
+**KMS signing is implemented and verified on testnet.** `AwsKmsSigner` signs Stellar transactions with an Ed25519 key held in AWS KMS — key spec `ECC_NIST_EDWARDS25519`, algorithm `ED25519_SHA_512` over `MessageType: RAW` — so the private key never enters the application process. Proven end-to-end by transaction [`07dc33d4…`](https://stellar.expert/explorer/testnet/tx/07dc33d4caa6a1a74c317c9c796c097c348baeaa7717e2595cb7ab0257d02cfb), submitted from an account whose address is derived from the KMS public key and for which no seed has ever existed. **Not yet in service** — `SIGNER_BACKEND` is `dev` everywhere and no account has been migrated. Full record in [`docs/KMS_VERIFICATION.md`](docs/KMS_VERIFICATION.md).
 
 **Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. Only the root key remains to be moved to a managed KMS, a change confined to a single function with no change to the storage format, the schema, or any call site.
 

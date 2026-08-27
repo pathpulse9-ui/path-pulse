@@ -11,7 +11,7 @@ import { logger } from '../config/logger.js';
  * Custodial managed wallets. The backend generates and holds the key; this is not
  * self-custody. Seeds are sealed with AES-256-GCM under KEY_ENCRYPTION_KEY and stored
  * in Postgres; the plaintext seed exists only inside this module and only long enough
- * to build a Keypair. Testnet only — see docs/CUSTODY.md.
+ * to build a Keypair. Testnet only.
  */
 
 interface WalletRow {
@@ -24,13 +24,24 @@ interface WalletRow {
 
 let cachedKey: Buffer | null = null;
 
-function encryptionKey(): Buffer {
-  if (!cachedKey) {
-    if (!env.keyEncryptionKey) {
-      throw new Error('KEY_ENCRYPTION_KEY is not set — managed wallet seeds cannot be sealed');
-    }
-    cachedKey = keyFromEnv(env.keyEncryptionKey);
+/**
+ * Root of trust for driver-seed encryption. With KEY_ENCRYPTION_KEY_CIPHERTEXT set, the KEK is
+ * unwrapped once via KMS and never leaves this module; otherwise it comes from the environment.
+ */
+async function encryptionKey(): Promise<Buffer> {
+  if (cachedKey) return cachedKey;
+  if (env.keyEncryptionKeyCiphertext) {
+    const { awsKmsDecryptClient } = await import('./kms.js');
+    const plaintext = await awsKmsDecryptClient().decrypt(
+      Buffer.from(env.keyEncryptionKeyCiphertext, 'base64'),
+    );
+    cachedKey = keyFromEnv(Buffer.from(plaintext).toString('base64'));
+    return cachedKey;
   }
+  if (!env.keyEncryptionKey) {
+    throw new Error('KEY_ENCRYPTION_KEY is not set — managed wallet seeds cannot be sealed');
+  }
+  cachedKey = keyFromEnv(env.keyEncryptionKey);
   return cachedKey;
 }
 
@@ -64,7 +75,7 @@ async function insertRow(userId: string): Promise<WalletRow> {
     `insert into managed_wallets (user_id, public_key, sealed_seed, provisioned, network)
      values ($1, $2, $3, false, $4)
      on conflict (user_id) do nothing`,
-    [userId, kp.publicKey(), seal(kp.secret(), encryptionKey()), env.network],
+    [userId, kp.publicKey(), seal(kp.secret(), await encryptionKey()), env.network],
   );
   const row = await findRow(userId);
   if (!row) throw new Error(`Failed to provision managed wallet for ${userId}`);
@@ -100,5 +111,5 @@ export async function getManagedWallet(userId: string): Promise<ManagedWallet | 
 export async function getManagedSigner(userId: string): Promise<Signer> {
   const row = await findRow(userId);
   if (!row) throw new Error(`No managed wallet for user ${userId} — sign in first`);
-  return createSigner(Keypair.fromSecret(unseal(row.sealed_seed, encryptionKey())));
+  return createSigner(Keypair.fromSecret(unseal(row.sealed_seed, await encryptionKey())));
 }

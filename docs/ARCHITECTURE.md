@@ -43,7 +43,7 @@ There is no client-side crypto on Android or iOS. Both apps are thin API consume
 
 **Privy is not integrated and is not planned.** It was the original design for
 email/OAuth → embedded wallet on all three surfaces; it was substituted, not deferred.
-See `docs/CUSTODY.md` for what replaced it and what that costs in custody terms.
+See the **Accounts & custody** section of `README.md` for what replaced it and what that costs in custody terms.
 
 **Clients never sign settlement transactions.** Settlement, group payout, SCOUT issuance
 and AMM routing are all signed backend-side from service accounts.

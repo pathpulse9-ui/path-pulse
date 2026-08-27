@@ -7,7 +7,7 @@
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) (system), [PHASE_PLAN.md](PHASE_PLAN.md) (roadmap/ownership).
 
-> **Stack (current):** monorepo on **pnpm** (`workspace:*` deps). Backend = Node/TS + Express (`pnpm --filter @pathpulse/backend dev`, :8080). Web = **Next.js 16 / React 19 / Tailwind v4**, app-router (`pnpm --dir web dev`, :3000). Auth = **Google sign-in (custodial) + SEP-10 wallet (non-custodial)** — the "Non Custodial" pivot replaced the earlier Privy/`/v1/onboard` model. Privy is **substituted, not deferred**; custody model and signer-backend state are in [`CUSTODY.md`](./CUSTODY.md).
+> **Stack (current):** monorepo on **pnpm** (`workspace:*` deps). Backend = Node/TS + Express (`pnpm --filter @pathpulse/backend dev`, :8080). Web = **Next.js 16 / React 19 / Tailwind v4**, app-router (`pnpm --dir web dev`, :3000). Auth = **Google sign-in (custodial) + SEP-10 wallet (non-custodial)** — the "Non Custodial" pivot replaced the earlier Privy/`/v1/onboard` model. Privy is **substituted, not deferred**; custody model and signer-backend state are in the **Accounts & custody** section of [`../README.md`](../README.md).
 
 ---
 
@@ -272,7 +272,7 @@ Clients read the base URL from config (never hardcode): web `NEXT_PUBLIC_API_URL
 - **Contract-first**: no field ships that isn't in `openapi.yaml`. Client models are generated, not hand-written.
 - **Money is strings, 7 decimals.** Never parse Stellar amounts into a float/double anywhere.
 - **Session is a cookie, not a header.** Send `credentials: 'include'`; never put session/secrets in URLs or query strings.
-- **Custody boundary:** the backend delegate-signs only for **custodial (Google)** accounts, and only for the account named by the caller's own session; **non-custodial (SEP-10 wallet)** users sign client-side. Clients never sign settlement/treasury tx. Custodial keys are in-memory and do not survive a redeploy — see [`CUSTODY.md`](./CUSTODY.md).
+- **Custody boundary:** the backend delegate-signs only for **custodial (Google)** accounts, and only for the account named by the caller's own session; **non-custodial (SEP-10 wallet)** users sign client-side. Clients never sign settlement/treasury tx. Custodial seeds are encrypted at rest with AES-256-GCM and persisted, so they survive restarts and redeploys — see [`KMS_VERIFICATION.md`](./KMS_VERIFICATION.md).
 - **Idempotency-Key on every value-moving POST** (target convention). Retries must not double-pay.
 - **Switch on `error` codes, not messages.** Handle `401` → re-authenticate (no refresh token), `429` → back off, `422` → show the reason.
 - **Testnet only through Phase 4.** No client hardcodes a mainnet URL before Phase 5.

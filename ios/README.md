@@ -5,7 +5,7 @@
 Thin client over the Backend Core API (`../backend`), behaviorally identical to Android.
 There is **no on-device crypto and no embedded wallet** — Privy was substituted, so the
 email/OAuth account is platform-managed (custodial) and the backend signs on its behalf.
-See `../docs/CUSTODY.md`. Everything comes from the backend API in
+See the **Accounts & custody** section of `../README.md`. Everything comes from the backend API in
 `../packages/contract/openapi.yaml`.
 
 ## Phase 1 tasks

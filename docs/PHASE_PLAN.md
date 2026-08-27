@@ -32,9 +32,9 @@ indexer directly (both TS, tightly coupled).
 ### Backend + Web (Aaditya)
 - [ ] Monorepo, environments, CI/CD for all four codebases; testnet config
 - [ ] Deploy protocol-governed distribution accounts: **Partner Revenue, Driver Pool, Treasury** (testnet)
-- [x] Multi-signature treasury config (threshold ≥ 2/3 signatories) on testnet  *(needs-human-gate: signer set approved manually)* — first attempt shipped 2-of-**4** and is unrecoverable; replacement `GBRXUTNC…` is a genuine 2-of-3. See `docs/CUSTODY.md`.
-- [x] ~~Privy server-side integration~~ **SUBSTITUTED** — email/OAuth → *platform-managed* (custodial) Stellar wallet. Privy is not integrated and is not planned; see `docs/CUSTODY.md`.
-- [x] Delegated transaction construction & signing API; dev-tier signing (**not** KMS-backed — no KMS/HSM is in service)
+- [x] Multi-signature treasury config (threshold ≥ 2/3 signatories) on testnet  *(needs-human-gate: signer set approved manually)* — first attempt shipped 2-of-**4** and is unrecoverable; replacement `GBRXUTNC…` is a genuine 2-of-3. See the **Deployed on testnet** section of `README.md`.
+- [x] ~~Privy server-side integration~~ **SUBSTITUTED** — email/OAuth → *platform-managed* (custodial) Stellar wallet. Privy is not integrated and is not planned; see the **Accounts & custody** section of `README.md`.
+- [x] Delegated transaction construction & signing API; **AWS KMS Ed25519 signing implemented and verified on testnet** (`AwsKmsSigner`, tx `07dc33d4…` — see `docs/KMS_VERIFICATION.md`). The live signer is still the dev tier: KMS is not yet in service.
 - [ ] Web: monorepo baseline (extend `d2-wallet-interop`), shared UI kit, internal ops shell with auth
 
 ### Android + iOS (Daiwik)
@@ -46,7 +46,7 @@ indexer directly (both TS, tightly coupled).
 
 ### Exit criteria (the gate — these are the definition of done)
 - [ ] Multisig treasury accounts live on testnet with threshold config validated
-- [ ] Email → Stellar wallet flow functional inside both mobile apps *(web only today, and custodial — see `docs/CUSTODY.md`)*
+- [ ] Email → Stellar wallet flow functional inside both mobile apps *(web only today, and custodial — see the **Accounts & custody** section of `README.md`)*
 - [ ] Delegated signing flow validated end-to-end; transactions verifiable on Horizon
 - [ ] CI pipelines green on all four repos
 

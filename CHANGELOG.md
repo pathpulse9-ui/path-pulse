@@ -2,6 +2,29 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.11.0] — 2026-08-27
+
+### Added (custody — persistence + AWS KMS signer)
+- **Driver keys are now encrypted at rest.** Managed wallet seeds are sealed with AES-256-GCM (`crypto/seal.ts`, format `v1.base64(iv‖tag‖ciphertext)`, fresh 12-byte IV per seal, auth tag verified on read) and stored in Postgres. Decryption happens at exactly one call site, inside `getManagedSigner`, only at signing time.
+- **`users` table** maps email → user id, so a returning sign-in recovers its existing wallet. Persisting seeds alone kept the key safe while losing the pointer to it; both tables are required.
+- **`AwsKmsSigner`** (`stellar/kms.ts`) — signs Stellar transactions with an Ed25519 key held in AWS KMS (`ECC_NIST_EDWARDS25519`, `ED25519_SHA_512` over `MessageType: RAW`). The key never enters the process. `createSigner()` is now async and selects it on `SIGNER_BACKEND=aws-kms`.
+- `SIGNER_BACKEND` is validated at boot against its four legal values; `KMS_KEY_ID` is read into config; `dev` is rejected outright when `STELLAR_NETWORK=mainnet`, so a misconfigured mainnet deploy fails at startup rather than at the first signature.
+
+### Fixed
+- `createSigner()` was dead code — every signing path constructed `DevSigner` directly, so `SIGNER_BACKEND` selected nothing. All paths now route through the factory.
+- `managed.ts` no longer calls `keypair.secret()`; signers are built from a `Keypair`, so no plaintext seed string is materialised in application code.
+- Concurrent first sign-ins for one email no longer mint duplicate wallets or fail on duplicate Friendbot funding.
+
+### Verified
+- KMS end-to-end on testnet: tx `07dc33d4caa6a1a74c317c9c796c097c348baeaa7717e2595cb7ab0257d02cfb` (ledger 4358729, memo `kms-signed`), submitted from `GAKYXUFDWZ6Q…` — an address derived from the KMS public key, for which no seed exists. Record in `docs/KMS_VERIFICATION.md`.
+- Persistence across a process boundary: same email in a fresh process returns the same user id and wallet; 10 concurrent calls yield 1 user row.
+- 18/18 unit tests pass; `tsc` clean across contract, backend and web.
+
+### Known limitations
+- **KMS is not in service.** `SIGNER_BACKEND` is `dev` in every environment; the verification key is temporary.
+- The key-encryption key is an environment variable, not KMS-held — this protects a leaked database, not a compromised process. Losing it makes every stored seed unrecoverable.
+- App Runner must stay pinned to one instance: settlement batches, group payouts, payout batches, off-ramp sessions and wallet-auth users remain in process memory.
+
 ## [0.1.10.0] — 2026-08-25
 
 ### Fixed (T1 review — delegated path was unreachable for end users)
@@ -14,7 +37,7 @@ All notable changes to PathPulse are documented here.
 - Contract: `BuildTransactionRequest` no longer requires `userId` on the wire.
 
 ### Added
-- `docs/CUSTODY.md` — the authoritative statement of custody model, signer-backend status, delegated-path auth, known limitations, and both treasury accounts.
+- `docs/CUSTODY.md` — authoritative statement of custody model, signer-backend status, delegated-path auth, known limitations, and both treasury accounts. *(Since 2026-08-27 this is a local-only, gitignored working document; the public summary lives in `README.md` and `docs/KMS_VERIFICATION.md`.)*
 - Replacement treasury `GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2` — master weight 0, three weight-1 signers, thresholds 2/2/2. Config tx `9f93fc82…0856`; two-signer proof `4face5e7…3722` (exactly 2 signatures).
 
 ### Changed (documentation accuracy — Privy substitution)

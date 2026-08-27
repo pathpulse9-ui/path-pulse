@@ -2,8 +2,9 @@ import { Keypair, Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 
 /**
- * Signer abstraction. Only the `dev` backend is implemented; aws-kms / gcp-kms /
- * hsm are declared and throw. No KMS or HSM is in service — see docs/CUSTODY.md.
+ * Signer abstraction. `dev` and `aws-kms` are implemented; gcp-kms and hsm are declared
+ * and throw. The live signer is `dev` in every environment — aws-kms is verified on testnet
+ * but not yet in service. See docs/KMS_VERIFICATION.md.
  *
  * HARD RULE: no signer will produce a mainnet signature without an explicit,
  * human-gated backend. The dev signer refuses mainnet outright.
@@ -36,14 +37,17 @@ export class DevSigner implements Signer {
 }
 
 /** Factory selecting the signer implementation from SIGNER_BACKEND. */
-export function createSigner(keypair?: Keypair): Signer {
+export async function createSigner(keypair?: Keypair): Promise<Signer> {
   switch (env.signerBackend) {
     case 'dev':
       if (!keypair) {
         throw new Error('dev signer requires a keypair');
       }
       return new DevSigner(keypair);
-    case 'aws-kms':
+    case 'aws-kms': {
+      const { AwsKmsSigner } = await import('./kms.js');
+      return AwsKmsSigner.create(env.kms.keyId);
+    }
     case 'gcp-kms':
     case 'hsm':
       throw new Error(
