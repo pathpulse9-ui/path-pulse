@@ -28,13 +28,11 @@
 
 ## What is PathPulse?
 
-Institutional reward programmes have the same failure mode everywhere: money goes in one end, recipients are told what came out the other, and the arithmetic in between is a spreadsheet nobody outside the operator can inspect. Disputes are unanswerable because there is nothing to check.
+Pathpulse is a global payments protocol meants to server clients from around the world with a dedicated payments products suite for users. Institutional reward programmes have the same failure mode everywhere: money goes in one end, recipients are told what came out the other, and the arithmetic in between is a spreadsheet nobody outside the operator can inspect. Disputes are unanswerable because there is nothing to check.
 
 PathPulse makes the arithmetic the ledger. A settlement batch computes its split deterministically, applies each contributor's on-chain reputation multiplier, and lands as **one multi-operation Stellar transaction**. The split is not reported — it is executed. Anyone holding the transaction hash can reconstruct the entire distribution, from treasury deposit down to an individual payout.
 
-> **Why the split is on-chain.** An off-chain split is a claim; an on-chain split is a receipt. Once the 50 / 30 / 20 is a transaction rather than a row in a database, the operator loses the ability to quietly restate it, and the recipient gains the ability to verify it without asking. That asymmetry is the entire product.
-
-**One shared backend. Three thin clients.** Treasury signing, payout orchestration, the settlement engine and asset issuance all require trusted authority and private keys — none of which can live in a mobile binary. They run in one service; the apps render it and stay behaviourally identical because they consume the same OpenAPI contract.
+> **Why the split is on-chain.** An off-chain split is a claim; an on-chain split is a receipt. Once the 50 / 30 / 20 is a transaction rather than a row in a database, the operator loses the ability to quietly restate it, and the recipient gains the ability to verify it without asking.
 
 ---
 
