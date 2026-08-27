@@ -11,15 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-      - run: npm install
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Typecheck (all workspaces)
-        run: npm run typecheck
+        run: pnpm run typecheck
       - name: Build (all workspaces)
-        run: npm run build
+        run: pnpm run build
+      - name: Test
+        run: pnpm run test
 
   android:
     name: Android (Kotlin)
