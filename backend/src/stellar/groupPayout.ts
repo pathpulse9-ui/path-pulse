@@ -1,15 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { TransactionBuilder, Operation, Asset, Memo, BASE_FEE, StrKey } from '@stellar/stellar-sdk';
+import { Asset, StrKey } from '@stellar/stellar-sdk';
 import type {
   CreateGroupPayoutRequest,
   GroupPayoutBatch,
   GroupPayoutBatchPage,
   AssetRef,
 } from '@pathpulse/contract';
-import { env, horizonTxUrl } from '../config/env.js';
-import { horizon } from './network.js';
-import { provisionManagedWallet, getManagedSigner } from './managed.js';
+import { env } from '../config/env.js';
 import { toStroops, fromStroops } from './settlement.js';
+import { createPayoutBatch } from '../services/payouts.js';
 
 /**
  * Flat bulk payout (D9 — CSV/Excel group payment). Unlike the 50/30/20
@@ -46,39 +45,19 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
     }
   }
 
-  const source = await provisionManagedWallet(GROUP_PAYOUT_SOURCE_USER);
-  const { asset, ref } = assetOf(req.asset);
+  const { ref } = assetOf(req.asset);
+  // SDP binds a receiver contact to a wallet address permanently, so the contact must be
+  // derived from the address. A run-scoped id would collide on every repeat of the same file.
+  const payouts = req.recipients.map((r) => ({
+    userId: `grp-${r.address.slice(0, 8).toLowerCase()}`,
+    address: r.address,
+    tier: 1 as const,
+    multiplier: 1,
+    amount: r.amount,
+  }));
 
-  const account = await horizon.loadAccount(source.address);
-  const builder = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: env.networkPassphrase,
-  });
-  let totalStroops = 0n;
-  for (const r of req.recipients) {
-    const stroops = toStroops(r.amount);
-    totalStroops += stroops;
-    builder.addOperation(Operation.payment({ destination: r.address, asset, amount: fromStroops(stroops) }));
-  }
-
-  const memo = req.memo?.trim();
-  if (memo) builder.addMemo(Memo.text(memo));
-
-  let tx = builder.setTimeout(180).build();
-  tx = (await (await getManagedSigner(GROUP_PAYOUT_SOURCE_USER)).sign(tx)) as typeof tx;
-
-  let res;
-  try {
-    res = await horizon.submitTransaction(tx);
-  } catch (e: unknown) {
-    const codes = (e as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response?.data?.extras
-      ?.result_codes;
-    throw httpError(
-      codes ? `Group payout rejected by Horizon: ${JSON.stringify(codes)}` : `Group payout submit failed: ${String(e)}`,
-      422,
-      'HorizonRejected',
-    );
-  }
+  const payoutBatch = await createPayoutBatch(payouts, ref);
+  const totalStroops = req.recipients.reduce((sum, r) => sum + toStroops(r.amount), 0n);
 
   const batch: GroupPayoutBatch = {
     id: `grp_${Date.now()}_${randomBytes(4).toString('hex')}`,
@@ -86,16 +65,16 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
     network: env.network,
     asset: ref,
     totalAmount: fromStroops(totalStroops),
-    sourceAddress: source.address,
-    memo: memo || undefined,
+    sourceAddress: env.sdp.baseUrl ? 'SDP distribution account' : '',
+    memo: req.memo?.trim() || undefined,
+    payoutBatchId: payoutBatch.id,
+    disbursementId: payoutBatch.disbursementId,
     receipts: req.recipients.map((r) => ({
       name: r.name,
       address: r.address,
       amount: r.amount,
       remark: r.remark?.trim() || undefined,
     })),
-    txHash: res.hash,
-    horizonUrl: horizonTxUrl(res.hash),
   };
   batches.unshift(batch);
   return batch;

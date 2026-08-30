@@ -176,6 +176,24 @@ export function getPayoutBatch(id: string) {
   return apiFetch<PayoutBatch>(`/v1/ops/payouts/batches/${id}`);
 }
 
+export interface PayoutAttempt {
+  id: number;
+  batch_id: string;
+  disbursement_id: string | null;
+  step: string;
+  attempt: number;
+  outcome: 'success' | 'failure';
+  error: string | null;
+  duration_ms: number;
+  created_at: string;
+}
+
+export function listPayoutAttempts(batchId: string) {
+  return apiFetch<{ batchId: string; attempts: PayoutAttempt[] }>(
+    `/v1/ops/payouts/batches/${batchId}/attempts`,
+  );
+}
+
 export function createPayoutBatch(settlementBatchId: string) {
   return apiFetch<PayoutBatch>('/v1/ops/payouts/batches', {
     method: 'POST',

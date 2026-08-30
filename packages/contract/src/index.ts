@@ -248,8 +248,12 @@ export interface GroupPayoutBatch {
   sourceAddress: string;
   memo?: string;
   receipts: GroupPayoutReceipt[];
-  txHash: string;
-  horizonUrl: string;
+  /** Present when paid directly on-chain; absent when disbursed through SDP. */
+  txHash?: string;
+  horizonUrl?: string;
+  /** Present when routed through the Stellar Disbursement Platform. */
+  payoutBatchId?: string;
+  disbursementId?: string;
 }
 
 export interface ScoutTierLookup {

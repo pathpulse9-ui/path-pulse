@@ -1,4 +1,4 @@
-import type {
+import type { AssetRef,
   PayoutBatchStatus,
   PayoutReceipt,
   PayoutReceiptStatus,
@@ -24,31 +24,67 @@ function url(path: string): string {
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...(init.headers as Record<string, string>) };
   headers.Authorization = env.sdp.apiKey;
+  // Routing by tenant header avoids depending on a per-tenant hostname, whose
+  // .local resolution is unreliable on macOS and caused spurious retries.
+  if (env.sdp.tenantName) headers['SDP-Tenant-Name'] = env.sdp.tenantName;
 
   const res = await fetch(url(path), { ...init, headers });
   const text = await res.text();
   const json = text ? (JSON.parse(text) as unknown) : undefined;
   if (!res.ok) {
-    const message = (json as { message?: string } | undefined)?.message ?? res.statusText;
-    const e = new Error(`SDP ${path} → ${res.status}: ${message}`) as Error & { status: number };
+    const body = json as { message?: string; error?: string; extras?: unknown } | undefined;
+    const detail = body?.extras ? ` ${JSON.stringify(body.extras)}` : '';
+    const message = body?.message ?? body?.error ?? res.statusText;
+    const e = new Error(`SDP ${path} → ${res.status}: ${message}${detail}`) as Error & {
+      status: number;
+    };
     e.name = 'SdpError';
-    e.status = res.status === 401 || res.status === 403 ? res.status : 502;
+    e.status = res.status;
     throw e;
   }
   return json as T;
 }
 
-export async function createDisbursement(name: string): Promise<DisbursementRef> {
+interface SdpAsset {
+  id: string;
+  code: string;
+  issuer: string;
+}
+
+/**
+ * Resolve the SDP asset id for the batch's asset. Without this the disbursement would
+ * always use SDP_ASSET_ID, so a batch in one asset could be paid out in another.
+ */
+export async function resolveAssetId(ref?: AssetRef): Promise<string> {
+  if (!ref) return env.sdp.assetId;
+  const assets = await call<SdpAsset[]>('/assets');
+  const wanted = ref.code.toUpperCase();
+  const match = assets.find(
+    (a) =>
+      a.code.toUpperCase() === wanted &&
+      (ref.issuer ? a.issuer === ref.issuer : !a.issuer),
+  );
+  if (!match) {
+    const known = assets.map((a) => `${a.code}${a.issuer ? `-${a.issuer.slice(0, 8)}` : ''}`).join(', ');
+    throw new Error(
+      `SDP has no asset matching ${ref.code}${ref.issuer ? `-${ref.issuer.slice(0, 8)}` : ''} (registered: ${known})`,
+    );
+  }
+  return match.id;
+}
+
+export async function createDisbursement(name: string, asset?: AssetRef): Promise<DisbursementRef> {
   // Receiver-supplied addresses pick the user-managed wallet themselves; SDP
   // rejects an explicit wallet_id for those contact types.
   const receiverSuppliesAddress = env.sdp.registrationContactType.endsWith('_AND_WALLET_ADDRESS');
+  const assetId = await resolveAssetId(asset);
   return call<DisbursementRef>('/disbursements', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name,
       wallet_id: receiverSuppliesAddress ? undefined : env.sdp.walletId,
-      asset_id: env.sdp.assetId,
+      asset_id: assetId,
       registration_contact_type: env.sdp.registrationContactType,
       verification_field: receiverSuppliesAddress ? undefined : env.sdp.verificationField,
     }),

@@ -6,12 +6,20 @@ import {
   listPayoutBatches,
   createPayoutBatch,
   listSettlementBatches,
+  listPayoutAttempts,
+  type PayoutAttempt,
 } from '../../lib/api';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
+
+function attemptClasses(outcome: string) {
+  return outcome === 'success'
+    ? 'bg-green-100 text-green-700 border-green-300'
+    : 'bg-red-100 text-red-700 border-red-300';
+}
 
 function receiptClasses(s: PayoutReceiptStatus) {
   if (s === 'success') return 'bg-green-100 text-green-700 border-green-300';
@@ -26,6 +34,7 @@ export default function PayoutsPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState<Record<string, PayoutAttempt[]>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -34,6 +43,16 @@ export default function PayoutsPage() {
       const [p, s] = await Promise.all([listPayoutBatches(50), listSettlementBatches(20)]);
       setBatches(p.items);
       setSettlements(s.items);
+      const rows = await Promise.all(
+        p.items.map(async (b) => {
+          try {
+            return [b.id, (await listPayoutAttempts(b.id)).attempts] as const;
+          } catch {
+            return [b.id, [] as PayoutAttempt[]] as const;
+          }
+        }),
+      );
+      setAttempts(Object.fromEntries(rows));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to reach Backend Core');
     } finally {
@@ -44,6 +63,8 @@ export default function PayoutsPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
   }, [load]);
 
   usePageActions(
@@ -177,6 +198,40 @@ export default function PayoutsPage() {
               </div>
             </div>
           </div>
+
+          {(attempts[b.id]?.length ?? 0) > 0 && (
+            <div className={T.cardInner}>
+              <div className={T.metricLabel}>SDP call attempts (reconciliation)</div>
+              <table className="w-full text-sm mt-2">
+                <thead>
+                  <tr className={T.tableHeadRow}>
+                    <th className={T.tableHeadCell}>#</th>
+                    <th className={T.tableHeadCell}>Step</th>
+                    <th className={T.tableHeadCell}>Outcome</th>
+                    <th className={T.tableHeadCell}>Duration</th>
+                    <th className={T.tableHeadCell}>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attempts[b.id].map((a) => (
+                    <tr key={a.id} className={T.tableRow}>
+                      <td className={T.tableCell}>{a.attempt}</td>
+                      <td className={`${T.tableCell} font-mono text-xs`}>{a.step}</td>
+                      <td className={T.tableCell}>
+                        <span
+                          className={`text-xs rounded-full border px-2 py-0.5 ${attemptClasses(a.outcome)}`}
+                        >
+                          {a.outcome}
+                        </span>
+                      </td>
+                      <td className={T.tableCell}>{a.duration_ms}ms</td>
+                      <td className={`${T.tableCell} text-xs text-red-700`}>{a.error ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <table className="w-full text-sm">
             <thead>

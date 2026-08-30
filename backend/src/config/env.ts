@@ -156,7 +156,10 @@ export const env = {
   offrampProvider: (process.env.OFFRAMP_PROVIDER ?? 'ramp') as 'ramp' | 'carret',
 
   sdp: {
+    retryAttempts: Number(process.env.SDP_RETRY_ATTEMPTS ?? 3),
+    retryBaseDelayMs: Number(process.env.SDP_RETRY_BASE_DELAY_MS ?? 500),
     baseUrl: process.env.SDP_BASE_URL ?? 'http://localhost:8000',
+    tenantName: process.env.SDP_TENANT_NAME ?? '',
     apiKey: process.env.SDP_API_KEY ?? '',
     walletId: process.env.SDP_WALLET_ID ?? '',
     assetId: process.env.SDP_ASSET_ID ?? '',
