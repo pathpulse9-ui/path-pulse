@@ -1,0 +1,62 @@
+# xcodegen config for PathPulse iOS.
+# Generate the Xcode project with: cd ios && xcodegen generate
+# Then open PathPulse.xcodeproj in Xcode 26.
+
+name: PathPulse
+options:
+  bundleIdPrefix: ai.pathpulse
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  xcodeVersion: "26.0"
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  PathPulse:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: PathPulse
+        excludes:
+          - "**/.DS_Store"
+    resources:
+      - path: PathPulse/Resources
+        optional: true
+    info:
+      path: PathPulse/Info.plist
+      properties:
+        CFBundleDisplayName: PathPulse
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Google Sign-In URL scheme — replace with your reversed client id once wired.
+        # CFBundleURLTypes:
+        #   - CFBundleURLSchemes:
+        #       - com.googleusercontent.apps.195179237561-jce7rmr4ou8jf2lsvt8lthv0q5h52o5a
+        # Allow http://localhost:8080 for local backend dev (production traffic is HTTPS).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.pathpulse.driver
+        TARGETED_DEVICE_FAMILY: "1"  # iPhone only
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        SUPPORTS_MACCATALYST: NO
