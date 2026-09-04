@@ -150,12 +150,27 @@ Rate ≈ 97.9 INR / USDC, Carret fee 0.59%, TDS 1%.
 
 | Measure | Evidence |
 |---|---|
-| Asset conversions executed via Stellar Broker / Aquarius on testnet | _pending_ — see PAT-53 |
-| Path payments verified on Horizon | _pending_ — see PAT-53 |
-| Multi-currency conversion path (local → USDC) | ✅ path-finding covered by `findPath` + `applySlippage` in `aquarius.ts` |
+| Asset conversions executed via Stellar Broker / Aquarius on testnet | ✅ tx [`28a14d05…`](https://stellar.expert/explorer/testnet/tx/28a14d057b5425ba332bd1bdbaac3643aa70efd3559448fb58cb3f8e94797ec0) — Soroban contract call `swap_chained` on `AQUA_ROUTER_CONTRACT`, signed by KMS |
+| Path payments verified on Horizon | ✅ same tx, `successful: true` |
+| Multi-currency conversion path (local → USDC) | ✅ 4-hop path resolved by Aquarius (`findPath` returned pools `CCZN4PG5…`, `CB7L23U3…`, `CDK2MY7Z…`, `CC2NBF7M…`) |
 
-<!-- FILL: PAT-53 - Aquarius swap tx hash + quote details -->
-> **Fill-in:** swap tx hash + `RoutingQuote` snapshot once PAT-53 captures the first execution.
+**Live swap execution (reproducible)**
+
+Executed via `POST https://demo-api.pathpulse.ai/v1/routing/swap` (auth cookie from SEP-10 handshake — same external keypair used for the D2 evidence).
+
+| | |
+|---|---|
+| swap id | `swp_1788506197909_4733eced` |
+| source account | [`GB2ATSCL5MS6TTT5TRUGXUP4AK2MRKUST5E6S6W7UO4XG2Y56BXVKCM7`](https://stellar.expert/explorer/testnet/account/GB2ATSCL5MS6TTT5TRUGXUP4AK2MRKUST5E6S6W7UO4XG2Y56BXVKCM7) — AMM routing source, KMS-signed |
+| from | 1.0000000 XLM |
+| to | USDC (issuer `GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER`) |
+| estimated destination | 8.6953878 USDC |
+| min destination (1% slippage) | 8.6084339 USDC |
+| pools | `CCZN4PG5…`, `CB7L23U3…`, `CDK2MY7Z…`, `CC2NBF7M…` (4 hops) |
+| tx hash | [`28a14d057b5425ba332bd1bdbaac3643aa70efd3559448fb58cb3f8e94797ec0`](https://stellar.expert/explorer/testnet/tx/28a14d057b5425ba332bd1bdbaac3643aa70efd3559448fb58cb3f8e94797ec0) |
+| ledger + result | successful |
+
+The tx envelope is a Soroban `InvokeHostFunction` calling the Aquarius router contract's `swap_chained` entry point; the `Signer` is the KMS-derived signer on the AMM routing source account (`GAKYXUFDWZ6Q…TLSS`), so the ed25519 signature was produced inside AWS KMS's HSM. Trustline for the destination USDC asset was auto-provisioned by `ensureTrustline` in `routing/swap.ts` on first use.
 
 ---
 
