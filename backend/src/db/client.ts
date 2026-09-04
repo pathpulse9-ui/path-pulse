@@ -22,6 +22,29 @@ create table if not exists users (
   created_at timestamptz not null default now()
 );
 
+create table if not exists payout_batches (
+  id text primary key,
+  disbursement_id text,
+  settlement_batch_id text,
+  asset_code text not null,
+  asset_issuer text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists payout_attempts (
+  id bigserial primary key,
+  batch_id text not null,
+  disbursement_id text,
+  step text not null,
+  attempt int not null,
+  outcome text not null,
+  error text,
+  duration_ms int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists payout_attempts_batch_idx on payout_attempts (batch_id, id);
+
 create table if not exists managed_wallets (
   user_id text primary key,
   public_key text not null unique,

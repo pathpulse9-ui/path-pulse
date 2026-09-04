@@ -15,6 +15,11 @@ build/
 *.key
 secrets/
 docs/CUSTODY.md
+docs/evidence/
+/scripts/
+
+# scratch scripts at the backend root; keepers live in backend/scripts/
+/backend/*.ts
 keys/
 .testnet-accounts.json
 

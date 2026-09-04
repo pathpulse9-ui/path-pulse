@@ -58,6 +58,7 @@ import {
 import multer from 'multer';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
+import { listAttempts } from '../services/payoutAttempts.js';
 import { quoteSwap, executeSwap } from '../routing/swap.js';
 import { listRoutableAssets } from '../routing/assets.js';
 
@@ -314,6 +315,15 @@ router.get('/v1/ops/payouts/batches', async (req, res, next) => {
 router.get('/v1/ops/payouts/batches/:id', async (req, res, next) => {
   try {
     res.json(await getPayoutBatch(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Reconciliation: every SDP call attempt for a batch, including failures and retries.
+router.get('/v1/ops/payouts/batches/:id/attempts', async (req, res, next) => {
+  try {
+    res.json({ batchId: req.params.id, attempts: await listAttempts(req.params.id) });
   } catch (e) {
     next(e);
   }

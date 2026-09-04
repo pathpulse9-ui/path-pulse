@@ -20,7 +20,7 @@
 [![Aquarius](https://img.shields.io/badge/Liquidity-Aquarius%20AMM-0D9488)](https://aqua.network)
 [![SDP](https://img.shields.io/badge/Payouts-Stellar%20SDP-3E1BDB)](https://github.com/stellar/stellar-disbursement-platform-backend)
 
-[**Architecture**](docs/ARCHITECTURE.md) · [**API contract**](docs/API_ARCHITECTURE.md) · [**Phase plan**](docs/PHASE_PLAN.md) · [**Changelog**](CHANGELOG.md)
+[**Architecture**](docs/ARCHITECTURE.md) · [**API contract**](docs/API_ARCHITECTURE.md) · [**Changelog**](CHANGELOG.md)
 
 </div>
 

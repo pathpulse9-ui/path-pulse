@@ -7,7 +7,7 @@ import type {
   PayoutReceipt,
   SettlementDriverPayout,
 } from '@pathpulse/contract';
-import { sdpLive } from '../config/env.js';
+import { env, sdpLive } from '../config/env.js';
 import {
   createDisbursement,
   uploadDisbursementInstructions,
@@ -17,6 +17,12 @@ import {
   mapDisbursementStatus,
   mapReceivers,
 } from './sdp.js';
+import {
+  withRetry,
+  recordBatch,
+  attachDisbursement,
+  getDisbursementId,
+} from './payoutAttempts.js';
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -47,20 +53,45 @@ const sandboxProvider: PayoutProvider = {
   },
 };
 
-const disbursementRefs = new Map<string, string>();
+function retryOpts() {
+  return { attempts: env.sdp.retryAttempts, baseDelayMs: env.sdp.retryBaseDelayMs };
+}
 
 const liveProvider: PayoutProvider = {
   sandbox: false,
   async start(batch, payouts) {
-    const disbursement = await createDisbursement(`pathpulse-${batch.id}`);
-    await uploadDisbursementInstructions(disbursement.id, payouts);
-    await startDisbursement(disbursement.id);
-    batch.disbursementId = disbursement.id;
+    await recordBatch(batch.id, batch.settlementBatchId, batch.asset.code, batch.asset.issuer);
+
+    const existing = await getDisbursementId(batch.id);
+    const disbursementId =
+      existing ??
+      (await withRetry(
+        batch.id,
+        'createDisbursement',
+        async () => {
+          const d = await createDisbursement(`pathpulse-${batch.id}`, batch.asset);
+          await attachDisbursement(batch.id, d.id);
+          return d.id;
+        },
+        retryOpts(),
+      ));
+
+    await withRetry(
+      batch.id,
+      'uploadInstructions',
+      () => uploadDisbursementInstructions(disbursementId, payouts),
+      { ...retryOpts(), disbursementId },
+    );
+    await withRetry(batch.id, 'startDisbursement', () => startDisbursement(disbursementId), {
+      ...retryOpts(),
+      disbursementId,
+    });
+
+    batch.disbursementId = disbursementId;
     batch.receipts = draftReceipts(payouts);
-    disbursementRefs.set(batch.id, disbursement.id);
   },
   async status(batch) {
-    const disbursementId = disbursementRefs.get(batch.id) ?? batch.disbursementId;
+    const disbursementId = batch.disbursementId ?? (await getDisbursementId(batch.id));
     if (!disbursementId) return { status: batch.status, receipts: batch.receipts };
     const [disbursement, rows] = await Promise.all([
       getDisbursement(disbursementId),

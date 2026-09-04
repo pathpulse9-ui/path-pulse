@@ -9,12 +9,13 @@
     "backend",
     "web"
   ],
+  "packageManager": "pnpm@11.17.0",
   "scripts": {
     "dev:backend": "npm run dev --workspace backend",
     "dev:web": "npm run dev --workspace web",
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test",
+    "typecheck": "pnpm -r --if-present run typecheck"
   },
   "engines": {
     "node": ">=20"

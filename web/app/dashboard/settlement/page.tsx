@@ -1,7 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keypair } from '@stellar/stellar-sdk';
+import {
+  Asset,
+  BASE_FEE,
+  Horizon,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk';
 import type { SettlementBatch, GroupPayoutBatch } from '@pathpulse/contract';
 import { FRIENDBOT_URL } from '../../lib/stellar';
 import { listSettlementBatches, createSettlementBatch, createGroupPayout } from '../../lib/api';
@@ -11,10 +19,23 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
 const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
-async function makeFundedDriver(): Promise<string> {
+async function makeFundedDriver(withUsdcTrustline = false): Promise<string> {
   const kp = Keypair.random();
   const res = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(kp.publicKey())}`);
   if (!res.ok) throw new Error(`Friendbot HTTP ${res.status}`);
+  if (withUsdcTrustline) {
+    const server = new Horizon.Server('https://horizon-testnet.stellar.org');
+    const acct = await server.loadAccount(kp.publicKey());
+    const tx = new TransactionBuilder(acct, {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.changeTrust({ asset: new Asset('USDC', USDC_ISSUER) }))
+      .setTimeout(60)
+      .build();
+    tx.sign(kp);
+    await server.submitTransaction(tx);
+  }
   return kp.publicKey();
 }
 
@@ -23,6 +44,8 @@ function tierClasses(tier: number) {
   if (tier === 2) return 'bg-blue-100 text-blue-700 border-blue-300';
   return 'bg-black/5 text-black/60 border-black/10';
 }
+
+const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
 export default function SettlementPage() {
   const [batches, setBatches] = useState<SettlementBatch[]>([]);
@@ -38,6 +61,8 @@ export default function SettlementPage() {
   const [groupError, setGroupError] = useState<string | null>(null);
   const [groupResult, setGroupResult] = useState<GroupPayoutBatch | null>(null);
   const [memo, setMemo] = useState('');
+  const [payoutAsset, setPayoutAsset] = useState<'XLM' | 'USDC'>('XLM');
+  const [settlementAsset, setSettlementAsset] = useState<'XLM' | 'USDC'>('XLM');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -67,13 +92,18 @@ export default function SettlementPage() {
     try {
       setStatus('Funding 3 sample driver accounts on testnet…');
       const tiers = [1, 2, 3] as const;
+      const run = Date.now().toString(36);
       const drivers = [];
       for (let i = 0; i < tiers.length; i++) {
-        const address = await makeFundedDriver();
-        drivers.push({ userId: `sample-driver-${i + 1}`, address, tier: tiers[i] });
+        const address = await makeFundedDriver(settlementAsset === 'USDC');
+        drivers.push({ userId: `sample-driver-${run}-${i + 1}`, address, tier: tiers[i] });
       }
       setStatus('Executing 50/30/20 settlement…');
-      const batch = await createSettlementBatch({ grossAmount: '100', drivers });
+      const batch = await createSettlementBatch({
+        grossAmount: settlementAsset === 'USDC' ? '1' : '100',
+        drivers,
+        asset: settlementAsset === 'USDC' ? { code: 'USDC', issuer: USDC_ISSUER } : undefined,
+      });
       setSelected(batch);
       await load();
       setStatus(null);
@@ -83,7 +113,7 @@ export default function SettlementPage() {
     } finally {
       setRunning(false);
     }
-  }, [load]);
+  }, [load, settlementAsset]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -130,6 +160,7 @@ export default function SettlementPage() {
     try {
       const batch = await createGroupPayout({
         memo: memo.trim() || undefined,
+        asset: payoutAsset === 'USDC' ? { code: 'USDC', issuer: USDC_ISSUER } : undefined,
         recipients: validRecipients.map((r) => ({
           name: r.name,
           address: r.address,
@@ -143,7 +174,7 @@ export default function SettlementPage() {
     } finally {
       setPayingGroup(false);
     }
-  }, [validRecipients, memo]);
+  }, [validRecipients, memo, payoutAsset]);
 
   return (
     <div className="space-y-6">
@@ -181,7 +212,7 @@ export default function SettlementPage() {
               <span>{recipients.length} rows</span>
               <span className="text-green-700">{validRecipients.length} verified</span>
               {invalidCount > 0 && <span className="text-red-600">{invalidCount} invalid</span>}
-              <span>Total {totalAmount.toFixed(2)} XLM</span>
+              <span>Total {totalAmount.toFixed(2)} {payoutAsset}</span>
             </div>
 
             <div className="max-h-[420px] overflow-y-auto space-y-2 pr-1">
@@ -217,7 +248,7 @@ export default function SettlementPage() {
                             : 'border-red-300 focus:border-red-400'
                         }`}
                       />
-                      <span className="text-sm text-black/50">XLM</span>
+                      <span className="text-sm text-black/50">{payoutAsset}</span>
                     </div>
                     <span
                       className={`text-xs rounded-full border px-2 py-0.5 shrink-0 ${
@@ -250,6 +281,23 @@ export default function SettlementPage() {
               />
             </label>
 
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-black/50">Payout asset</span>
+              <select
+                value={payoutAsset}
+                onChange={(e) => setPayoutAsset(e.target.value as 'XLM' | 'USDC')}
+                className="rounded-full border border-black/10 bg-white px-4 h-10 text-sm outline-none focus:border-black/30 transition-colors duration-200"
+              >
+                <option value="XLM">XLM (native)</option>
+                <option value="USDC">USDC (stablecoin)</option>
+              </select>
+              {payoutAsset === 'USDC' && (
+                <span className="text-xs text-black/40 font-mono">
+                  issuer {USDC_ISSUER.slice(0, 8)}…{USDC_ISSUER.slice(-4)} · recipients need a USDC trustline
+                </span>
+              )}
+            </label>
+
             <button
               onClick={payGroup}
               disabled={validRecipients.length === 0 || payingGroup}
@@ -257,22 +305,42 @@ export default function SettlementPage() {
             >
               {payingGroup
                 ? 'Paying…'
-                : `Pay ${validRecipients.length} recipient${validRecipients.length === 1 ? '' : 's'} (${totalAmount.toFixed(2)} XLM)`}
+                : `Pay ${validRecipients.length} recipient${validRecipients.length === 1 ? '' : 's'} (${totalAmount.toFixed(2)} ${payoutAsset})`}
             </button>
 
             {groupError && <p className="text-sm text-red-600">{groupError}</p>}
 
             {groupResult && (
-              <div className="rounded-xl border border-green-300 bg-green-50 p-4 text-sm">
-                Paid {groupResult.receipts.length} recipients · {groupResult.totalAmount} XLM ·{' '}
-                <a
-                  href={groupResult.horizonUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline hover:text-black transition-colors duration-200"
-                >
-                  view on stellar.expert
-                </a>
+              <div className="rounded-xl border border-green-300 bg-green-50 p-4 text-sm space-y-1">
+                <div>
+                  Disbursed {groupResult.receipts.length} recipients ·{' '}
+                  {groupResult.totalAmount} {groupResult.asset.code}
+                  {groupResult.asset.issuer && (
+                    <span className="text-black/40 font-mono text-xs">
+                      {' '}
+                      ({groupResult.asset.issuer.slice(0, 8)}…{groupResult.asset.issuer.slice(-4)})
+                    </span>
+                  )}
+                </div>
+                {groupResult.disbursementId && (
+                  <div className="font-mono text-xs text-black/60">
+                    SDP disbursement {groupResult.disbursementId}
+                  </div>
+                )}
+                {groupResult.horizonUrl ? (
+                  <a
+                    href={groupResult.horizonUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-black transition-colors duration-200"
+                  >
+                    view on stellar.expert
+                  </a>
+                ) : (
+                  <div className="text-xs text-black/50">
+                    Payment hashes appear on the Payouts tab once SDP submits them.
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -292,12 +360,23 @@ export default function SettlementPage() {
             >
               Refresh
             </button>
+            <select
+              value={settlementAsset}
+              onChange={(e) => setSettlementAsset(e.target.value as 'XLM' | 'USDC')}
+              disabled={running}
+              className="rounded-full border border-black/10 bg-white px-4 h-9 text-sm outline-none focus:border-black/30 transition-colors duration-200 disabled:opacity-50"
+            >
+              <option value="XLM">XLM</option>
+              <option value="USDC">USDC</option>
+            </select>
             <button
               onClick={runSample}
               disabled={running}
               className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
             >
-              {running ? 'Running…' : 'Run sample settlement (100 XLM)'}
+              {running
+                ? 'Running…'
+                : `Run sample settlement (${settlementAsset === 'USDC' ? '1 USDC' : '100 XLM'})`}
             </button>
           </div>
         </div>
@@ -336,7 +415,7 @@ export default function SettlementPage() {
                 >
                   <td className="py-2 font-mono text-xs">{b.id.replace('stl_', '').slice(0, 14)}…</td>
                   <td className="py-2 text-black/50">{new Date(b.createdAt).toLocaleTimeString()}</td>
-                  <td className="py-2">{b.grossAmount} XLM</td>
+                  <td className="py-2">{b.grossAmount} {b.asset.code}</td>
                   <td className="py-2">{b.driverPayouts.length}</td>
                   <td className="py-2 font-mono text-xs">
                     <a
@@ -365,17 +444,17 @@ export default function SettlementPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="rounded-2xl bg-white p-6">
               <div className="text-xs text-black/50">Authorities · 50%</div>
-              <div className="text-xl font-medium mt-1 text-black">{selected.split.authorities} XLM</div>
+              <div className="text-xl font-medium mt-1 text-black">{selected.split.authorities} {selected.asset.code}</div>
               <div className="text-xs text-black/40 mt-1 font-mono">{short(selected.authoritiesAddress)}</div>
             </div>
             <div className="rounded-2xl bg-white p-6">
               <div className="text-xs text-black/50">Driver Rewards · 30%</div>
-              <div className="text-xl font-medium mt-1 text-green-600">{selected.split.driverRewards} XLM</div>
+              <div className="text-xl font-medium mt-1 text-green-600">{selected.split.driverRewards} {selected.asset.code}</div>
               <div className="text-xs text-black/40 mt-1">{selected.driverPayouts.length} drivers</div>
             </div>
             <div className="rounded-2xl bg-white p-6">
               <div className="text-xs text-black/50">Treasury · 20%</div>
-              <div className="text-xl font-medium mt-1 text-black">{selected.split.treasury} XLM</div>
+              <div className="text-xl font-medium mt-1 text-black">{selected.split.treasury} {selected.asset.code}</div>
               <div className="text-xs text-black/40 mt-1 font-mono">{short(selected.treasuryAddress)}</div>
             </div>
           </div>
@@ -424,7 +503,7 @@ export default function SettlementPage() {
                       </span>
                     </td>
                     <td className="py-2">{d.multiplier.toFixed(1)}×</td>
-                    <td className="py-2">{d.amount} XLM</td>
+                    <td className="py-2">{d.amount} {selected.asset.code}</td>
                   </tr>
                 ))}
               </tbody>
