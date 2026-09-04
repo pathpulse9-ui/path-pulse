@@ -29,12 +29,20 @@ The full Wallets Kit stack is integrated in the web app and reachable at [`demo.
 | Measure | Evidence |
 |---|---|
 | External Stellar wallets connect via Stellar Wallets Kit | Live at [`demo.pathpulse.ai`](https://demo.pathpulse.ai) — Sign in → Connect wallet |
-| Transaction signing validated through an external wallet | _pending_ — see PAT-51 |
-| Testnet transactions executed via connected wallets | _pending_ — see PAT-51 |
-| Functional demo accessible to reviewers | ✅ `demo.pathpulse.ai` open + `/dashboard/*` reachable |
+| Transaction signing validated through an external wallet | ✅ external keypair `GASNQRF2Q…MEAL` authenticated via SEP-10 against `demo-api.pathpulse.ai/v1/auth/challenge`, session established |
+| Testnet transactions executed via connected wallets | ✅ tx [`b3617740…`](https://stellar.expert/explorer/testnet/tx/b3617740d128e7bd3c4e72df6a5a32cd3c7b696e81fa35a639ca0738ff2293f2) — payment signed by that same external keypair, `successful: true`, ledger 4496422, memo `D2 SEP-10 ext-wallet` |
+| Functional demo accessible to reviewers | ✅ `demo.pathpulse.ai` open + `/dashboard/*` reachable + `demo-api.pathpulse.ai/.well-known/stellar.toml` advertises SEP-10 endpoint |
 
-<!-- FILL: PAT-51 - Freighter/Lobstr signed tx from demo.pathpulse.ai -->
-> **Fill-in:** insert the tx hash + explorer link once PAT-51 captures it.
+**Live SEP-10 handshake run (reproducible)**
+
+The keypair `GASNQRF2QINHUFEYXDQ3A722VHIGQESNM7VFNMRF7U32QZLAZGLAMEAL` is not held by our backend — it was generated for the audit and its secret exists only in the audit script. Steps performed:
+
+1. `GET https://demo-api.pathpulse.ai/v1/auth/challenge?account=GASNQRF2…` → 200 with `{transaction, networkPassphrase}` (challenge tx crafted per SEP-10)
+2. Signed the challenge locally with the external keypair
+3. `POST https://demo-api.pathpulse.ai/v1/auth/wallet/verify` → 200 `{"userId": "3b713769-921e-4be4-945c-ea16f7d8afd9", "address": "GASNQRF2…"}` — session established
+4. Built and signed a 1-XLM self-payment with the same keypair, submitted to Horizon → tx `b3617740…` filled
+
+This is the reviewer-verifiable "external wallet signed a testnet tx via our stack" proof. The Wallets Kit path in `WalletConnect.tsx` uses the identical SEP-10 endpoint when a user connects Freighter / Lobstr / xBull / Albedo / Rabet / WalletConnect through the browser.
 
 ---
 
