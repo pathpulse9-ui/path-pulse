@@ -31,10 +31,7 @@ struct AppRootView: View {
             }
         }
         .background(PathPulseColor.background.ignoresSafeArea())
-        .task {
-            // await state.loadInitialSession()  // PAT-58 wires AuthRepository
-            state.checkingSession = false
-        }
+        .task { await state.loadInitialSession() }
     }
 }
 
@@ -45,14 +42,33 @@ final class AppState: ObservableObject {
     @Published var showLanding: Bool = true
     @Published var user: SessionUser? = nil
     @Published var selectedTab: AppTab = .dashboard
-}
 
-/// Placeholder SessionUser — replaced by the real `Network/Models.swift` in PAT-58.
-struct SessionUser: Equatable {
-    let userId: String
-    let method: String
-    let email: String?
-    let address: String?
+    private let auth: AuthRepository
+
+    init(auth: AuthRepository = AuthRepository()) {
+        self.auth = auth
+    }
+
+    /// Called on first render — probes `/v1/auth/me` and hides the landing
+    /// screen if a session cookie is already valid. Failures are non-fatal;
+    /// the user just sees the landing screen and can sign in fresh.
+    func loadInitialSession() async {
+        defer { checkingSession = false }
+        do {
+            if let existing = try await auth.me() {
+                user = existing
+                showLanding = false
+            }
+        } catch {
+            // Unauthenticated / network hiccup — fall through to landing.
+        }
+    }
+
+    func signOut() async {
+        await auth.logout()
+        user = nil
+        showLanding = true
+    }
 }
 
 /// The 5 tabs (Android parity, `PpTab` in shell/AppShell.kt).
