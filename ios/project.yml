@@ -20,6 +20,11 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
+packages:
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: "7.1.0"
+
 targets:
   PathPulse:
     type: application
@@ -29,6 +34,11 @@ targets:
       - path: PathPulse
         excludes:
           - "**/.DS_Store"
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: GoogleSignIn
+        product: GoogleSignInSwift
     resources:
       - path: PathPulse/Resources
         optional: true

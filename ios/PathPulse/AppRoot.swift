@@ -23,14 +23,11 @@ struct AppRootView: View {
             } else if state.showLanding {
                 LandingView(onGetStarted: { state.showLanding = false })
             } else {
-                // SignInView(state: state)  // PAT-59 will wire this
-                PlaceholderView(
-                    title: "Sign in",
-                    message: "SignInView with Google Sign-In lands in PAT-59."
-                )
+                SignInView()
             }
         }
         .background(PathPulseColor.background.ignoresSafeArea())
+        .environmentObject(state)
         .task { await state.loadInitialSession() }
     }
 }
