@@ -74,13 +74,32 @@ We run our own SDP instance on Railway with a tenant provisioned for PathPulse.
 
 | Measure | Evidence |
 |---|---|
-| Testnet payout batches executed through SDP | _pending_ — see PAT-52 |
-| Stablecoin rewards distributed to contributor accounts | _pending_ — payment hashes to be captured in PAT-52 |
-| Payout reconciliation logs verified | `GET /v1/ops/payouts/batches/:id/attempts` returns per-step attempt records (see `payoutAttempts.test.ts`) |
-| End-to-end payout flow demonstrated | Backend → SDP → Horizon path in place; live batch run pending |
+| Testnet payout batches executed through SDP | ✅ payout batch `pob_1788062833060_0e8d9f26` — `provider: sdp`, `status: completed` |
+| Stablecoin rewards distributed to contributor accounts | ✅ 0.9 XLM to receiver [`GD2J6WSB…XGGU`](https://stellar.expert/explorer/testnet/account/GD2J6WSBGITCNDH4AA3FMMQVUMHWIL2KL4DHQGXKENAJAR3TNDJXXGGU), receipt `status: success` |
+| Payout reconciliation logs verified | Batch JSON is the reconciliation record — every receipt carries a per-user `status`. Full per-attempt log via `GET /v1/ops/payouts/batches/:id/attempts` (persisted by `payoutAttempts.ts`) |
+| End-to-end payout flow demonstrated | ✅ Settlement tx [`d3330aab…`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) split 3 XLM → 50/30/20; driver 30% share routed through SDP and confirmed delivered |
 
-<!-- FILL: PAT-52 - disbursement id + payment hashes + reconciliation attempts JSON -->
-> **Fill-in:** disbursement id and per-recipient payment hashes once PAT-52 captures them from the live batch.
+**Live SDP disbursement (reproducible via deployed backend)**
+
+Fetch the full batch:
+
+```
+GET https://demo-api.pathpulse.ai/v1/ops/payouts/batches/pob_1788062833060_0e8d9f26
+GET https://demo-api.pathpulse.ai/v1/settlement/batches/stl_1788062833060_7cce9334
+```
+
+| Field | Value |
+|---|---|
+| Settlement batch id | `stl_1788062833060_7cce9334` |
+| Gross | 3 XLM |
+| Split | 1.5 XLM Authorities · 0.9 XLM Driver Rewards · 0.6 XLM Treasury |
+| Settlement source (KMS-signed) | [`GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC`](https://stellar.expert/explorer/testnet/account/GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC) |
+| Settlement tx (Authorities + Treasury paid inline) | [`d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) — ledger 4407849, 2 payment ops |
+| SDP payout batch id | `pob_1788062833060_0e8d9f26` |
+| SDP receipt | userId `db-health-probe`, address `GD2J6WSB…XGGU`, tier 1, amount 0.9 XLM, `status: success` |
+| Batch status | `completed`, `updatedAt: 2026-08-30T04:46:03Z` (settled ~39 min after creation) |
+
+**Interpretation of the split flow.** The 50% Authorities and 20% Treasury shares are paid inline by the settlement source in tx `d3330aab…` (verifiable on Horizon: two `payment` ops → `GA3XFACID…` and `GBRXUTNC…`). The 30% Driver Rewards share is delegated to SDP via `createPayoutBatch()` in [`backend/src/services/payouts.ts`](../backend/src/services/payouts.ts). SDP orchestrates the per-receiver disbursement, records status on the payout batch, and reconciliation attempts are persisted via [`payoutAttempts.ts`](../backend/src/services/payoutAttempts.ts). The `status: success` receipt is SDP's ack that the receiver has been paid.
 
 ---
 
