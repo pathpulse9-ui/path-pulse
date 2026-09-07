@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Keypair, WebAuth } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
+import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 
 const CHALLENGE_TIMEOUT_SECONDS = 5 * 60;
@@ -21,10 +22,21 @@ interface WalletUser {
   address: string;
 }
 
-const usersByAddress = new Map<string, WalletUser>();
-
 export function serverSigningKey(): string {
   return serverKeypair.publicKey();
+}
+
+async function upsertWalletUser(address: string): Promise<WalletUser> {
+  await db().query(
+    'insert into wallet_users (address, user_id) values ($1, $2) on conflict (address) do nothing',
+    [address, randomUUID()],
+  );
+  const r = await db().query<{ user_id: string }>(
+    'select user_id from wallet_users where address = $1',
+    [address],
+  );
+  if (!r.rows[0]) throw new Error(`Failed to persist wallet user for ${address}`);
+  return { userId: r.rows[0].user_id, address };
 }
 
 export function buildChallenge(account: string): { transaction: string; networkPassphrase: string } {
@@ -39,7 +51,7 @@ export function buildChallenge(account: string): { transaction: string; networkP
   return { transaction, networkPassphrase: env.networkPassphrase };
 }
 
-export function verifyChallenge(signedTransaction: string): WalletUser {
+export async function verifyChallenge(signedTransaction: string): Promise<WalletUser> {
   const { clientAccountID } = WebAuth.readChallengeTx(
     signedTransaction,
     serverKeypair.publicKey(),
@@ -57,10 +69,5 @@ export function verifyChallenge(signedTransaction: string): WalletUser {
     env.sep10.homeDomain,
   );
 
-  let user = usersByAddress.get(clientAccountID);
-  if (!user) {
-    user = { userId: randomUUID(), address: clientAccountID };
-    usersByAddress.set(clientAccountID, user);
-  }
-  return user;
+  return upsertWalletUser(clientAccountID);
 }

@@ -4,14 +4,16 @@ import type {
   CreateGroupPayoutRequest,
   GroupPayoutBatch,
   GroupPayoutBatchPage,
+  GroupPayoutReceipt,
   AssetRef,
 } from '@pathpulse/contract';
 import { env } from '../config/env.js';
+import { db } from '../db/client.js';
 import { toStroops, fromStroops } from './settlement.js';
 import { createPayoutBatch } from '../services/payouts.js';
 
 /**
- * Flat bulk payout (D9 — CSV/Excel group payment). Unlike the 50/30/20
+ * Flat bulk payout (CSV/Excel group payment). Unlike the 50/30/20
  * settlement engine, every recipient is paid the exact amount supplied —
  * no tier multiplier, no split. Same dev-tier managed source pattern as
  * the settlement engine: funded via Friendbot, testnet only.
@@ -32,7 +34,56 @@ function assetOf(ref?: AssetRef): { asset: Asset; ref: AssetRef } {
   return { asset: new Asset(ref.code, ref.issuer), ref };
 }
 
-const batches: GroupPayoutBatch[] = [];
+interface GroupPayoutRow {
+  id: string;
+  payout_batch_id: string | null;
+  disbursement_id: string | null;
+  asset_code: string;
+  asset_issuer: string | null;
+  total_amount: string;
+  source_address: string | null;
+  memo: string | null;
+  network: string;
+  receipts: GroupPayoutReceipt[] | null;
+  created_at: string;
+}
+
+function rowToGroupBatch(r: GroupPayoutRow): GroupPayoutBatch {
+  return {
+    id: r.id,
+    createdAt: new Date(r.created_at).toISOString(),
+    network: r.network as GroupPayoutBatch['network'],
+    asset: r.asset_issuer ? { code: r.asset_code, issuer: r.asset_issuer } : { code: r.asset_code },
+    totalAmount: r.total_amount,
+    sourceAddress: r.source_address ?? '',
+    memo: r.memo ?? undefined,
+    payoutBatchId: r.payout_batch_id ?? undefined,
+    disbursementId: r.disbursement_id ?? undefined,
+    receipts: r.receipts ?? [],
+  };
+}
+
+async function insertGroupBatch(batch: GroupPayoutBatch): Promise<void> {
+  await db().query(
+    `insert into group_payout_batches
+       (id, payout_batch_id, disbursement_id, asset_code, asset_issuer, total_amount,
+        source_address, memo, network, receipts, created_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
+      batch.id,
+      batch.payoutBatchId ?? null,
+      batch.disbursementId ?? null,
+      batch.asset.code,
+      batch.asset.issuer ?? null,
+      batch.totalAmount,
+      batch.sourceAddress || null,
+      batch.memo ?? null,
+      batch.network,
+      JSON.stringify(batch.receipts),
+      batch.createdAt,
+    ],
+  );
+}
 
 export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise<GroupPayoutBatch> {
   if (!req.recipients?.length) throw httpError('recipients must be a non-empty array', 400, 'ValidationError');
@@ -76,20 +127,29 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
       remark: r.remark?.trim() || undefined,
     })),
   };
-  batches.unshift(batch);
+  await insertGroupBatch(batch);
   return batch;
 }
 
-export function listGroupPayoutBatches(cursor?: string, limit = 50): GroupPayoutBatchPage {
+export async function listGroupPayoutBatches(cursor?: string, limit = 50): Promise<GroupPayoutBatchPage> {
   const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
   const size = Math.min(Math.max(1, limit), 100);
-  const items = batches.slice(start, start + size);
-  const next = start + size < batches.length ? String(start + size) : null;
-  return { items, nextCursor: next };
+  const [rows, count] = await Promise.all([
+    db().query<GroupPayoutRow>(
+      'select * from group_payout_batches order by created_at desc, id desc limit $1 offset $2',
+      [size, start],
+    ),
+    db().query<{ n: string }>('select count(*)::text as n from group_payout_batches'),
+  ]);
+  const total = Number(count.rows[0].n);
+  return {
+    items: rows.rows.map(rowToGroupBatch),
+    nextCursor: start + size < total ? String(start + size) : null,
+  };
 }
 
-export function getGroupPayoutBatch(id: string): GroupPayoutBatch {
-  const b = batches.find((x) => x.id === id);
-  if (!b) throw httpError(`Group payout batch ${id} not found`, 404, 'NotFound');
-  return b;
+export async function getGroupPayoutBatch(id: string): Promise<GroupPayoutBatch> {
+  const r = await db().query<GroupPayoutRow>('select * from group_payout_batches where id = $1', [id]);
+  if (!r.rows[0]) throw httpError(`Group payout batch ${id} not found`, 404, 'NotFound');
+  return rowToGroupBatch(r.rows[0]);
 }

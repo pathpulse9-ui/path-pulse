@@ -153,7 +153,7 @@ router.get('/v1/auth/challenge', async (req, res, next) => {
 router.post('/v1/auth/wallet/verify', async (req, res, next) => {
   try {
     const { transaction } = req.body as WalletVerifyRequest;
-    const { userId, address } = verifyChallenge(transaction);
+    const { userId, address } = await verifyChallenge(transaction);
     setSessionCookie(res, { userId, method: 'wallet', address });
     const body: WalletVerifyResponse = { userId, address };
     res.json(body);
@@ -261,19 +261,19 @@ router.post('/v1/settlement/group-payouts', async (req, res, next) => {
   }
 });
 
-router.get('/v1/settlement/group-payouts', (req, res, next) => {
+router.get('/v1/settlement/group-payouts', async (req, res, next) => {
   try {
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    res.json(listGroupPayoutBatches(cursor, limit));
+    res.json(await listGroupPayoutBatches(cursor, limit));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/settlement/group-payouts/:id', (req, res, next) => {
+router.get('/v1/settlement/group-payouts/:id', async (req, res, next) => {
   try {
-    res.json(getGroupPayoutBatch(req.params.id));
+    res.json(await getGroupPayoutBatch(req.params.id));
   } catch (e) {
     next(e);
   }

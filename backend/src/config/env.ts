@@ -5,10 +5,8 @@ import { existsSync } from 'node:fs';
 import { Networks } from '@stellar/stellar-sdk';
 import type { StellarNetwork } from '@pathpulse/contract';
 
-// The shared .env lives at the monorepo root, but the backend runs with cwd=backend/.
-// Load the root .env explicitly, falling back to cwd for CI/prod env injection.
 const here = dirname(fileURLToPath(import.meta.url));
-const rootEnv = resolve(here, '../../../.env'); // backend/src/config → repo root
+const rootEnv = resolve(here, '../../../.env');
 loadEnv(existsSync(rootEnv) ? { path: rootEnv } : {});
 
 function req(name: string, fallback?: string): string {
@@ -71,7 +69,7 @@ export const env = {
   keyEncryptionKey: process.env.KEY_ENCRYPTION_KEY ?? '',
   keyEncryptionKeyCiphertext: process.env.KEY_ENCRYPTION_KEY_CIPHERTEXT ?? '',
 
-  // Aquarius AMM routing (D5). Testnet only — mainnet pools are gated behind Phase 5.
+  // Aquarius AMM routing (D5). Testnet only
   routing: {
     sorobanRpcUrl: process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org',
     aquaApiUrl: process.env.AQUA_API_URL ?? 'https://amm-api-testnet.aqua.network/api/external/v2',
@@ -97,22 +95,15 @@ export const env = {
   },
 
   // Ramp Network off-ramp (D4). Widget/SDK-based: we build a signed off-ramp widget
-  // URL (enabledFlows=OFFRAMP) and receive ECDSA-signed V3 webhooks. All optional —
-  // absent an API key ⇒ in-process sandbox stub.
+
   ramp: {
     apiKey: process.env.RAMP_API_KEY ?? '',
-    // Hosted widget origin (staging: app.demo.ramp.network; prod: app.ramp.network).
     widgetUrl: process.env.RAMP_WIDGET_URL ?? 'https://app.demo.ramp.network',
-    // Ramp's ECDSA public key (PEM) used to verify webhook X-Body-Signature.
     webhookPublicKey: (process.env.RAMP_WEBHOOK_PUBLIC_KEY ?? '').replace(/\\n/g, '\n'),
     hostAppName: process.env.RAMP_HOST_APP_NAME ?? 'PathPulse',
-    // Corridor. Ramp off-ramps XLM on Stellar (Stellar-USDC not in the off-ramp list);
-    // INR is supported. Confirm live pairs via Ramp's /offramp/assets.
     crypto: process.env.OFFRAMP_CRYPTO ?? 'XLM',
-    // Ramp asset id is CHAIN_SYMBOL, e.g. "XLM_XLM".
     assetId: process.env.OFFRAMP_ASSET_ID ?? 'XLM_XLM',
     fiat: process.env.OFFRAMP_FIAT ?? 'INR',
-    // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live: Ramp quote).
     indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 30),
   },
 
@@ -172,7 +163,6 @@ export const env = {
 /** Live Ramp requires a host API key; otherwise the sandbox stub runs. */
 export const rampLive = !!process.env.RAMP_API_KEY;
 
-/** Live Carret requires an API-KEY + accountId; otherwise the sandbox stub runs. */
 export const carretLive = !!process.env.CARRET_API_KEY && !!process.env.CARRET_ACCOUNT_ID;
 
 export const sdpLive = !!process.env.SDP_API_KEY && !!process.env.SDP_WALLET_ID && !!process.env.SDP_ASSET_ID;
