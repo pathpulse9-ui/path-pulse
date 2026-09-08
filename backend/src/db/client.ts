@@ -22,12 +22,39 @@ create table if not exists users (
   created_at timestamptz not null default now()
 );
 
+create table if not exists wallet_users (
+  address text primary key,
+  user_id text not null unique,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists payout_batches (
   id text primary key,
   disbursement_id text,
   settlement_batch_id text,
   asset_code text not null,
   asset_issuer text,
+  created_at timestamptz not null default now()
+);
+
+alter table payout_batches add column if not exists provider text;
+alter table payout_batches add column if not exists sandbox boolean;
+alter table payout_batches add column if not exists status text;
+alter table payout_batches add column if not exists total_amount text;
+alter table payout_batches add column if not exists receipts jsonb;
+alter table payout_batches add column if not exists updated_at timestamptz;
+
+create table if not exists group_payout_batches (
+  id text primary key,
+  payout_batch_id text,
+  disbursement_id text,
+  asset_code text not null,
+  asset_issuer text,
+  total_amount text not null,
+  source_address text,
+  memo text,
+  network text not null,
+  receipts jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()
 );
 
