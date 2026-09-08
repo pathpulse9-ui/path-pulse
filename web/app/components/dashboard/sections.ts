@@ -1,4 +1,13 @@
-import { LayoutGrid, ArrowLeftRight, Award, Banknote, Landmark, Send, User } from 'lucide-react';
+import {
+  LayoutGrid,
+  ArrowLeftRight,
+  Award,
+  Banknote,
+  Landmark,
+  Send,
+  ShieldCheck,
+  User,
+} from 'lucide-react';
 
 export const SECTIONS = [
   {
@@ -27,6 +36,13 @@ export const SECTIONS = [
     icon: Send,
     description:
       'Institutional disbursement through the Stellar Disbursement Platform — batch orchestration, per-recipient status and on-chain reconciliation.',
+  },
+  {
+    label: 'KYC',
+    href: '/dashboard/kyc',
+    icon: ShieldCheck,
+    description:
+      'Carret Infra driver KYC — PAN, Aadhaar XML and selfie face-match. Verifies against Indian govt registries.',
   },
   {
     label: 'Off-ramp',

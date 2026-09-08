@@ -402,3 +402,196 @@ export const carretMocks = {
     return 'filled';
   },
 };
+
+// ── KYC (Carret Infra v2.0 — user-onboarding endpoints) ───────────────
+//
+// KYC lives under /api/v2.0/taas/ (NOT /v1/ like everything else). We derive
+// the v2 base URL from the configured v1 base by string swap — same host,
+// same auth header. Every KYC call needs an accountId that's already
+// registered but still `kyc_status: pending`.
+
+/** Compute the v2.0 base URL from the configured v1 one (same host). */
+function carretV2Base(): string {
+  return env.carret.baseUrl.replace(/\/v1\//, '/v2.0/').replace(/\/+$/, '');
+}
+
+export interface CarretKycSession {
+  session_id: string;
+  status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  initiated_at: string;
+}
+
+export interface CarretKycInitiateResponse {
+  success: boolean;
+  message: string;
+  session: CarretKycSession;
+}
+
+export type CarretKycDocType =
+  | 'pan'
+  | 'aadhaar'
+  | 'voter_id'
+  | 'passport'
+  | 'driving_license'
+  | 'selfie';
+
+export interface CarretKycDocument {
+  document_type: CarretKycDocType;
+  status?: string;
+  document_number?: string;
+  name?: string;
+  dob?: string;
+  surname_from_passport?: string;
+  file_number?: string;
+  date_of_issue?: string;
+  [k: string]: unknown;
+}
+
+export interface CarretKycStatusResponse {
+  kyc_session?: string;
+  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  ovd_documents?: CarretKycDocument[];
+  [k: string]: unknown;
+}
+
+async function carretV2Fetch<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  if (!carretLive) throw new Error('carretV2Fetch called without live credentials');
+  const url = carretV2Base() + path;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'API-KEY': env.carret.apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Carret ${method} ${path} failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as T;
+}
+
+/** POST /kyc/initiate/ — creates a session for the given account. */
+export async function initiateKyc(accountId: number | string): Promise<CarretKycInitiateResponse> {
+  return carretV2Fetch<CarretKycInitiateResponse>('POST', '/kyc/initiate/', {
+    account_id: Number(accountId),
+  });
+}
+
+/**
+ * POST /kyc/document/submit/ — number-based document (PAN, Voter ID, Passport,
+ * Driving License). Aadhaar is XML-file-based, use uploadKycFile for that.
+ */
+export async function submitKycDocument(params: {
+  kycSessionId: string;
+  document: CarretKycDocument;
+}): Promise<unknown> {
+  return carretV2Fetch<unknown>('POST', '/kyc/document/submit/', {
+    kyc_session_id: params.kycSessionId,
+    document: params.document,
+  });
+}
+
+/**
+ * POST /kyc/document_file/submit/ — multipart upload for Aadhaar XML,
+ * selfie, or scanned images. Uses global FormData/Blob (Node 18+).
+ * `docBack` is optional; used for double-sided IDs like Aadhaar images.
+ */
+export async function uploadKycFile(params: {
+  kycSessionId: string;
+  docType: CarretKycDocType;
+  fileType: 'image' | 'xml';
+  filename: string;
+  fileBuffer: Buffer;
+  contentType?: string;
+  docBack?: { filename: string; fileBuffer: Buffer; contentType?: string };
+}): Promise<unknown> {
+  if (!carretLive) throw new Error('uploadKycFile called without live credentials');
+  const form = new FormData();
+  form.append('kyc_session', params.kycSessionId);
+  form.append('doc_type', params.docType);
+  form.append('file_type', params.fileType);
+  form.append(
+    'doc_front',
+    new Blob([new Uint8Array(params.fileBuffer)], {
+      type: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
+    }),
+    params.filename,
+  );
+  if (params.docBack) {
+    form.append(
+      'doc_back',
+      new Blob([new Uint8Array(params.docBack.fileBuffer)], {
+        type: params.docBack.contentType ?? 'application/octet-stream',
+      }),
+      params.docBack.filename,
+    );
+  }
+  const url = carretV2Base() + '/kyc/document_file/submit/';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'API-KEY': env.carret.apiKey,
+      // Do NOT set Content-Type — fetch fills it with the multipart boundary.
+      Accept: 'application/json',
+    },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Carret POST /kyc/document_file/submit/ failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+/** GET /kyc/{account_id}/ — poll for status transitions. */
+export async function getKycStatus(accountId: number | string): Promise<CarretKycStatusResponse> {
+  return carretV2Fetch<CarretKycStatusResponse>('GET', `/kyc/${accountId}/`);
+}
+
+/** POST /kyc/cleanup/ — wipes session + docs for a failed KYC attempt. */
+export async function cleanupKyc(accountId: number | string): Promise<unknown> {
+  return carretV2Fetch<unknown>('POST', '/kyc/cleanup/', { account_id: Number(accountId) });
+}
+
+// ── Sub-account creation (v1) ─────────────────────────────────────────
+
+export interface SubAccountInput {
+  email: string;
+  phone_number: string;
+  first_name: string;
+  last_name: string;
+  user_ip_address: string;
+  annual_income: string;
+  is_email_verified: boolean;
+  is_mobile_number_verified: boolean;
+  country: string;
+  gender: 'male' | 'female' | 'other';
+  occupation: string;
+  is_politicaly_exposed_person: boolean;
+  dob: string; // dd/mm/yyyy
+}
+
+export interface CarretSubAccount {
+  id: number;
+  reference_id: string;
+  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  aml_status: string;
+  country: string;
+  phone_number: string;
+  user: { id: number; email: string; first_name: string; last_name: string };
+  banks?: unknown[];
+  wallets?: unknown[];
+  [k: string]: unknown;
+}
+
+/** POST /register/ — creates a sub-account under the main API-KEY. Irreversible (no DELETE endpoint). */
+export async function createSubAccount(input: SubAccountInput): Promise<CarretSubAccount> {
+  return carretFetch<CarretSubAccount>('POST', '/register/', { body: input });
+}
