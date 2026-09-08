@@ -175,6 +175,7 @@ export interface SettlementBatch {
   driverPayouts: SettlementDriverPayout[];
   sourceAddress: string;
   authoritiesAddress: string;
+  driverPoolAddress: string;
   treasuryAddress: string;
   txHash: string;
   horizonUrl: string;

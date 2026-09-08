@@ -16,6 +16,7 @@ import { env } from '../config/env.js';
 import {
   listDistributionAccounts,
   getTreasuryConfig,
+  buildTreasuryMultisigTx,
 } from '../stellar/accounts.js';
 import { ensureAccountForEmail } from '../services/account.js';
 import { verifyGoogleIdToken } from '../services/googleAuth.js';
@@ -125,6 +126,20 @@ router.get('/v1/accounts/distribution', async (_req, res, next) => {
 router.get('/v1/treasury/config', async (_req, res, next) => {
   try {
     res.json(await getTreasuryConfig());
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Build (but do not sign or submit) the multisig-configuration transaction for
+ * the treasury account. Human-gated by design — a signatory reviews the XDR in
+ * Stellar Laboratory and signs it out-of-band. The backend never auto-signs
+ * treasury reconfiguration.
+ */
+router.post('/v1/treasury/multisig/build', async (_req, res, next) => {
+  try {
+    res.json(await buildTreasuryMultisigTx());
   } catch (e) {
     next(e);
   }

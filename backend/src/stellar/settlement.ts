@@ -94,9 +94,14 @@ function assetOf(ref?: AssetRef): { asset: Asset; ref: AssetRef } {
 export async function executeSettlementBatch(req: CreateSettlementBatchRequest): Promise<SettlementBatch> {
   if (!req.drivers?.length) throw httpError('drivers must be a non-empty array', 400, 'ValidationError');
   const authoritiesAddress = env.distribution.partnerRevenue;
+  const driverPoolAddress = env.distribution.driverPool;
   const treasuryAddress = env.distribution.treasury;
-  if (!authoritiesAddress || !treasuryAddress) {
-    throw httpError('Distribution accounts not configured (PARTNER_REVENUE_PUBLIC / TREASURY_PUBLIC)', 500, 'ConfigError');
+  if (!authoritiesAddress || !driverPoolAddress || !treasuryAddress) {
+    throw httpError(
+      'Distribution accounts not configured (PARTNER_REVENUE_PUBLIC / DRIVER_POOL_PUBLIC / TREASURY_PUBLIC)',
+      500,
+      'ConfigError',
+    );
   }
 
   // Dev-tier settlement source (testnet, backend-controlled). Provision + fund once.
@@ -118,8 +123,15 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     fee: BASE_FEE,
     networkPassphrase: env.networkPassphrase,
   });
+  // Deterministic 50 / 30 / 20 fan-out — three payment ops in one atomic tx, so
+  // the split is enforced on-chain (visible in Horizon) rather than only in
+  // application code. The driver_pool account then acts as the on-chain
+  // incentive-pool custody, from which SDP fans out to individual drivers by
+  // tier weight.
   if (split.authorities > 0n)
     builder.addOperation(Operation.payment({ destination: authoritiesAddress, asset, amount: fromStroops(split.authorities) }));
+  if (split.driverRewards > 0n)
+    builder.addOperation(Operation.payment({ destination: driverPoolAddress, asset, amount: fromStroops(split.driverRewards) }));
   if (split.treasury > 0n)
     builder.addOperation(Operation.payment({ destination: treasuryAddress, asset, amount: fromStroops(split.treasury) }));
 
@@ -164,6 +176,7 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     driverPayouts,
     sourceAddress: source.address,
     authoritiesAddress,
+    driverPoolAddress,
     treasuryAddress,
     txHash: res.hash,
     horizonUrl: horizonTxUrl(res.hash),
