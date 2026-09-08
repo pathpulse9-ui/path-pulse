@@ -105,6 +105,8 @@ GET https://demo-api.pathpulse.ai/v1/settlement/batches/stl_1788062833060_7cce93
 
 ## D4 — Fiat Off-Ramp (Carret Infra)
 
+> **Provider substitution — Mercuryo → Carret Infra.** The Tranche 2 plan named Mercuryo as the fiat off-ramp provider. During integration we discovered Mercuryo does not support Stellar-native USDC withdrawals to INR corridors (their Stellar SEP-24 endpoint covers XLM only, and the INR corridor is not offered). **Carret Infra** is a regulated Indian VASP that (a) handles KYC/AML under Indian FIU-IND registration, (b) accepts USDC on Stellar as source, (c) settles to Indian bank accounts via IMPS/NEFT, and (d) exposes an OffRampProvider-shaped API compatible with our SEP-24-style flow. The abstraction layer preserves optionality — the `ramp` provider is still wired for the Ramp Network sandbox and any additional providers (including Mercuryo, should they add USDC-on-Stellar → INR support) can be added without touching the settlement engine.
+
 **What's live**
 
 Carret Infra integration is fully proven end-to-end against `dev.carret.in`. Corridor: **USDC on Stellar → INR** to a registered bank via bank_transfer.

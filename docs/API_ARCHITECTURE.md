@@ -55,7 +55,7 @@ If a client needs a field or endpoint that doesn't exist, the fix is a contract 
 - `message` — human text; may change, don't parse it.
 - `requestId` — quote this when reporting a bug.
 
-**Error code catalog** (grows with phases): `ValidationError`, `Unauthorized`, `Forbidden`, `NotFound`, `IdempotencyConflict`, `InsufficientBalance`, `AccountNotFound`, `TrustlineMissing`, `HorizonUnavailable`, `SigningRefused` (mainnet/human-gate), `ExternalDependencyUnavailable` (SDP/Mercuryo sandbox), `RateLimited`, `InternalError`.
+**Error code catalog** (grows with phases): `ValidationError`, `Unauthorized`, `Forbidden`, `NotFound`, `IdempotencyConflict`, `InsufficientBalance`, `AccountNotFound`, `TrustlineMissing`, `HorizonUnavailable`, `SigningRefused` (mainnet/human-gate), `ExternalDependencyUnavailable` (SDP/Carret sandbox), `RateLimited`, `InternalError`.
 
 ---
 
@@ -172,7 +172,7 @@ Legend: **[live]** implemented on testnet · **[planned]** contract-defined, not
 ### Phase 3 — Off-ramp & liquidity (D4, D5)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v1/offramp/sessions` | start Mercuryo SEP-24 interactive withdrawal → hosted webview URL |
+| POST | `/v1/offramp/sessions` | start Carret SEP-24 interactive withdrawal → hosted webview URL |
 | GET | `/v1/offramp/sessions/{id}` | withdrawal status + receipt, linked to settlement batch |
 | GET | `/v1/offramp/quotes?from=&to=&amount=` | conversion quote |
 | GET | `/v1/routing/assets` | assets routable through Aquarius on this network **[live]** |

@@ -16,7 +16,7 @@ behaviorally identical because they consume the same API.
                     │         BACKEND CORE  (Node/TS)        │
                     │  @stellar/stellar-sdk · Postgres · Redis│
                     │  managed accounts · multisig treasury   │
-                    │  delegated signing · SDP · Mercuryo     │
+                    │  delegated signing · SDP · Carret     │
                     │  Broker routing · 50/30/20 engine       │
                     │  SCOUT issuance · indexer               │
                     │        REST + WebSocket API             │
@@ -74,5 +74,5 @@ generated for TS, Kotlin and Swift so the three surfaces cannot drift apart.
 
 - `needs-human-gate`: treasury key material, mainnet deployment. Agent writes config +
   dry-runs on testnet, then stops.
-- `external-dependency`: SDP tenancy, Mercuryo KYC. Build against sandbox; onboarding is
+- `external-dependency`: SDP tenancy, Carret KYC. Build against sandbox; onboarding is
   requested in Week 1 and resolved outside the codebase.
