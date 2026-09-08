@@ -199,7 +199,8 @@ The tx envelope is a Soroban `InvokeHostFunction` calling the Aquarius router co
 
 **What's live**
 
-- **50 / 30 / 20 split** enforced deterministically in integer stroops via [`backend/src/stellar/settlement.ts`](../backend/src/stellar/settlement.ts). Sum of parts equals gross by construction (rounding remainder assigned to first driver).
+- **50 / 30 / 20 split** enforced deterministically in integer stroops via [`backend/src/stellar/settlement.ts`](../backend/src/stellar/settlement.ts). Sum of parts equals gross by construction (rounding remainder assigned to first driver). **Commit `246be18`** upgrades the on-chain fan-out from 2 payment operations (authorities + treasury) to **3 payment operations** (authorities + driver_pool + treasury) so the full 50/30/20 split is atomic and Horizon-verifiable in one transaction; the driver_pool then acts as the on-chain incentive-pool custody account from which SDP fans out per tier weight.
+- **Treasury multisig** is live on-chain — 2-of-3 with master key at weight 0, three named signers each at weight 1. Verifiable via `GET /v1/treasury/config` on `demo-api.pathpulse.ai`. `POST /v1/treasury/multisig/build` (commit `246be18`) returns the reconfiguration XDR for human-gated review; the backend never auto-signs treasury reconfiguration.
 - **SCOUT reputation** implemented as three Classic Assets: `SCOUT1`, `SCOUT2`, `SCOUT3` with **AUTH_REQUIRED + AUTH_REVOCABLE + AUTH_CLAWBACK_ENABLED**. Issuer: [`GBKGCHRV3YOPTRUR6SDVL46GWWZNXQ6WGOSTVR46HLE5XQMOAS7P6SF4`](https://stellar.expert/explorer/testnet/account/GBKGCHRV3YOPTRUR6SDVL46GWWZNXQ6WGOSTVR46HLE5XQMOAS7P6SF4)
 - **Tier multiplier** applied on-chain: 1.0× / 1.2× / 1.5× for SCOUT1/2/3. Settlement engine reads the badge on-chain via `getOnchainTier(address)` in [`backend/src/stellar/scout.ts`](../backend/src/stellar/scout.ts), overriding the request's `tier` field.
 - **Settlement indexer v1** persists batches with source tx hash + driver payouts, exposed via `GET /v1/settlement/batches[/:id]`. Feeds the future D8 gov dashboard.
@@ -217,10 +218,11 @@ The tx envelope is a Soroban `InvokeHostFunction` calling the Aquarius router co
 
 | Measure | Evidence |
 |---|---|
-| Revenue split transactions on testnet with correct 50/30/20 distribution | ✅ tx `3b73c013…` shows the settlement source paying Authorities + Treasury; driver payouts routed through SDP |
+| Revenue split transactions on testnet with correct 50/30/20 distribution | ✅ tx [`d3330aab…`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) — real on-chain settlement paying 50% to authorities (`GA3XFACI…`) and 20% to treasury (`GBRXUTNC…`); the 30% driver-rewards slice went to drivers via SDP fan-out. Post-`246be18` redeploy: the same batch produces 3 payment ops (authorities + driver_pool + treasury), see `scripts/capture-d6-evidence.mjs` for the reviewer-runnable capture |
+| Treasury multisig is live on-chain | ✅ `GET https://demo-api.pathpulse.ai/v1/treasury/config` — treasury `GBRXUTNC…` shows master weight 0, three signers (`GB3REMIR…`, `GD674BNV…`, `GDPFOIWS…`) each weight 1 → 2-of-3 |
 | Test drivers hold SCOUT tiers visible in Stellar wallets on testnet | ✅ badges are Classic Assets under issuer `GBKGCHRV…SF4` — visible in any Stellar wallet inspecting the driver address |
 | Multipliers applied correctly in settlement batches | ✅ verified: submitting all drivers as `tier:1` still paid 1.0/1.2/1.5× because engine reads the on-chain badge, not the request |
-| Settlement validated end-to-end | ✅ tx `3b73c013…` on Horizon: [stellar.expert](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47) |
+| Settlement validated end-to-end | ✅ tx [`d3330aab…`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) on Horizon; batch id `stl_1788062833060_7cce9334` retrievable via `GET /v1/settlement/batches` |
 
 ---
 
