@@ -14,6 +14,7 @@ import type {
 } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { horizon } from './network.js';
+import { assertMainnetAllowed } from './networkGuard.js';
 import { getManagedWallet, getManagedSigner } from './managed.js';
 
 function httpError(message: string, status: number, name: string): Error {
@@ -77,6 +78,7 @@ export async function buildTransaction(req: BuildTransactionRequest): Promise<Bu
 
 /** Submit a signed transaction envelope (managed or external-wallet) to Horizon. */
 export async function submitTransaction(xdr: string): Promise<SubmitTransactionResponse> {
+  assertMainnetAllowed('transaction submit');
   let tx;
   try {
     tx = TransactionBuilder.fromXDR(xdr, env.networkPassphrase);

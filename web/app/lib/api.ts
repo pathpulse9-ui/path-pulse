@@ -82,12 +82,59 @@ export function logout() {
 
 // ── Settlement (D6) ───────────────────────────────────────────────────
 
-export function listSettlementBatches(limit = 50) {
-  return apiFetch<SettlementBatchPage>(`/v1/settlement/batches?limit=${limit}`);
+export interface BatchListParams {
+  cursor?: string;
+  limit?: number;
+  network?: string;
+  assetCode?: string;
+  since?: string;
+  until?: string;
+  minAmount?: string;
+  maxAmount?: string;
+}
+
+export function listSettlementBatches(params: BatchListParams | number = {}) {
+  // Backwards-compat: legacy call sites pass a bare `limit` number.
+  const p: BatchListParams = typeof params === 'number' ? { limit: params } : params;
+  const qs = new URLSearchParams();
+  if (p.cursor)    qs.set('cursor', p.cursor);
+  qs.set('limit', String(p.limit ?? 50));
+  if (p.network)   qs.set('network', p.network);
+  if (p.assetCode) qs.set('assetCode', p.assetCode);
+  if (p.since)     qs.set('since', p.since);
+  if (p.until)     qs.set('until', p.until);
+  if (p.minAmount) qs.set('minAmount', p.minAmount);
+  if (p.maxAmount) qs.set('maxAmount', p.maxAmount);
+  return apiFetch<SettlementBatchPage>(`/v1/settlement/batches?${qs}`);
 }
 
 export function getSettlementBatch(id: string) {
   return apiFetch<SettlementBatch>(`/v1/settlement/batches/${id}`);
+}
+
+/** Direct download URL — the browser handles the actual GET (no fetch needed). */
+export function settlementCsvUrl(params: BatchListParams = {}): string {
+  const qs = new URLSearchParams();
+  if (params.network)   qs.set('network', params.network);
+  if (params.assetCode) qs.set('assetCode', params.assetCode);
+  if (params.since)     qs.set('since', params.since);
+  if (params.until)     qs.set('until', params.until);
+  if (params.minAmount) qs.set('minAmount', params.minAmount);
+  if (params.maxAmount) qs.set('maxAmount', params.maxAmount);
+  const q = qs.toString();
+  return `${API_BASE_URL}/v1/settlement/batches/export.csv${q ? `?${q}` : ''}`;
+}
+
+export function settlementReceiptPdfUrl(id: string): string {
+  return `${API_BASE_URL}/v1/settlement/batches/${id}/receipt.pdf`;
+}
+
+export function getTreasuryConfig() {
+  return apiFetch<import('@pathpulse/contract').TreasuryConfig>('/v1/treasury/config');
+}
+
+export function listDistributionAccounts() {
+  return apiFetch<import('@pathpulse/contract').DistributionAccount[]>('/v1/accounts/distribution');
 }
 
 export function createSettlementBatch(req: CreateSettlementBatchRequest) {

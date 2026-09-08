@@ -6,7 +6,9 @@ export const horizon = new Horizon.Server(env.horizonUrl, {
   allowHttp: env.horizonUrl.startsWith('http://'),
 });
 
-/** Fund a testnet account via Friendbot. */
+/** Fund a testnet account via Friendbot. Refuses on mainnet — Friendbot
+ *  doesn't exist there and mainnet accounts must be funded manually as
+ *  part of the treasury key ceremony (see docs/MAINNET_CUTOVER.md). */
 export async function fundWithFriendbot(publicKey: string): Promise<void> {
   if (env.network !== 'testnet') {
     throw new Error('Friendbot funding is testnet-only');

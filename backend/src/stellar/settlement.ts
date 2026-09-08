@@ -15,6 +15,7 @@ import { provisionManagedWallet, getManagedSigner } from './managed.js';
 import { getOnchainTier } from './scout.js';
 import { createPayoutBatch } from '../services/payouts.js';
 import { saveBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
+import { assertMainnetAllowed } from './networkGuard.js';
 
 /**
  * Deterministic 50 / 30 / 20 settlement engine (D6).
@@ -94,6 +95,7 @@ function assetOf(ref?: AssetRef): { asset: Asset; ref: AssetRef } {
 }
 
 export async function executeSettlementBatch(req: CreateSettlementBatchRequest): Promise<SettlementBatch> {
+  assertMainnetAllowed('settlement batch submit');
   if (!req.drivers?.length) throw httpError('drivers must be a non-empty array', 400, 'ValidationError');
   const authoritiesAddress = env.distribution.partnerRevenue;
   const driverPoolAddress = env.distribution.driverPool;

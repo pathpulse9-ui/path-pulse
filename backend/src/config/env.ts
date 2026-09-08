@@ -65,6 +65,13 @@ export const env = {
     keyId: process.env.KMS_KEY_ID ?? '',
   },
 
+  // Mainnet safety gate — when STELLAR_NETWORK=mainnet, every path that
+  // constructs or submits a transaction consults `mainnetAllow` and refuses
+  // unless it is explicitly true. Bypassed only by setting the flag to
+  // "true" out-of-band. This is the human gate the plan requires: no mainnet
+  // tx is constructed or signed without explicit sign-off.
+  mainnetAllow: process.env.STELLAR_MAINNET_ALLOW === 'true',
+
   databaseUrl: process.env.DATABASE_URL ?? '',
   keyEncryptionKey: process.env.KEY_ENCRYPTION_KEY ?? '',
   keyEncryptionKeyCiphertext: process.env.KEY_ENCRYPTION_KEY_CIPHERTEXT ?? '',
