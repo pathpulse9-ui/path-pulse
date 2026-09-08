@@ -7,10 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		079547AEB2629BBC49FB70D4 /* OffRampView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB05BD931E30AEAA17860A5A /* OffRampView.swift */; };
+		0CB9AB46A81552E1C62CAD5E /* SettlementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A474ADBFDE0C3BC325773D /* SettlementView.swift */; };
 		1B92B7FE240B32E3FD552985 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0D5505235ECA863605185A /* Models.swift */; };
 		22AD8B1A15AC2EAB530FFDA5 /* LandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F158EF35A9098B1D5127F07F /* LandingView.swift */; };
 		4FCB47AAA6FF93F68549E896 /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3606E008446E676AE6E6D061 /* GoogleSignInSwift */; };
 		62760784EF300FFE34F686BE /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F740A3E6B29D0B3655FB11C6 /* AppShellView.swift */; };
+		6B6FCC36555EF0E8BA026DB2 /* ScoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C1BD9D37E488E18C0209CA /* ScoutView.swift */; };
+		879389747C854949E9759F5B /* CommonComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 391DFEBB9B5C6CC0FC891C48 /* CommonComponents.swift */; };
 		8E43077B06580E08BE235507 /* PathPulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09AB2C446A4AA66498EA8C80 /* PathPulseApp.swift */; };
 		92BE5CAD1D43CE2840B79A6F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 87EF5F73D72874F5F6D5DB7C /* GoogleSignIn */; };
 		A304814A6EF211EF1E4521EF /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769FBB6DFAE33E54575F6A45 /* Spacing.swift */; };
@@ -19,6 +23,7 @@
 		BB312901A4E11FAA23DBA05B /* Shapes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F560A5E4584F6B2E105EF361 /* Shapes.swift */; };
 		C3A7879CF918CDC75CEA86ED /* AuthRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83B205B9366499699E91160F /* AuthRepository.swift */; };
 		D21C67E81EF8B5A1F0AA2D5C /* AppRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6038E6FF167CD047FE31B378 /* AppRoot.swift */; };
+		D78DA6327F3BEDBA5387A8D9 /* TreasuryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6717D5F8CB36B8E9E2451772 /* TreasuryView.swift */; };
 		D9F92151B745D18BC67EF667 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FE7B8E1F0BE2A2286B125D6 /* Config.swift */; };
 		EC74AF7D4FF2711736EC5E85 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 653020348BC8045FBFD18786 /* DashboardView.swift */; };
 		EC9C99A345A9FFA27B1CA414 /* ProfileSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED6762ABD8B41B0DB95B0688 /* ProfileSheetView.swift */; };
@@ -29,17 +34,22 @@
 
 /* Begin PBXFileReference section */
 		09AB2C446A4AA66498EA8C80 /* PathPulseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathPulseApp.swift; sourceTree = "<group>"; };
+		32C1BD9D37E488E18C0209CA /* ScoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoutView.swift; sourceTree = "<group>"; };
+		391DFEBB9B5C6CC0FC891C48 /* CommonComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonComponents.swift; sourceTree = "<group>"; };
 		472FA53AC87B37FFBB4796DB /* DataRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataRepository.swift; sourceTree = "<group>"; };
 		4F0D5505235ECA863605185A /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		6038E6FF167CD047FE31B378 /* AppRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoot.swift; sourceTree = "<group>"; };
 		653020348BC8045FBFD18786 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		6717D5F8CB36B8E9E2451772 /* TreasuryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreasuryView.swift; sourceTree = "<group>"; };
 		6FE7B8E1F0BE2A2286B125D6 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		769FBB6DFAE33E54575F6A45 /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
 		83B205B9366499699E91160F /* AuthRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthRepository.swift; sourceTree = "<group>"; };
 		90D8A2D28EA1357272A37834 /* Font+PathPulse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Font+PathPulse.swift"; sourceTree = "<group>"; };
 		B04E1BBD6896203F9E55DEAC /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		B7A474ADBFDE0C3BC325773D /* SettlementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettlementView.swift; sourceTree = "<group>"; };
 		BFB0BE5074A5D8196E86F0CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CE041C88CBA84811D59EDAD7 /* PathPulse.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PathPulse.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DB05BD931E30AEAA17860A5A /* OffRampView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OffRampView.swift; sourceTree = "<group>"; };
 		ED6762ABD8B41B0DB95B0688 /* ProfileSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileSheetView.swift; sourceTree = "<group>"; };
 		F158EF35A9098B1D5127F07F /* LandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingView.swift; sourceTree = "<group>"; };
 		F560A5E4584F6B2E105EF361 /* Shapes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shapes.swift; sourceTree = "<group>"; };
@@ -87,10 +97,15 @@
 			isa = PBXGroup;
 			children = (
 				F740A3E6B29D0B3655FB11C6 /* AppShellView.swift */,
+				391DFEBB9B5C6CC0FC891C48 /* CommonComponents.swift */,
 				653020348BC8045FBFD18786 /* DashboardView.swift */,
 				F158EF35A9098B1D5127F07F /* LandingView.swift */,
+				DB05BD931E30AEAA17860A5A /* OffRampView.swift */,
 				ED6762ABD8B41B0DB95B0688 /* ProfileSheetView.swift */,
+				32C1BD9D37E488E18C0209CA /* ScoutView.swift */,
+				B7A474ADBFDE0C3BC325773D /* SettlementView.swift */,
 				FE1FF9C89B7D2E88C064F6E3 /* SignInView.swift */,
+				6717D5F8CB36B8E9E2451772 /* TreasuryView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -194,17 +209,22 @@
 				62760784EF300FFE34F686BE /* AppShellView.swift in Sources */,
 				C3A7879CF918CDC75CEA86ED /* AuthRepository.swift in Sources */,
 				FB8D8349BFDB8C4147F1EB7F /* Color+PathPulse.swift in Sources */,
+				879389747C854949E9759F5B /* CommonComponents.swift in Sources */,
 				D9F92151B745D18BC67EF667 /* Config.swift in Sources */,
 				EC74AF7D4FF2711736EC5E85 /* DashboardView.swift in Sources */,
 				BAF9DA6F6A0CD924EDC822EC /* DataRepository.swift in Sources */,
 				F11A5A9023BFA41D0114FB83 /* Font+PathPulse.swift in Sources */,
 				22AD8B1A15AC2EAB530FFDA5 /* LandingView.swift in Sources */,
 				1B92B7FE240B32E3FD552985 /* Models.swift in Sources */,
+				079547AEB2629BBC49FB70D4 /* OffRampView.swift in Sources */,
 				8E43077B06580E08BE235507 /* PathPulseApp.swift in Sources */,
 				EC9C99A345A9FFA27B1CA414 /* ProfileSheetView.swift in Sources */,
+				6B6FCC36555EF0E8BA026DB2 /* ScoutView.swift in Sources */,
+				0CB9AB46A81552E1C62CAD5E /* SettlementView.swift in Sources */,
 				BB312901A4E11FAA23DBA05B /* Shapes.swift in Sources */,
 				F0BBE7F7FEE1AFC81AE214E3 /* SignInView.swift in Sources */,
 				A304814A6EF211EF1E4521EF /* Spacing.swift in Sources */,
+				D78DA6327F3BEDBA5387A8D9 /* TreasuryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

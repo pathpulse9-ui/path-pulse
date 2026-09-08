@@ -94,10 +94,10 @@ struct AppShellView: View {
     private var content: some View {
         switch state.selectedTab {
         case .dashboard:  DashboardView()
-        case .settlement: PlaceholderTabView(title: "Settlement", message: "Creating settlement batches and bulk payouts is available in the web console.")
-        case .scout:      PlaceholderTabView(title: "SCOUT",      message: "SCOUT tier assignment and revocation lives in the web console.")
-        case .offRamp:    PlaceholderTabView(title: "Off-ramp",   message: "USDC → INR withdrawal via Carret is available in the web console.")
-        case .treasury:   PlaceholderTabView(title: "Treasury",   message: "Treasury multisig configuration is available in the web console.")
+        case .settlement: SettlementView()
+        case .scout:      ScoutView()
+        case .offRamp:    OffRampView()
+        case .treasury:   TreasuryView()
         }
     }
 

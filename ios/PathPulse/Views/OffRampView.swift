@@ -1,0 +1,100 @@
+import SwiftUI
+
+/// Off-ramp tab — list of USDC → fiat withdrawal sessions with status pills.
+struct OffRampView: View {
+    @State private var sessions: [OffRampSession] = []
+    @State private var loading = false
+    @State private var errorMessage: String? = nil
+
+    private let data = DataRepository()
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PpSpace.md) {
+                PpTabHeader(title: "Off-ramp", refreshing: loading, onRefresh: { Task { await refresh() } })
+                if let errorMessage { PpErrorBanner(message: errorMessage) }
+
+                PpCard {
+                    PpCardHeader(
+                        title: "\(sessions.count) session\(sessions.count == 1 ? "" : "s")",
+                        subtitle: "Providers: Carret Infra (live, INR corridor) · Ramp (sandbox)."
+                    )
+
+                    if sessions.isEmpty && !loading {
+                        PpEmptyState(
+                            title: "No off-ramp sessions yet",
+                            message: "Trigger an off-ramp from the web console and it lands here."
+                        )
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(sessions.enumerated()), id: \.element.id) { i, s in
+                                if i > 0 { PpDivider() }
+                                OffRampRow(session: s)
+                            }
+                        }
+                        .padding(.top, PpSpace.sm)
+                    }
+                }
+            }
+            .padding(.horizontal, PpSize.screenPadding)
+            .padding(.bottom, PpSpace.xxl)
+        }
+        .background(PathPulseColor.background)
+        .task { await refresh() }
+        .refreshable { await refresh() }
+    }
+
+    @MainActor
+    private func refresh() async {
+        loading = true
+        errorMessage = nil
+        defer { loading = false }
+        do {
+            sessions = try await data.offRampSessions(limit: 50).items
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+private struct OffRampRow: View {
+    let session: OffRampSession
+
+    var body: some View {
+        HStack(spacing: PpSpace.md) {
+            Text("OR")
+                .font(PathPulseFont.labelSmall)
+                .foregroundStyle(PathPulseColor.teal700)
+                .frame(width: 36, height: 36)
+                .background(PathPulseColor.teal50)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: PpSpace.sm) {
+                    Text(session.provider.capitalized)
+                        .font(PathPulseFont.bodyMedium)
+                        .foregroundStyle(PathPulseColor.black)
+                    PpStatusPill(
+                        text: session.status.replacingOccurrences(of: "_", with: " "),
+                        color: Color.ppOffRampStatus(session.status)
+                    )
+                }
+                Text("→ \(session.fiatCurrency)")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black40)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(session.amount) \(session.asset.code)")
+                    .font(PathPulseFont.bodyMedium)
+                    .foregroundStyle(PathPulseColor.black)
+                Text(String(session.createdAt.prefix(10)))
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black40)
+            }
+        }
+        .padding(.vertical, PpSpace.md)
+    }
+}

@@ -17,4 +17,24 @@ struct DataRepository: Sendable {
     func offRampSessions(limit: Int = 50) async throws -> OffRampSessionPage {
         try await client.get("v1/offramp/sessions", query: ["limit": String(limit)])
     }
+
+    // MARK: - SCOUT
+
+    func scoutRoster() async throws -> ScoutRoster {
+        try await client.get("v1/scout")
+    }
+
+    func scoutLookup(address: String) async throws -> ScoutTierLookup {
+        try await client.get("v1/scout/\(address)")
+    }
+
+    // MARK: - Treasury + distribution
+
+    func treasuryConfig() async throws -> TreasuryConfig {
+        try await client.get("v1/treasury/config")
+    }
+
+    func distributionAccounts() async throws -> [DistributionAccount] {
+        try await client.get("v1/accounts/distribution")
+    }
 }
