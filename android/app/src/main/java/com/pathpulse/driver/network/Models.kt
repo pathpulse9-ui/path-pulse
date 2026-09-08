@@ -86,6 +86,12 @@ data class SettlementBatch(
     val split: SettlementSplit,
     val driverPayouts: List<SettlementDriverPayout> = emptyList(),
     val txHash: String,
+    val sourceAddress: String? = null,
+    val authoritiesAddress: String? = null,
+    val driverPoolAddress: String? = null,
+    val treasuryAddress: String? = null,
+    val horizonUrl: String? = null,
+    val payoutBatchId: String? = null,
 )
 
 @Serializable
@@ -109,4 +115,58 @@ data class OffRampSession(
 data class OffRampSessionPage(
     val items: List<OffRampSession> = emptyList(),
     val nextCursor: String? = null,
+)
+
+// --- SCOUT reputation ------------------------------------------------------
+
+@Serializable
+data class ScoutTierInfo(
+    val tier: Int,
+    val code: String,
+    val multiplier: Double,
+)
+
+@Serializable
+data class ScoutRoster(
+    val issuer: String,
+    val network: String,
+    val tiers: List<ScoutTierInfo> = emptyList(),
+)
+
+@Serializable
+data class ScoutTierLookup(
+    val tier: Int? = null,
+    val code: String? = null,
+    val multiplier: Double? = null,
+)
+
+// --- Treasury + distribution ----------------------------------------------
+
+@Serializable
+data class TreasurySigner(
+    val publicKey: String,
+    val weight: Int,
+)
+
+@Serializable
+data class TreasuryThresholds(
+    val low: Int,
+    val medium: Int,
+    val high: Int,
+)
+
+@Serializable
+data class TreasuryConfig(
+    val publicKey: String,
+    val signers: List<TreasurySigner> = emptyList(),
+    val thresholds: TreasuryThresholds,
+    val network: String,
+)
+
+@Serializable
+data class DistributionAccount(
+    val role: String,
+    val publicKey: String,
+    val multisig: Boolean,
+    val network: String,
 )

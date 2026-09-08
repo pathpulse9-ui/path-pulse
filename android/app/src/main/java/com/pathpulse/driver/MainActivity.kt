@@ -27,17 +27,23 @@ import androidx.credentials.CredentialManager
 import com.pathpulse.driver.network.ApiException
 import com.pathpulse.driver.network.AuthRepository
 import com.pathpulse.driver.network.DataRepository
+import com.pathpulse.driver.network.DistributionAccount
 import com.pathpulse.driver.network.HealthResponse
 import com.pathpulse.driver.network.OffRampSession
+import com.pathpulse.driver.network.ScoutRoster
 import com.pathpulse.driver.network.SessionUser
 import com.pathpulse.driver.network.SettlementBatch
+import com.pathpulse.driver.network.TreasuryConfig
 import com.pathpulse.driver.ui.DashboardScreen
 import com.pathpulse.driver.ui.LandingScreen
+import com.pathpulse.driver.ui.OffRampScreen
 import com.pathpulse.driver.ui.PENDING_GOOGLE
 import com.pathpulse.driver.ui.PENDING_GUEST
-import com.pathpulse.driver.ui.PlaceholderScreen
 import com.pathpulse.driver.ui.ProfileSheet
+import com.pathpulse.driver.ui.ScoutScreen
+import com.pathpulse.driver.ui.SettlementScreen
 import com.pathpulse.driver.ui.SignInScreen
+import com.pathpulse.driver.ui.TreasuryScreen
 import com.pathpulse.driver.ui.sessionLabel
 import com.pathpulse.driver.ui.shell.AppShell
 import com.pathpulse.driver.ui.shell.PpTab
@@ -88,6 +94,9 @@ fun AppRoot() {
     var health by remember { mutableStateOf<HealthResponse?>(null) }
     val batches = remember { mutableStateListOf<SettlementBatch>() }
     val sessions = remember { mutableStateListOf<OffRampSession>() }
+    var scout by remember { mutableStateOf<ScoutRoster?>(null) }
+    var treasury by remember { mutableStateOf<TreasuryConfig?>(null) }
+    val distribution = remember { mutableStateListOf<DistributionAccount>() }
     var dataLoading by remember { mutableStateOf(false) }
     var dataError by remember { mutableStateOf<String?>(null) }
 
@@ -99,9 +108,15 @@ fun AppRoot() {
                 val healthJob = async { runCatching { dataRepository.health() }.getOrNull() }
                 val batchJob = async { dataRepository.settlementBatches() }
                 val sessionJob = async { runCatching { dataRepository.offRampSessions() }.getOrNull() }
+                val scoutJob = async { runCatching { dataRepository.scoutRoster() }.getOrNull() }
+                val treasuryJob = async { runCatching { dataRepository.treasuryConfig() }.getOrNull() }
+                val distJob = async { runCatching { dataRepository.distributionAccounts() }.getOrNull() }
                 health = healthJob.await()
                 batches.also { it.clear() }.addAll(batchJob.await().items)
                 sessions.also { it.clear() }.addAll(sessionJob.await()?.items.orEmpty())
+                scout = scoutJob.await()
+                treasury = treasuryJob.await()
+                distribution.also { it.clear() }.addAll(distJob.await().orEmpty())
             }
         } catch (e: Exception) {
             Log.e(TAG, "dashboard load failed", e)
@@ -147,24 +162,33 @@ fun AppRoot() {
                         onRefresh = { scope.launch { loadData() } },
                         modifier = contentModifier,
                     )
-                    PpTab.Settlement -> PlaceholderScreen(
-                        title = "Settlement",
-                        message = "Creating settlement batches and bulk payouts is available in the web console.",
+                    PpTab.Settlement -> SettlementScreen(
+                        batches = batches,
+                        loading = dataLoading,
+                        error = dataError,
+                        onRefresh = { scope.launch { loadData() } },
                         modifier = contentModifier,
                     )
-                    PpTab.Scout -> PlaceholderScreen(
-                        title = "SCOUT",
-                        message = "Reputation tiers and multiplier assignment are available in the web console.",
+                    PpTab.Scout -> ScoutScreen(
+                        roster = scout,
+                        loading = dataLoading,
+                        error = dataError,
+                        onRefresh = { scope.launch { loadData() } },
                         modifier = contentModifier,
                     )
-                    PpTab.OffRamp -> PlaceholderScreen(
-                        title = "Off-ramp",
-                        message = "Fiat withdrawals run through the hosted SEP-24 flow in the web console.",
+                    PpTab.OffRamp -> OffRampScreen(
+                        sessions = sessions,
+                        loading = dataLoading,
+                        error = dataError,
+                        onRefresh = { scope.launch { loadData() } },
                         modifier = contentModifier,
                     )
-                    PpTab.Treasury -> PlaceholderScreen(
-                        title = "Treasury",
-                        message = "Multisig thresholds and signer management are available in the web console.",
+                    PpTab.Treasury -> TreasuryScreen(
+                        config = treasury,
+                        accounts = distribution,
+                        loading = dataLoading,
+                        error = dataError,
+                        onRefresh = { scope.launch { loadData() } },
                         modifier = contentModifier,
                     )
                 }
@@ -182,6 +206,9 @@ fun AppRoot() {
                             selectedTab = PpTab.Dashboard
                             batches.clear()
                             sessions.clear()
+                            distribution.clear()
+                            scout = null
+                            treasury = null
                             health = null
                             dataError = null
                             authError = null

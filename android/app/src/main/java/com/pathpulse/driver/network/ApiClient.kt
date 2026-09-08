@@ -75,6 +75,18 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
     suspend fun offRampSessions(limit: Int = 50): OffRampSessionPage =
         client.get("$baseUrl/v1/offramp/sessions") { parameter("limit", limit) }
             .ensureSuccess().body()
+
+    suspend fun scoutRoster(): ScoutRoster =
+        client.get("$baseUrl/v1/scout").ensureSuccess().body()
+
+    suspend fun scoutLookup(address: String): ScoutTierLookup =
+        client.get("$baseUrl/v1/scout/$address").ensureSuccess().body()
+
+    suspend fun treasuryConfig(): TreasuryConfig =
+        client.get("$baseUrl/v1/treasury/config").ensureSuccess().body()
+
+    suspend fun distributionAccounts(): List<DistributionAccount> =
+        client.get("$baseUrl/v1/accounts/distribution").ensureSuccess().body()
 }
 
 class ApiException(val apiError: ApiError) : Exception(apiError.message)
