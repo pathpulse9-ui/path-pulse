@@ -29,6 +29,7 @@
 		EC9C99A345A9FFA27B1CA414 /* ProfileSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED6762ABD8B41B0DB95B0688 /* ProfileSheetView.swift */; };
 		F0BBE7F7FEE1AFC81AE214E3 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1FF9C89B7D2E88C064F6E3 /* SignInView.swift */; };
 		F11A5A9023BFA41D0114FB83 /* Font+PathPulse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D8A2D28EA1357272A37834 /* Font+PathPulse.swift */; };
+		F7AB6E375A79A21EE2699EA1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F5B0637798B57BE6CB9EC719 /* Assets.xcassets */; };
 		FB8D8349BFDB8C4147F1EB7F /* Color+PathPulse.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE8DD34C0694A7063D2BE215 /* Color+PathPulse.swift */; };
 /* End PBXBuildFile section */
 
@@ -53,6 +54,7 @@
 		ED6762ABD8B41B0DB95B0688 /* ProfileSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileSheetView.swift; sourceTree = "<group>"; };
 		F158EF35A9098B1D5127F07F /* LandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingView.swift; sourceTree = "<group>"; };
 		F560A5E4584F6B2E105EF361 /* Shapes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shapes.swift; sourceTree = "<group>"; };
+		F5B0637798B57BE6CB9EC719 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F740A3E6B29D0B3655FB11C6 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		FE1FF9C89B7D2E88C064F6E3 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		FE8DD34C0694A7063D2BE215 /* Color+PathPulse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Color+PathPulse.swift"; sourceTree = "<group>"; };
@@ -79,6 +81,7 @@
 				BFB0BE5074A5D8196E86F0CD /* Info.plist */,
 				09AB2C446A4AA66498EA8C80 /* PathPulseApp.swift */,
 				E3E7DB4A84B16C15FE395F3B /* Network */,
+				8384435AE061CEB7DC866C8D /* Resources */,
 				C81C883FAA87E570FBA2A4B5 /* Theme */,
 				89EDEDC1FBE1E298B88D30A4 /* Views */,
 			);
@@ -91,6 +94,14 @@
 				CE041C88CBA84811D59EDAD7 /* PathPulse.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		8384435AE061CEB7DC866C8D /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F5B0637798B57BE6CB9EC719 /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		89EDEDC1FBE1E298B88D30A4 /* Views */ = {
@@ -148,6 +159,7 @@
 			buildConfigurationList = E6093C1A47ABEED09B75BB69 /* Build configuration list for PBXNativeTarget "PathPulse" */;
 			buildPhases = (
 				E29792EA6DFEE66F00F925A6 /* Sources */,
+				D8ABABF58D9C642C87C448F6 /* Resources */,
 				87135955E8CEAEA2E3FEC755 /* Frameworks */,
 			);
 			buildRules = (
@@ -198,6 +210,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D8ABABF58D9C642C87C448F6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F7AB6E375A79A21EE2699EA1 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		E29792EA6DFEE66F00F925A6 /* Sources */ = {
