@@ -93,7 +93,7 @@ struct AppShellView: View {
     @ViewBuilder
     private var content: some View {
         switch state.selectedTab {
-        case .dashboard:  DashboardTabView()
+        case .dashboard:  DashboardView()
         case .settlement: PlaceholderTabView(title: "Settlement", message: "Creating settlement batches and bulk payouts is available in the web console.")
         case .scout:      PlaceholderTabView(title: "SCOUT",      message: "SCOUT tier assignment and revocation lives in the web console.")
         case .offRamp:    PlaceholderTabView(title: "Off-ramp",   message: "USDC → INR withdrawal via Carret is available in the web console.")
@@ -173,42 +173,6 @@ struct PlaceholderTabView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PathPulseColor.background)
-    }
-}
-
-/// Dashboard tab — the one screen with real data. Full read-through of
-/// settlement batches lands in PAT-61; for now show a friendly welcome.
-struct DashboardTabView: View {
-    @EnvironmentObject private var state: AppState
-
-    var body: some View {
-        VStack(spacing: PpSpace.lg) {
-            Text("Welcome")
-                .font(PathPulseFont.headlineMedium)
-                .pathPulseKerning(.headlineMedium)
-                .foregroundStyle(PathPulseColor.black)
-            Text(greeting)
-                .font(PathPulseFont.bodyMedium)
-                .foregroundStyle(PathPulseColor.black60)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, PpSpace.xxl)
-            Text("Live settlement + off-ramp data lands in PAT-61.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black40)
-                .padding(.top, PpSpace.sm)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PathPulseColor.background)
-    }
-
-    private var greeting: String {
-        guard let user = state.user else { return "Signed in." }
-        if let email = user.email { return "Signed in as \(email)." }
-        if user.method == "guest" { return "Browsing as guest." }
-        if let addr = user.address {
-            return "Wallet \(addr.prefix(6))…\(addr.suffix(4))."
-        }
-        return "Signed in."
     }
 }
 
