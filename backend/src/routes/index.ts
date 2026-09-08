@@ -244,19 +244,30 @@ router.post('/v1/settlement/batches', async (req, res, next) => {
   }
 });
 
-router.get('/v1/settlement/batches', (req, res, next) => {
+router.get('/v1/settlement/batches', async (req, res, next) => {
   try {
-    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    res.json(listSettlementBatches(cursor, limit));
+    const s = (k: string): string | undefined =>
+      typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
+    res.json(
+      await listSettlementBatches({
+        cursor:    s('cursor'),
+        limit:     req.query.limit ? Number(req.query.limit) : undefined,
+        network:   s('network'),
+        assetCode: s('assetCode'),
+        since:     s('since'),
+        until:     s('until'),
+        minAmount: s('minAmount'),
+        maxAmount: s('maxAmount'),
+      }),
+    );
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/settlement/batches/:id', (req, res, next) => {
+router.get('/v1/settlement/batches/:id', async (req, res, next) => {
   try {
-    res.json(getSettlementBatch(req.params.id));
+    res.json(await getSettlementBatch(req.params.id));
   } catch (e) {
     next(e);
   }
@@ -308,7 +319,7 @@ const createPayoutBatchSchema = z.object({ settlementBatchId: z.string().min(1) 
 router.post('/v1/ops/payouts/batches', async (req, res, next) => {
   try {
     const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
-    const settlementBatch = getSettlementBatch(settlementBatchId);
+    const settlementBatch = await getSettlementBatch(settlementBatchId);
     res.json(
       await createPayoutBatch(settlementBatch.driverPayouts, settlementBatch.asset, { settlementBatchId }),
     );

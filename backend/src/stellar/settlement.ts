@@ -14,6 +14,7 @@ import { horizon } from './network.js';
 import { provisionManagedWallet, getManagedSigner } from './managed.js';
 import { getOnchainTier } from './scout.js';
 import { createPayoutBatch } from '../services/payouts.js';
+import { saveBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
 
 /**
  * Deterministic 50 / 30 / 20 settlement engine (D6).
@@ -83,8 +84,9 @@ export function computeSplit(grossStr: string, drivers: CreateSettlementBatchReq
   return { authorities, treasury, driverRewards, payouts };
 }
 
-// ── in-memory indexer v1 (feeds D8; persisted to Postgres in a later pass) ──
-const batches: SettlementBatch[] = [];
+// Persistence lives in ./settlementStore — Postgres when DATABASE_URL is set,
+// in-memory fallback for local dev. This module writes on execute; reads go
+// through the store's list/get helpers so the API can page across restarts.
 
 function assetOf(ref?: AssetRef): { asset: Asset; ref: AssetRef } {
   if (!ref || !ref.issuer) return { asset: Asset.native(), ref: { code: 'XLM' } };
@@ -182,20 +184,16 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     horizonUrl: horizonTxUrl(res.hash),
     payoutBatchId: payoutBatch.id,
   };
-  batches.unshift(batch); // newest first
+  await saveBatch(batch);
   return batch;
 }
 
-export function listSettlementBatches(cursor?: string, limit = 50): SettlementBatchPage {
-  const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
-  const size = Math.min(Math.max(1, limit), 100);
-  const items = batches.slice(start, start + size);
-  const next = start + size < batches.length ? String(start + size) : null;
-  return { items, nextCursor: next };
+export async function listSettlementBatches(query: BatchQuery = {}): Promise<SettlementBatchPage> {
+  return listBatches(query);
 }
 
-export function getSettlementBatch(id: string): SettlementBatch {
-  const b = batches.find((x) => x.id === id);
+export async function getSettlementBatch(id: string): Promise<SettlementBatch> {
+  const b = await getBatch(id);
   if (!b) throw httpError(`Settlement batch ${id} not found`, 404, 'NotFound');
   return b;
 }
