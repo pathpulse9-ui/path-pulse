@@ -15,11 +15,7 @@ struct AppRootView: View {
             if state.checkingSession {
                 LoadingView()
             } else if state.user != nil {
-                // AppShellView(state: state)  // PAT-60 will wire this
-                PlaceholderView(
-                    title: "Signed in",
-                    message: "AppShell + tabs land in PAT-60. Signed in as \(state.user?.address ?? "…")."
-                )
+                AppShellView()
             } else if state.showLanding {
                 LandingView(onGetStarted: { state.showLanding = false })
             } else {

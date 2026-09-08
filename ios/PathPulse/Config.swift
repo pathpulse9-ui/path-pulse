@@ -6,8 +6,11 @@ enum Config {
     /// Backend base URL. Local dev: `http://localhost:8080` (Simulator reaches the Mac host
     /// directly). Deployed: `https://demo-api.pathpulse.ai`.
     static let apiBaseURL: URL = {
+        // DEBUG defaults to the deployed backend so the Simulator can exercise
+        // Guest / Google flows without a local server up. Flip to
+        // `http://localhost:8080` when actively developing the backend locally.
         #if DEBUG
-        return URL(string: "http://localhost:8080")!
+        return URL(string: "https://demo-api.pathpulse.ai")!
         #else
         return URL(string: "https://demo-api.pathpulse.ai")!
         #endif
