@@ -11,6 +11,8 @@ import type {
   GuestSessionResponse,
   AuthMeResponse,
   BuildTransactionRequest,
+  SettlementBatch,
+  SettlementBatchPage,
 } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import {
@@ -32,6 +34,7 @@ import {
   listSettlementBatches,
   getSettlementBatch,
 } from '../stellar/settlement.js';
+import { batchesToCsv, batchReceiptPdf } from '../services/settlementExport.js';
 import {
   executeGroupPayout,
   listGroupPayoutBatches,
@@ -268,6 +271,57 @@ router.get('/v1/settlement/batches', async (req, res, next) => {
 router.get('/v1/settlement/batches/:id', async (req, res, next) => {
   try {
     res.json(await getSettlementBatch(req.params.id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// ── Compliance exports (D8 gov dashboard + partner finance) ──────────────
+
+router.get('/v1/settlement/batches/export.csv', async (req, res, next) => {
+  try {
+    const s = (k: string): string | undefined =>
+      typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
+    // Pull up to 1000 batches in a single export — walk cursor to gather more.
+    const items: SettlementBatch[] = [];
+    let cursor: string | null | undefined = undefined;
+    for (let i = 0; i < 20; i++) {
+      const page: SettlementBatchPage = await listSettlementBatches({
+        cursor:    cursor ?? undefined,
+        limit:     100,
+        network:   s('network'),
+        assetCode: s('assetCode'),
+        since:     s('since'),
+        until:     s('until'),
+        minAmount: s('minAmount'),
+        maxAmount: s('maxAmount'),
+      });
+      items.push(...page.items);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    const csv = batchesToCsv(items);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="pathpulse-settlements-${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
+    res.send(csv);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/settlement/batches/:id/receipt.pdf', async (req, res, next) => {
+  try {
+    const batch = await getSettlementBatch(req.params.id);
+    const pdf = await batchReceiptPdf(batch);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="pathpulse-batch-${batch.id}.pdf"`,
+    );
+    res.send(pdf);
   } catch (e) {
     next(e);
   }
