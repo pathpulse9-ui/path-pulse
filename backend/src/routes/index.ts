@@ -63,6 +63,7 @@ import {
 import { carretLive } from '../config/env.js';
 import { getMapping, upsertMapping, markWalletWhitelisted } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
+import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
 import multer from 'multer';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
@@ -663,6 +664,38 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
       kycStatus: account.kyc_status,
     });
     res.json({ carretAccountId: mapping.carretAccountId, kycStatus: mapping.kycStatus, existed: false });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * PAT-80: Carret daily limits for the current session user. Returns per-
+ * activity remaining budget (₹) so the UI can render a "₹X available today"
+ * chip and gray out the submit button when the user's amount exceeds it.
+ * 401 when unauth; 404 when no Carret sub-account provisioned yet.
+ */
+router.get('/v1/carret/limits', async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+      return;
+    }
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.status(404).json({
+        error: 'CarretNotProvisioned',
+        message: 'Provision a Carret sub-account first (POST /v1/carret/provision-subaccount).',
+      });
+      return;
+    }
+    const remaining = await allRemaining(mapping.carretAccountId);
+    res.json({
+      carretAccountId: mapping.carretAccountId,
+      dailyCapInr: CARRET_DAILY_LIMIT_INR,
+      remaining,
+    });
   } catch (e) {
     next(e);
   }

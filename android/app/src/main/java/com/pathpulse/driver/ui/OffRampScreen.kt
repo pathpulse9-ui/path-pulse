@@ -19,7 +19,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.pathpulse.driver.network.CarretLimits
+import com.pathpulse.driver.network.DataRepository
 import com.pathpulse.driver.network.OffRampSession
+import com.pathpulse.driver.ui.theme.PpMint26
+import com.pathpulse.driver.ui.theme.PpMintInk
+import com.pathpulse.driver.ui.theme.PpRed100
 import com.pathpulse.driver.ui.components.PpCard
 import com.pathpulse.driver.ui.components.PpCardHeader
 import com.pathpulse.driver.ui.components.PpDivider
@@ -44,7 +54,14 @@ fun OffRampScreen(
     error: String?,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    dataRepository: DataRepository = remember { DataRepository() },
 ) {
+    // PAT-80: Carret daily-limit chip.
+    var limits by remember { mutableStateOf<CarretLimits?>(null) }
+    LaunchedEffect(Unit) {
+        limits = runCatching { dataRepository.carretLimits() }.getOrNull()
+    }
+
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
@@ -57,6 +74,30 @@ fun OffRampScreen(
         if (error != null) {
             PpCard {
                 Text(error, style = MaterialTheme.typography.bodyMedium, color = PpRed600)
+            }
+        }
+
+        limits?.let { l ->
+            val ok = l.remaining.withdraw_inr > 0
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .clip(PpPillShape)
+                        .background(if (ok) PpMint26 else PpRed100)
+                        .padding(horizontal = PpSpace.md, vertical = 4.dp),
+                ) {
+                    Text(
+                        "₹${l.remaining.withdraw_inr.toInt()} available today",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (ok) PpMintInk else PpRed600,
+                    )
+                }
+                Text(
+                    "of ₹${l.dailyCapInr.toInt()} Carret daily cap",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PpBlack40,
+                    modifier = Modifier.padding(start = PpSpace.sm),
+                )
             }
         }
 

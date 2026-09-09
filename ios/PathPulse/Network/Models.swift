@@ -152,6 +152,21 @@ struct TreasuryConfig: Codable {
 
 // MARK: - Distribution accounts
 
+// MARK: - Carret daily limits (PAT-80)
+
+struct CarretLimitsRemaining: Codable, Equatable, Hashable {
+    let deposit_inr: Double
+    let withdraw_inr: Double
+    let deposit_crypto: Double
+    let withdraw_crypto: Double
+}
+
+struct CarretLimits: Codable, Equatable, Hashable {
+    let carretAccountId: String
+    let dailyCapInr: Double
+    let remaining: CarretLimitsRemaining
+}
+
 struct DistributionAccount: Codable, Equatable, Hashable, Identifiable {
     let role: String        // "partner_revenue" | "driver_pool" | "treasury"
     let publicKey: String

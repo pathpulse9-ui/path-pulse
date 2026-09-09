@@ -137,6 +137,22 @@ export function listDistributionAccounts() {
   return apiFetch<import('@pathpulse/contract').DistributionAccount[]>('/v1/accounts/distribution');
 }
 
+// PAT-80: Carret daily-limit tracking. Shape mirrors backend's
+// services/carretLimits.ts. `remaining` values are ₹ available today.
+export interface CarretLimits {
+  carretAccountId: string;
+  dailyCapInr: number;
+  remaining: {
+    deposit_inr: number;
+    withdraw_inr: number;
+    deposit_crypto: number;
+    withdraw_crypto: number;
+  };
+}
+export function getCarretLimits() {
+  return apiFetch<CarretLimits>('/v1/carret/limits');
+}
+
 export function createSettlementBatch(req: CreateSettlementBatchRequest) {
   return apiFetch<SettlementBatch>('/v1/settlement/batches', {
     method: 'POST',

@@ -163,6 +163,22 @@ data class TreasuryConfig(
     val network: String,
 )
 
+// PAT-80: Carret daily-limit tracking
+@Serializable
+data class CarretLimitsRemaining(
+    val deposit_inr: Double,
+    val withdraw_inr: Double,
+    val deposit_crypto: Double,
+    val withdraw_crypto: Double,
+)
+
+@Serializable
+data class CarretLimits(
+    val carretAccountId: String,
+    val dailyCapInr: Double,
+    val remaining: CarretLimitsRemaining,
+)
+
 @Serializable
 data class DistributionAccount(
     val role: String,

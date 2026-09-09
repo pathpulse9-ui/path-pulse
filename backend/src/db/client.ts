@@ -133,6 +133,23 @@ create table if not exists idempotency_keys (
   created_at timestamptz not null default now()
 );
 create index if not exists idempotency_keys_created_at_idx on idempotency_keys (created_at);
+
+-- PAT-80: per-Carret-sub-account daily usage counter. Carret caps every
+-- activity type at ₹30K/day per sub-account (deposit INR, withdraw INR,
+-- deposit crypto, withdraw crypto). We track usage in IST buckets so:
+--   1. We can refuse over-limit sessions upfront (better UX than Carret
+--      bouncing at the last moment)
+--   2. UIs can surface "₹18,500 available today" chips
+-- Reset happens naturally by ymd_ist being part of the PK — a new day is a
+-- new row.
+create table if not exists carret_daily_usage (
+  carret_account_id text not null,
+  activity text not null,
+  ymd_ist date not null,
+  amount_inr numeric(20, 2) not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (carret_account_id, activity, ymd_ist)
+);
 `;
 
 export async function migrate(): Promise<void> {

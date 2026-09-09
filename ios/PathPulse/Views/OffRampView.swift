@@ -5,6 +5,7 @@ struct OffRampView: View {
     @State private var sessions: [OffRampSession] = []
     @State private var loading = false
     @State private var errorMessage: String? = nil
+    @State private var limits: CarretLimits? = nil
 
     private let data = DataRepository()
 
@@ -13,6 +14,21 @@ struct OffRampView: View {
             VStack(alignment: .leading, spacing: PpSpace.md) {
                 PpTabHeader(title: "Off-ramp", refreshing: loading, onRefresh: { Task { await refresh() } })
                 if let errorMessage { PpErrorBanner(message: errorMessage) }
+
+                if let l = limits {
+                    HStack(spacing: PpSpace.sm) {
+                        Text("₹\(Int(l.remaining.withdraw_inr).formatted()) available today")
+                            .font(PathPulseFont.labelSmall)
+                            .foregroundStyle(l.remaining.withdraw_inr > 0 ? PathPulseColor.mintInk : PathPulseColor.red700)
+                            .padding(.horizontal, PpSpace.md)
+                            .padding(.vertical, PpSpace.xs)
+                            .background(l.remaining.withdraw_inr > 0 ? PathPulseColor.mint26 : PathPulseColor.red100)
+                            .clipShape(Capsule())
+                        Text("of ₹\(Int(l.dailyCapInr).formatted()) Carret daily cap")
+                            .font(PathPulseFont.bodySmall)
+                            .foregroundStyle(PathPulseColor.black40)
+                    }
+                }
 
                 PpCard {
                     PpCardHeader(
@@ -50,7 +66,11 @@ struct OffRampView: View {
         errorMessage = nil
         defer { loading = false }
         do {
-            sessions = try await data.offRampSessions(limit: 50).items
+            async let s = data.offRampSessions(limit: 50)
+            async let l = data.carretLimits()
+            sessions = try await s.items
+            // Limits call is best-effort — missing sub-account etc. leaves the chip hidden.
+            limits = (try? await l)
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }

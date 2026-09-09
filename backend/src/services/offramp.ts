@@ -33,6 +33,8 @@ import {
   resolveOfframpRouteId,
   type CarretOrder,
 } from './carret.js';
+import { getMapping } from './carretSubAccountStore.js';
+import { assertUnderLimit, recordUsage } from './carretLimits.js';
 
 /**
  * Fiat off-ramp orchestration (D4 — Ramp Network).
@@ -76,6 +78,9 @@ interface CarretSessionMeta {
   carretQuoteId?: string | number;
   /** Stellar-style memo (numeric string) — required on every deposit tx. */
   carretDepositMemo?: string | null;
+  /** PathPulse userId — populated in createWithdrawal so PAT-80 limit
+   *  tracking can resolve the driver's Carret sub-account. */
+  ppUserId?: string;
 }
 type SessionInternal = OffRampSession & CarretSessionMeta;
 
@@ -190,12 +195,29 @@ const carretLiveProvider: OffRampProvider = {
         'ConfigError',
       );
     }
+    // PAT-80: refuse upfront if this order would push the driver's Carret
+    // sub-account over the ₹30K/day withdraw_inr cap. The check runs after
+    // the quote (so we know the exact INR amount) but before place_order
+    // (so we don't waste a Carret order slot). If we don't have a
+    // per-driver mapping yet (legacy or shared-account paths), skip the
+    // pre-check — Carret's own 400 is the backstop.
+    const fiatInr = Number(quote.output_amount.amount);
+    const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
+    if (mapping) {
+      await assertUnderLimit(mapping.carretAccountId, 'withdraw_inr', fiatInr);
+    }
+
     const order = await placeOfframpOrder({ quoteId: quote.id, bankId: env.carret.bankId });
     s.carretQuoteId = quote.id;
     s.carretOrderId = order.id;
-    session.fiatAmountEstimate = quote.output_amount.amount.toFixed(2);
+    session.fiatAmountEstimate = fiatInr.toFixed(2);
     session.merchantTransactionId = String(order.id);
     session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
+
+    // PAT-80: record the successful order against the daily bucket.
+    if (mapping) {
+      await recordUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
+    }
   },
   async status(session) {
     const s = session as SessionInternal;
@@ -254,6 +276,7 @@ export async function createWithdrawal(
     settlementBatchId: req.settlementBatchId,
     createdAt: now,
     updatedAt: now,
+    ppUserId: userId, // PAT-80: lets carretLiveProvider resolve Carret sub-account for limit tracking
   };
 
   await provider.start(session, ctx);

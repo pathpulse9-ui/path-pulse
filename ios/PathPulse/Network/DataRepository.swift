@@ -37,4 +37,9 @@ struct DataRepository: Sendable {
     func distributionAccounts() async throws -> [DistributionAccount] {
         try await client.get("v1/accounts/distribution")
     }
+
+    // PAT-80: per-driver Carret daily-limit chip on the Off-ramp tab.
+    func carretLimits() async throws -> CarretLimits {
+        try await client.get("v1/carret/limits")
+    }
 }

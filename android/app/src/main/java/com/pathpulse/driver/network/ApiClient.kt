@@ -87,6 +87,10 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
 
     suspend fun distributionAccounts(): List<DistributionAccount> =
         client.get("$baseUrl/v1/accounts/distribution").ensureSuccess().body()
+
+    // PAT-80: per-driver Carret daily-limit chip on the Off-ramp tab.
+    suspend fun carretLimits(): CarretLimits =
+        client.get("$baseUrl/v1/carret/limits").ensureSuccess().body()
 }
 
 class ApiException(val apiError: ApiError) : Exception(apiError.message)

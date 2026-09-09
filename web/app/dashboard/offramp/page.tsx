@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import type { CarretLimits } from '../../lib/api';
+import { getCarretLimits } from '../../lib/api';
 import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
 import {
   listOffRampSessions,
@@ -35,6 +37,11 @@ export default function OffRampPage() {
   const [quote, setQuote] = useState<OffRampQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  // PAT-80: Carret daily limit for this driver's sub-account.
+  const [limits, setLimits] = useState<CarretLimits | null>(null);
+  useEffect(() => {
+    getCarretLimits().then(setLimits).catch(() => setLimits(null));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -149,6 +156,21 @@ export default function OffRampPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         {quoteError && <p className="text-sm text-red-600">{quoteError}</p>}
+
+        {limits && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className={`inline-flex items-center rounded-full px-3 py-1 font-medium ${
+              limits.remaining.withdraw_inr > 0
+                ? 'bg-[#03C394]/12 text-[#032018]'
+                : 'bg-red-100 text-red-700'
+            }`}>
+              ₹{limits.remaining.withdraw_inr.toLocaleString('en-IN')} available today
+            </span>
+            <span className="text-black/40">
+              of ₹{limits.dailyCapInr.toLocaleString('en-IN')} Carret daily withdraw cap
+            </span>
+          </div>
+        )}
 
         {quote && (
           <div className="rounded-xl bg-black/[0.03] p-4 space-y-3">
