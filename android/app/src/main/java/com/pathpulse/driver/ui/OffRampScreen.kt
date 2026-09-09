@@ -53,6 +53,7 @@ fun OffRampScreen(
     loading: Boolean,
     error: String?,
     onRefresh: () -> Unit,
+    onOpenKyc: () -> Unit = {},
     modifier: Modifier = Modifier,
     dataRepository: DataRepository = remember { DataRepository() },
 ) {
@@ -74,6 +75,27 @@ fun OffRampScreen(
         if (error != null) {
             PpCard {
                 Text(error, style = MaterialTheme.typography.bodyMedium, color = PpRed600)
+            }
+        }
+
+        // PAT-79: KYC entry banner.
+        PpCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Complete driver KYC", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "PAN → Aadhaar XML → Selfie → verified. Required before you can withdraw INR.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PpBlack70,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                com.pathpulse.driver.ui.components.PpPrimaryButton(
+                    text = "Start",
+                    onClick = onOpenKyc,
+                    fillWidth = false,
+                    modifier = Modifier.padding(start = PpSpace.md),
+                )
             }
         }
 

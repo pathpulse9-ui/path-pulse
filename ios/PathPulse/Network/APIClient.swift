@@ -64,12 +64,66 @@ final class APIClient: @unchecked Sendable {
         try await send(makeRequest(path: path, method: "POST", body: body))
     }
 
-    /// Fire-and-forget POST — used for logout where the body is irrelevant.
+    /// Fire-and-forget POST — used for logout / cleanup where the response body
+    /// is irrelevant. Optional JSON body for endpoints that take one.
     @discardableResult
-    func postDiscardingBody(_ path: String) async throws -> Int {
-        let (_, response) = try await session.data(for: makeRequest(path: path, method: "POST"))
+    func postDiscardingBody(_ path: String, body: Encodable? = nil) async throws -> Int {
+        let (_, response) = try await session.data(for: makeRequest(path: path, method: "POST", body: body))
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         return http.statusCode
+    }
+
+    /// Multipart form-data POST — used for Carret KYC file uploads (PAT-79).
+    /// The `fields` are plain form fields, `fileField` is the name of the file
+    /// part (Carret expects `doc_front` / `doc_back`), and `fileURL` is a local
+    /// file the user picked. Cookie session is sent automatically.
+    func uploadMultipart(
+        _ path: String,
+        fields: [String: String],
+        fileField: String,
+        fileURL: URL,
+    ) async throws {
+        let boundary = "----PathPulseBoundary\(UUID().uuidString)"
+        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        let filename = fileURL.lastPathComponent
+        let mime = mimeType(for: fileURL)
+
+        for (name, value) in fields {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+        // File part.
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"\(fileField)\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
+        body.append(try Data(contentsOf: fileURL))
+        body.append("\r\n".data(using: .utf8)!)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+        req.httpBody = body
+
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let payload = try? decoder.decode(APIErrorPayload.self, from: data)
+            throw APIError.http(status: http.statusCode, payload: payload)
+        }
+    }
+
+    private func mimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "xml": return "application/xml"
+        case "zip": return "application/zip"
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "pdf": return "application/pdf"
+        default: return "application/octet-stream"
+        }
     }
 
     // MARK: - Internals

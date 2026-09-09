@@ -91,6 +91,7 @@ fun AppRoot() {
     var selectedTab by remember { mutableStateOf(PpTab.Dashboard) }
     var profileOpen by remember { mutableStateOf(false) }
 
+    var kycOpen by remember { mutableStateOf(false) }
     var health by remember { mutableStateOf<HealthResponse?>(null) }
     val batches = remember { mutableStateListOf<SettlementBatch>() }
     val sessions = remember { mutableStateListOf<OffRampSession>() }
@@ -181,6 +182,7 @@ fun AppRoot() {
                         loading = dataLoading,
                         error = dataError,
                         onRefresh = { scope.launch { loadData() } },
+                        onOpenKyc = { kycOpen = true },
                         modifier = contentModifier,
                     )
                     PpTab.Treasury -> TreasuryScreen(
@@ -191,6 +193,16 @@ fun AppRoot() {
                         onRefresh = { scope.launch { loadData() } },
                         modifier = contentModifier,
                     )
+                }
+            }
+
+            if (kycOpen) {
+                @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+                androidx.compose.material3.ModalBottomSheet(
+                    onDismissRequest = { kycOpen = false },
+                    sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                ) {
+                    com.pathpulse.driver.ui.KycScreen()
                 }
             }
 

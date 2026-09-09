@@ -163,6 +163,68 @@ data class TreasuryConfig(
     val network: String,
 )
 
+// PAT-79: Carret KYC (Kotlin mirror of the Swift models)
+
+@Serializable
+data class CarretSubAccountInput(
+    val email: String,
+    val phone_number: String,
+    val first_name: String,
+    val last_name: String,
+    val dob: String,
+    val country: String,
+    val gender: String,
+    val occupation: String,
+    val annual_income: String,
+    val is_email_verified: Boolean = true,
+    val is_mobile_number_verified: Boolean = true,
+    val is_politicaly_exposed_person: Boolean = false,
+)
+
+@Serializable
+data class CarretSubAccountResponse(
+    val id: Int,
+    val reference_id: String,
+    val kyc_status: String,
+    val aml_status: String? = null,
+)
+
+@Serializable
+data class CarretKycSession(
+    val session_id: String,
+    val status: String,
+    val initiated_at: String? = null,
+)
+
+@Serializable
+data class CarretKycInitiateResponse(
+    val success: Boolean,
+    val message: String,
+    val session: CarretKycSession,
+)
+
+@Serializable
+data class CarretKycDocumentSubmission(
+    val document_type: String,
+    val document_number: String? = null,
+    val name: String? = null,
+    val dob: String? = null,
+)
+
+@Serializable
+data class CarretKycDocumentEntry(
+    val document_type: String,
+    val status: String? = null,
+    val document_number: String? = null,
+)
+
+@Serializable
+data class CarretKycStatus(
+    val kyc_session: String? = null,
+    val kyc_status: String,
+    val ovd_documents: List<CarretKycDocumentEntry>? = null,
+)
+
 // PAT-80: Carret daily-limit tracking
 @Serializable
 data class CarretLimitsRemaining(

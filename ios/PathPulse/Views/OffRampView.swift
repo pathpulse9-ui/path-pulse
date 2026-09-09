@@ -6,6 +6,7 @@ struct OffRampView: View {
     @State private var loading = false
     @State private var errorMessage: String? = nil
     @State private var limits: CarretLimits? = nil
+    @State private var kycSheetOpen = false
 
     private let data = DataRepository()
 
@@ -14,6 +15,30 @@ struct OffRampView: View {
             VStack(alignment: .leading, spacing: PpSpace.md) {
                 PpTabHeader(title: "Off-ramp", refreshing: loading, onRefresh: { Task { await refresh() } })
                 if let errorMessage { PpErrorBanner(message: errorMessage) }
+
+                // KYC banner — always visible; opens the full 6-section flow.
+                PpCard {
+                    HStack(spacing: PpSpace.md) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Complete driver KYC")
+                                .font(PathPulseFont.titleMedium)
+                                .foregroundStyle(PathPulseColor.black)
+                            Text("PAN → Aadhaar XML → Selfie → verified. Required before you can withdraw INR.")
+                                .font(PathPulseFont.bodySmall)
+                                .foregroundStyle(PathPulseColor.black60)
+                        }
+                        Spacer()
+                        Button(action: { kycSheetOpen = true }) {
+                            Text("Start")
+                                .font(PathPulseFont.labelMedium)
+                                .foregroundStyle(PathPulseColor.white)
+                                .padding(.horizontal, PpSpace.md)
+                                .padding(.vertical, PpSpace.sm)
+                                .background(PathPulseColor.black)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
 
                 if let l = limits {
                     HStack(spacing: PpSpace.sm) {
@@ -58,6 +83,7 @@ struct OffRampView: View {
         .background(PathPulseColor.background)
         .task { await refresh() }
         .refreshable { await refresh() }
+        .sheet(isPresented: $kycSheetOpen) { KycView() }
     }
 
     @MainActor

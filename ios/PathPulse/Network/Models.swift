@@ -152,6 +152,63 @@ struct TreasuryConfig: Codable {
 
 // MARK: - Distribution accounts
 
+// MARK: - Carret KYC (PAT-79)
+
+struct CarretSubAccountInput: Codable {
+    let email: String
+    let phone_number: String
+    let first_name: String
+    let last_name: String
+    let dob: String                // dd/mm/yyyy
+    let country: String            // ISO-3166-1 alpha-2
+    let gender: String             // male / female / other
+    let occupation: String
+    let annual_income: String
+    var is_email_verified: Bool = true
+    var is_mobile_number_verified: Bool = true
+    var is_politicaly_exposed_person: Bool = false
+}
+
+struct CarretSubAccountResponse: Codable {
+    let id: Int
+    let reference_id: String
+    let kyc_status: String
+    var aml_status: String?
+}
+
+struct CarretKycSession: Codable {
+    let session_id: String
+    let status: String             // pending / verified / rejected / manual_review
+    var initiated_at: String?
+}
+
+struct CarretKycInitiateResponse: Codable {
+    let success: Bool
+    let message: String
+    let session: CarretKycSession
+}
+
+struct CarretKycDocumentSubmission: Codable {
+    let document_type: String      // pan / aadhaar / voter_id / passport / driving_license / selfie
+    var document_number: String?
+    var name: String?
+    var dob: String?
+}
+
+struct CarretKycDocumentEntry: Codable, Hashable, Identifiable {
+    let document_type: String
+    var status: String?
+    var document_number: String?
+
+    var id: String { document_type }
+}
+
+struct CarretKycStatus: Codable {
+    var kyc_session: String?
+    let kyc_status: String
+    var ovd_documents: [CarretKycDocumentEntry]?
+}
+
 // MARK: - Carret daily limits (PAT-80)
 
 struct CarretLimitsRemaining: Codable, Equatable, Hashable {
