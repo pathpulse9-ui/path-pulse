@@ -108,6 +108,31 @@ create table if not exists settlement_batches (
 create index if not exists settlement_batches_created_at_idx on settlement_batches (created_at desc);
 create index if not exists settlement_batches_network_idx on settlement_batches (network);
 create index if not exists settlement_batches_asset_idx on settlement_batches (asset_code);
+
+-- PAT-75: per-driver Carret sub-account mapping. Replaces the shared audit
+-- account 48559 with a one-to-one link between a PathPulse user (userId from
+-- session) and their own Carret sub-account.
+create table if not exists carret_subaccounts (
+  user_id text primary key,
+  carret_account_id text not null unique,
+  reference_id text,
+  kyc_status text not null default 'pending',
+  wallet_whitelisted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- PAT-77: idempotency-key cache. Any money-moving POST that presents an
+-- Idempotency-Key gets its response frozen here for 24h so a client retry
+-- returns the cached response instead of double-spending.
+create table if not exists idempotency_keys (
+  key text primary key,
+  request_hash text not null,
+  status_code int not null,
+  response_json jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists idempotency_keys_created_at_idx on idempotency_keys (created_at);
 `;
 
 export async function migrate(): Promise<void> {

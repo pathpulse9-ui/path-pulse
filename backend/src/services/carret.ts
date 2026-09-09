@@ -148,6 +148,30 @@ interface CarretPage<T> {
 
 // ── HTTP client ────────────────────────────────────────────────────────
 
+// ── Rate limiter (PAT-78) ────────────────────────────────────────────
+//
+// Simple token bucket to keep us under Carret's per-API-key rate limits.
+// 10 req/s default, configurable via CARRET_RATE_LIMIT_QPS. On 429 we back
+// off exponentially and retry once. Confirm actual limits with Carret and
+// tune once known.
+const RATE_QPS = Number(process.env.CARRET_RATE_LIMIT_QPS ?? 10);
+let tokens = RATE_QPS;
+let lastRefill = Date.now();
+
+async function takeToken(): Promise<void> {
+  const now = Date.now();
+  const elapsed = (now - lastRefill) / 1000;
+  tokens = Math.min(RATE_QPS, tokens + elapsed * RATE_QPS);
+  lastRefill = now;
+  if (tokens < 1) {
+    const waitMs = Math.ceil(((1 - tokens) / RATE_QPS) * 1000);
+    await new Promise((r) => setTimeout(r, waitMs));
+    tokens = 0;
+  } else {
+    tokens -= 1;
+  }
+}
+
 async function carretFetch<T>(
   method: 'GET' | 'POST',
   path: string,
@@ -158,15 +182,24 @@ async function carretFetch<T>(
   for (const [k, v] of Object.entries(init.query ?? {})) {
     if (v !== undefined) url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url.toString(), {
-    method,
-    headers: {
-      'API-KEY': env.carret.apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-  });
+  await takeToken();
+  const doFetch = () =>
+    fetch(url.toString(), {
+      method,
+      headers: {
+        'API-KEY': env.carret.apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    });
+  let res = await doFetch();
+  // Retry once on 429 with a small back-off.
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get('retry-after') ?? '1');
+    await new Promise((r) => setTimeout(r, Math.min(5000, retryAfter * 1000)));
+    res = await doFetch();
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Carret ${method} ${path} failed (${res.status}): ${text}`);
@@ -475,6 +508,27 @@ async function carretV2Fetch<T>(
     throw new Error(`Carret ${method} ${path} failed (${res.status}): ${text}`);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * POST /wallet-address/ — whitelist a Stellar address for a Carret sub-account.
+ * PAT-76. Carret's exact endpoint path/shape is not yet in their public docs;
+ * this is our best-guess shape based on the /bank/ endpoint and needs
+ * confirmation from partners team. Failure here is non-fatal on the calling
+ * side — driver can retry via a "resync wallet" button.
+ */
+export async function whitelistWallet(
+  accountId: number | string,
+  address: string,
+  chain: string = env.carret.chain,
+): Promise<unknown> {
+  return carretFetch<unknown>('POST', '/wallet-address/', {
+    body: {
+      account_id: Number(accountId),
+      address,
+      chain: chain.toLowerCase(),
+    },
+  });
 }
 
 /** POST /kyc/initiate/ — creates a session for the given account. */

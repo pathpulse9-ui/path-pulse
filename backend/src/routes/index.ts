@@ -58,7 +58,11 @@ import {
   uploadKycFile,
   getKycStatus,
   cleanupKyc,
+  whitelistWallet,
 } from '../services/carret.js';
+import { carretLive } from '../config/env.js';
+import { getMapping, upsertMapping, markWalletWhitelisted } from '../services/carretSubAccountStore.js';
+import { idempotency } from '../services/idempotency.js';
 import multer from 'multer';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
@@ -182,6 +186,16 @@ router.post('/v1/auth/wallet/verify', async (req, res, next) => {
     const { transaction } = req.body as WalletVerifyRequest;
     const { userId, address } = await verifyChallenge(transaction);
     setSessionCookie(res, { userId, method: 'wallet', address });
+
+    // PAT-76: auto-whitelist the driver's Stellar address with Carret if
+    // they already have a sub-account on file. Non-blocking — the sign-in
+    // succeeds even if whitelist fails; a "resync wallet" affordance in
+    // the mobile profile can retry.
+    autoWhitelistWallet(userId, address).catch((e) =>
+      // eslint-disable-next-line no-console
+      console.warn(`[carret] auto-whitelist failed for ${userId}: ${(e as Error).message}`),
+    );
+
     const body: WalletVerifyResponse = { userId, address };
     res.json(body);
   } catch (e) {
@@ -189,6 +203,16 @@ router.post('/v1/auth/wallet/verify', async (req, res, next) => {
     next(e);
   }
 });
+
+/** PAT-76 helper — fire-and-forget wallet whitelist call. */
+async function autoWhitelistWallet(userId: string, address: string): Promise<void> {
+  if (!carretLive) return;
+  const mapping = await getMapping(userId);
+  if (!mapping) return; // no Carret sub-account yet — whitelisted on first provision
+  if (mapping.walletWhitelistedAt) return; // already done
+  await whitelistWallet(mapping.carretAccountId, address);
+  await markWalletWhitelisted(userId);
+}
 
 router.post('/v1/auth/guest', (_req, res) => {
   const userId = `guest_${randomUUID()}`;
@@ -238,7 +262,7 @@ router.post('/v1/tx/submit', async (req, res, next) => {
 });
 
 // Settlement engine (D6): execute a 50/30/20 batch, list + drill down.
-router.post('/v1/settlement/batches', async (req, res, next) => {
+router.post('/v1/settlement/batches', idempotency(), async (req, res, next) => {
   try {
     const parsed = createSettlementSchema.parse(req.body);
     res.json(await executeSettlementBatch(parsed));
@@ -341,7 +365,7 @@ const createGroupPayoutSchema = z.object({
 });
 
 
-router.post('/v1/settlement/group-payouts', async (req, res, next) => {
+router.post('/v1/settlement/group-payouts', idempotency(), async (req, res, next) => {
   try {
     const parsed = createGroupPayoutSchema.parse(req.body);
     res.json(await executeGroupPayout(parsed));
@@ -370,7 +394,7 @@ router.get('/v1/settlement/group-payouts/:id', async (req, res, next) => {
 
 const createPayoutBatchSchema = z.object({ settlementBatchId: z.string().min(1) });
 
-router.post('/v1/ops/payouts/batches', async (req, res, next) => {
+router.post('/v1/ops/payouts/batches', idempotency(), async (req, res, next) => {
   try {
     const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
     const settlementBatch = await getSettlementBatch(settlementBatchId);
@@ -432,7 +456,7 @@ router.get('/v1/offramp/quotes', async (req, res, next) => {
   }
 });
 
-router.post('/v1/offramp/sessions', async (req, res, next) => {
+router.post('/v1/offramp/sessions', idempotency(), async (req, res, next) => {
   try {
     const parsed = createWithdrawalSchema.parse(req.body);
     const session = getSessionFromRequest(req);
@@ -606,6 +630,42 @@ const createSubAccountSchema = z.object({
   occupation: z.string().min(1),
   is_politicaly_exposed_person: z.boolean().default(false),
   dob: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/),
+});
+
+/**
+ * PAT-75: session-authed find-or-create. Returns the current driver's Carret
+ * sub-account id, creating a fresh one on Carret if they don't have one yet.
+ * Every downstream KYC / off-ramp call resolves the account id through
+ * `getMapping(userId)` instead of the shared env fallback.
+ */
+router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+      return;
+    }
+    const existing = await getMapping(session.userId);
+    if (existing) {
+      res.json({ carretAccountId: existing.carretAccountId, kycStatus: existing.kycStatus, existed: true });
+      return;
+    }
+    const parsed = createSubAccountSchema.parse(req.body);
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '0.0.0.0';
+    const account = await createSubAccount({ ...parsed, user_ip_address: parsed.user_ip_address ?? clientIp });
+    const mapping = await upsertMapping({
+      userId: session.userId,
+      carretAccountId: String(account.id),
+      referenceId: account.reference_id,
+      kycStatus: account.kyc_status,
+    });
+    res.json({ carretAccountId: mapping.carretAccountId, kycStatus: mapping.kycStatus, existed: false });
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post('/v1/carret/subaccount', async (req, res, next) => {
