@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Networks } from '@stellar/stellar-sdk';
-import type { StellarNetwork } from '@pathpulse/contract';
+import type { StellarNetwork, RoutingProviderName, AssetRef } from '@pathpulse/contract';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rootEnv = resolve(here, '../../../.env');
@@ -26,6 +26,21 @@ export type SignerBackend = (typeof SIGNER_BACKENDS)[number];
 const signerBackend = (process.env.SIGNER_BACKEND ?? 'dev') as SignerBackend;
 if (!SIGNER_BACKENDS.includes(signerBackend)) {
   throw new Error(`SIGNER_BACKEND must be ${SIGNER_BACKENDS.join('|')}, got: ${signerBackend}`);
+}
+
+const CIRCLE_TESTNET_USDC = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+const CIRCLE_TESTNET_EURC = 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO';
+const DEFAULT_ROUTING_ASSETS = `XLM,USDC:${CIRCLE_TESTNET_USDC},EURC:${CIRCLE_TESTNET_EURC}`;
+
+function parseRoutingAssets(raw?: string): AssetRef[] {
+  return (raw?.trim() || DEFAULT_ROUTING_ASSETS)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [code, issuer] = entry.split(':');
+      return issuer ? { code, issuer } : { code };
+    });
 }
 
 export const env = {
@@ -76,12 +91,23 @@ export const env = {
   keyEncryptionKey: process.env.KEY_ENCRYPTION_KEY ?? '',
   keyEncryptionKeyCiphertext: process.env.KEY_ENCRYPTION_KEY_CIPHERTEXT ?? '',
 
-  // Aquarius AMM routing (D5). Testnet only
+  // Multi-source cross-asset routing (D5). Testnet only
   routing: {
+    providers: (process.env.ROUTING_PROVIDERS ?? 'aquarius')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) as RoutingProviderName[],
+    quoteTimeoutMs: Number(process.env.ROUTING_QUOTE_TIMEOUT_MS ?? 3000),
+    assets: parseRoutingAssets(process.env.ROUTING_ASSETS),
+    settlementAssetCode: (process.env.ROUTING_SETTLEMENT_ASSET ?? 'USDC').toUpperCase(),
     sorobanRpcUrl: process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org',
     aquaApiUrl: process.env.AQUA_API_URL ?? 'https://amm-api-testnet.aqua.network/api/external/v2',
     aquaRouterContract: process.env.AQUA_ROUTER_CONTRACT ?? '',
     slippageBps: Number(process.env.ROUTING_SLIPPAGE_BPS ?? 100),
+    stellarBroker: {
+      partnerKey: process.env.STELLARBROKER_PARTNER_KEY ?? '',
+      apiUrl: process.env.STELLARBROKER_API_URL ?? 'https://api.stellar.broker',
+    },
   },
 
   webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',

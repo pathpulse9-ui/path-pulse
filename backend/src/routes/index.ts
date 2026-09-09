@@ -68,8 +68,9 @@ import multer from 'multer';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { listAttempts } from '../services/payoutAttempts.js';
-import { quoteSwap, executeSwap } from '../routing/swap.js';
+import { quoteSwap, executeSwap } from '../routing/aggregator.js';
 import { listRoutableAssets } from '../routing/assets.js';
+import { getTreasuryRoutingPlan } from '../routing/treasury.js';
 
 export const router = Router();
 
@@ -493,8 +494,8 @@ router.get('/v1/offramp/sessions/:id', async (req, res, next) => {
   }
 });
 
-// Aquarius AMM routing (D5): quote a swap route, then execute it through the router contract.
-const routableSchema = z.enum(['XLM', 'USDC']);
+// Cross-asset routing (D5): quote across active routers, then execute the best route.
+const routableSchema = z.string().min(1);
 const amountSchema = z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number');
 const routingQuoteSchema = z.object({
   from: routableSchema,
@@ -530,6 +531,15 @@ router.post('/v1/routing/swap', async (req, res, next) => {
     }
     const { from, to, amount } = routingSwapSchema.parse(req.body);
     res.status(201).json(await executeSwap(from, to, amount));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Treasury routing (D5): what non-settlement balances the treasury holds and quotes to convert them.
+router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
+  try {
+    res.json(await getTreasuryRoutingPlan());
   } catch (e) {
     next(e);
   }

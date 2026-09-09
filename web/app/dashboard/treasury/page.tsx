@@ -7,14 +7,18 @@ import type {
   RoutingQuote,
   RoutingSwapResult,
 } from '@pathpulse/contract';
-import { API_BASE_URL, getRoutingQuote, executeRoutingSwap } from '../../lib/api';
+import {
+  API_BASE_URL,
+  getRoutingQuote,
+  executeRoutingSwap,
+  getRoutableAssets,
+} from '../../lib/api';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
 
 const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
-const ROUTABLE = ['XLM', 'USDC'] as const;
-type Routable = (typeof ROUTABLE)[number];
+const FALLBACK_ROUTABLE = ['XLM', 'USDC', 'EURC'];
 
 const assetLabel = (a: { code: string }) => a.code;
 const trimAmount = (v: string) => v.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
@@ -26,8 +30,9 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 function ConversionPanel() {
-  const [from, setFrom] = useState<Routable>('XLM');
-  const [to, setTo] = useState<Routable>('USDC');
+  const [routable, setRoutable] = useState<string[]>(FALLBACK_ROUTABLE);
+  const [from, setFrom] = useState('XLM');
+  const [to, setTo] = useState('USDC');
   const [amount, setAmount] = useState('100');
   const [quote, setQuote] = useState<RoutingQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
@@ -37,6 +42,14 @@ function ConversionPanel() {
   const [result, setResult] = useState<RoutingSwapResult | null>(null);
 
   const valid = /^\d+(\.\d{1,7})?$/.test(amount) && Number(amount) > 0 && from !== to;
+
+  useEffect(() => {
+    getRoutableAssets()
+      .then((r) => {
+        if (r.items.length) setRoutable(r.items.map((a) => a.symbol));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!valid) {
@@ -94,12 +107,12 @@ function ConversionPanel() {
           <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
             Liquidity conversion{' '}
             <span className="align-middle text-xs font-medium rounded-full border border-blue-300 bg-blue-100 text-blue-700 px-2 py-0.5">
-              AQUARIUS · TESTNET
+              MULTI-SOURCE · TESTNET
             </span>
           </h2>
           <p className="text-sm text-black/60 mt-1">
-            Convert operating balances between XLM and USDC through Aquarius AMM pools before a
-            payout run. Routed and settled by Backend Core.
+            Convert operating balances between routable assets. Aquarius and StellarBroker are
+            quoted in parallel; best execution wins. Routed and settled by Backend Core.
           </p>
         </div>
       </div>
@@ -118,10 +131,10 @@ function ConversionPanel() {
           <span className="text-xs text-black/50">From</span>
           <select
             value={from}
-            onChange={(e) => setFrom(e.target.value as Routable)}
+            onChange={(e) => setFrom(e.target.value)}
             className="rounded-full border border-black/10 px-4 h-10 text-sm bg-white outline-none focus:border-black/30 transition-colors duration-200"
           >
-            {ROUTABLE.map((a) => (
+            {routable.map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
@@ -138,10 +151,10 @@ function ConversionPanel() {
           <span className="text-xs text-black/50">To</span>
           <select
             value={to}
-            onChange={(e) => setTo(e.target.value as Routable)}
+            onChange={(e) => setTo(e.target.value)}
             className="rounded-full border border-black/10 px-4 h-10 text-sm bg-white outline-none focus:border-black/30 transition-colors duration-200"
           >
-            {ROUTABLE.map((a) => (
+            {routable.map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
@@ -164,7 +177,9 @@ function ConversionPanel() {
               <span className="text-black/50 text-sm">{assetLabel(quote.to)}</span>
             </div>
             <span className="text-xs text-black/50">
-              {quoting ? 'refreshing…' : `${quote.hops} hop${quote.hops === 1 ? '' : 's'}`}
+              {quoting
+                ? 'refreshing…'
+                : `via ${quote.provider} · ${quote.hops} hop${quote.hops === 1 ? '' : 's'}`}
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
@@ -185,6 +200,21 @@ function ConversionPanel() {
               {quote.route.map((t) => (t === 'native' ? 'XLM' : t.split(':')[0])).join(' → ')}
             </div>
           </div>
+          {quote.alternatives && quote.alternatives.length > 0 && (
+            <div>
+              <div className="text-xs text-black/50 mb-1">Other sources</div>
+              <div className="space-y-1">
+                {quote.alternatives.map((alt) => (
+                  <div key={alt.provider} className="flex justify-between text-xs text-black/60">
+                    <span>{alt.provider}</span>
+                    <span>
+                      {trimAmount(alt.destinationAmount)} {assetLabel(alt.to)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

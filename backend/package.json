@@ -16,6 +16,7 @@
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1118.0",
     "@pathpulse/contract": "workspace:*",
+    "@stellar-broker/client": "^0.7.0",
     "@stellar/stellar-sdk": "^13.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
