@@ -354,19 +354,37 @@ export function mapCarretStatus(status: string): OffRampStatus | null {
 // ── Webhook verification ──────────────────────────────────────────────
 
 /**
- * Verify a Carret webhook. Carret's public docs don't yet spec the signature
- * scheme — we assume HMAC-SHA256(webhookSecret, rawBody), hex in the
- * `X-Carret-Signature` header (a common Django-webhook default). Update this
- * function once the Partner team confirms the scheme.
+ * Verify a Carret webhook (PAT-40, confirmed by Carret partners team).
  *
- * Until `CARRET_WEBHOOK_SECRET` is set we refuse every webhook — fail-closed
- * (same policy that caught the Mercuryo raw-body bug in v0.1.6.x).
+ * Spec — from https://carret-fluid.gitbook.io/carret_infra_api_documentation/
+ *              carret-infrastructure-api-documentation/webhook-reference
+ *   • Header:    `X-Carret-Signature`
+ *   • Algorithm: HMAC-SHA256
+ *   • Encoding:  hex
+ *   • Signed over: the raw JSON body Carret sent (Python `json.dumps(payload)`).
+ *     Express captures the raw body in `req.rawBody` before parsing, so we
+ *     verify against those exact bytes.
+ *   • Signing secret: created on the Carret Partner Dashboard → Webhooks
+ *     section, pasted here as env `CARRET_WEBHOOK_SECRET`.
+ *   • Event types: deposit_transaction_success/failed, withdraw_transaction_
+ *     success/failed, withdrawal_transaction_initiated, deposit, withdraw,
+ *     order_filled, order_cancelled, deposit_address_created/updated,
+ *     kyc_document_status_update.
+ *
+ * Fail-closed: without `CARRET_WEBHOOK_SECRET` or without a signature header
+ * we reject the request (same policy that caught the earlier Mercuryo bug).
+ *
+ * Idempotency note: Carret's docs recommend deduping by the webhook `id`
+ * field. The callback route handler in routes/index.ts writes each event id
+ * to the idempotency_keys table before applying the event.
  */
 export function verifyCarretWebhook(rawBody: string, signatureHex: string): boolean {
   if (!env.carret.webhookSecret || !signatureHex) return false;
   try {
+    // Normalize: Carret sends lowercase hex, but be defensive.
+    const sig = signatureHex.trim().toLowerCase();
     const expected = createHmac('sha256', env.carret.webhookSecret).update(rawBody).digest();
-    const got = Buffer.from(signatureHex, 'hex');
+    const got = Buffer.from(sig, 'hex');
     if (got.length !== expected.length) return false;
     return timingSafeEqual(expected, got);
   } catch {
