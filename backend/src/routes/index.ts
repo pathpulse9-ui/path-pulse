@@ -293,15 +293,11 @@ router.get('/v1/settlement/batches', async (req, res, next) => {
   }
 });
 
-router.get('/v1/settlement/batches/:id', async (req, res, next) => {
-  try {
-    res.json(await getSettlementBatch(req.params.id));
-  } catch (e) {
-    next(e);
-  }
-});
-
 // ── Compliance exports (D8 gov dashboard + partner finance) ──────────────
+// IMPORTANT: these more-specific routes must be registered BEFORE the
+// generic `/v1/settlement/batches/:id` matcher, or Express matches `:id`
+// = "export.csv" first and 404s with "Settlement batch export.csv not
+// found" (real bug I caught the first time production hit the endpoint).
 
 router.get('/v1/settlement/batches/export.csv', async (req, res, next) => {
   try {
@@ -347,6 +343,17 @@ router.get('/v1/settlement/batches/:id/receipt.pdf', async (req, res, next) => {
       `inline; filename="pathpulse-batch-${batch.id}.pdf"`,
     );
     res.send(pdf);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Generic per-batch lookup — registered AFTER the two more-specific
+// routes above so Express's linear route match hits export.csv and
+// receipt.pdf first.
+router.get('/v1/settlement/batches/:id', async (req, res, next) => {
+  try {
+    res.json(await getSettlementBatch(req.params.id));
   } catch (e) {
     next(e);
   }
