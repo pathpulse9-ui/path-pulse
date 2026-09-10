@@ -164,6 +164,8 @@ export const env = {
     bankId: process.env.CARRET_BANK_ID ?? '',
     // Optional webhook shared secret (signature scheme TBD — pending Carret docs/team).
     webhookSecret: process.env.CARRET_WEBHOOK_SECRET ?? '',
+    // Forward-proxy URL for Carret calls only (Carret IP-blocks cloud egress).
+    httpsProxy: process.env.CARRET_HTTPS_PROXY ?? '',
     // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live: Carret quote).
     indicativeRate: Number(process.env.CARRET_INDICATIVE_RATE ?? 84),
     // DEV-ONLY escape hatch. Carret is mainnet-only (their dev env uses real
