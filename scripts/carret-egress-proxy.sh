@@ -42,16 +42,18 @@ aws ec2 authorize-security-group-egress --region "$REGION" --group-id "$SG" \
     "IpProtocol=udp,FromPort=53,ToPort=53,IpRanges=[{CidrIp=0.0.0.0/0}]" >/dev/null
 echo ">> sg=$SG (in 8888, out 443+53 only)"
 
-USERDATA=$(cat <<EOF
+USERDATA=$(cat <<'USERDATA_SCRIPT'
 #!/bin/bash
-set -euxo pipefail
-dnf install -y squid
-NCSA=\$(rpm -ql squid | grep -m1 basic_ncsa_auth)
-echo "${PROXY_USER}:\$(openssl passwd -apr1 '${PROXY_PASS}')" > /etc/squid/passwd
-chown root:squid /etc/squid/passwd && chmod 640 /etc/squid/passwd
-cat > /etc/squid/squid.conf <<CONF
-http_port ${PROXY_PORT}
-auth_param basic program \$NCSA /etc/squid/passwd
+exec > /var/log/carret-proxy-bootstrap.log 2>&1
+set -x
+dnf install -y squid httpd-tools
+NCSA=$(rpm -ql squid | grep -m1 basic_ncsa_auth)
+htpasswd -mbc /etc/squid/passwd '@@USER@@' '@@PASS@@'
+chown root:squid /etc/squid/passwd
+chmod 640 /etc/squid/passwd
+cat > /etc/squid/squid.conf <<'CONF'
+http_port @@PORT@@
+auth_param basic program @@NCSA@@ /etc/squid/passwd
 auth_param basic realm carret-egress
 acl auth proxy_auth REQUIRED
 acl carret dstdomain .carret.in
@@ -64,9 +66,15 @@ http_access deny all
 via off
 forwarded_for delete
 CONF
+sed -i "s#@@NCSA@@#${NCSA}#" /etc/squid/squid.conf
+squid -k parse
 systemctl enable --now squid
-EOF
+systemctl is-active squid
+USERDATA_SCRIPT
 )
+USERDATA=${USERDATA//@@USER@@/$PROXY_USER}
+USERDATA=${USERDATA//@@PASS@@/$PROXY_PASS}
+USERDATA=${USERDATA//@@PORT@@/$PROXY_PORT}
 
 IID=$(aws ec2 run-instances --region "$REGION" --image-id "$AMI" \
   --instance-type t4g.nano --subnet-id "$SUBNET" --security-group-ids "$SG" \
