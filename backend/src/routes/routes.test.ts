@@ -32,7 +32,7 @@ const postJson = (p: string, body: unknown, init: RequestInit = {}) =>
 test('GET /health reports network and version', async () => {
   const res = await get('/health');
   assert.equal(res.status, 200);
-  const body = await res.json();
+  const body = await res.json() as any;
   assert.equal(body.status, 'ok');
   assert.equal(body.network, 'testnet');
   assert.ok(body.version);
@@ -61,7 +61,7 @@ test('guest session round-trips through an httpOnly cookie', async () => {
   assert.match(setCookie, /HttpOnly/i);
 
   const me = await get('/v1/auth/me', { headers: { cookie: setCookie.split(';')[0] } });
-  const body = await me.json();
+  const body = await me.json() as any;
   assert.equal(body.user.method, 'guest');
   assert.match(body.user.userId, /^guest_/);
 });
@@ -72,7 +72,7 @@ test('POST /v1/tx/build without a session is rejected', async () => {
     operations: [{ type: 'payment', destination: 'GA', asset: { code: 'XLM' }, amount: '1' }],
   });
   assert.equal(res.status, 401);
-  assert.equal((await res.json()).error, 'unauthorized');
+  assert.equal(((await res.json()) as any).error, 'unauthorized');
 });
 
 test('POST /v1/routing/swap without a session is rejected before any network call', async () => {
@@ -93,7 +93,7 @@ test('GET /v1/routing/quote rejects an unknown asset', async () => {
 test('GET /v1/routing/assets lists the routable set', async () => {
   const res = await get('/v1/routing/assets');
   assert.equal(res.status, 200);
-  const body = await res.json();
+  const body = await res.json() as any;
   assert.ok(Array.isArray(body.items));
   assert.ok(body.items.some((a: { symbol: string }) => a.symbol === 'USDC'));
 });
@@ -101,7 +101,7 @@ test('GET /v1/routing/assets lists the routable set', async () => {
 test('GET /v1/routing/treasury/plan describes the treasury holdings and settlement target', async () => {
   const res = await get('/v1/routing/treasury/plan');
   assert.equal(res.status, 200);
-  const body = await res.json();
+  const body = await res.json() as any;
   assert.equal(body.settlementAsset.code, 'USDC');
   assert.ok(Array.isArray(body.balances));
   assert.ok(Array.isArray(body.conversions));
@@ -111,7 +111,7 @@ test('GET /v1/routing/treasury/plan describes the treasury holdings and settleme
 test('POST /v1/settlement/batches rejects an empty body', async () => {
   const res = await postJson('/v1/settlement/batches', {});
   assert.equal(res.status, 400);
-  assert.equal((await res.json()).error, 'ValidationError');
+  assert.equal((await res.json() as any).error, 'ValidationError');
 });
 
 test('POST /v1/settlement/batches rejects a malformed gross amount', async () => {
@@ -148,7 +148,7 @@ test('GET /v1/offramp/quotes requires a positive amount', async () => {
 test('POST /v1/offramp/callback fails closed without a valid signature', async () => {
   const res = await postJson('/v1/offramp/callback', { status: 'completed', order_id: '1' });
   assert.equal(res.status, 401);
-  assert.equal((await res.json()).error, 'InvalidSignature');
+  assert.equal((await res.json() as any).error, 'InvalidSignature');
 });
 
 test('GET /v1/ops/payouts/batches/:id returns 404 for an unknown batch', async () => {
