@@ -175,9 +175,10 @@ Legend: **[live]** implemented on testnet · **[planned]** contract-defined, not
 | POST | `/v1/offramp/sessions` | start Carret SEP-24 interactive withdrawal → hosted webview URL |
 | GET | `/v1/offramp/sessions/{id}` | withdrawal status + receipt, linked to settlement batch |
 | GET | `/v1/offramp/quotes?from=&to=&amount=` | conversion quote |
-| GET | `/v1/routing/assets` | assets routable through Aquarius on this network **[live]** |
-| GET | `/v1/routing/quote` | Aquarius path-payment quote (XLM ⇄ USDC, testnet) **[live]** |
-| POST | `/v1/routing/swap` | execute the quoted route through the Aquarius router contract **[live]** |
+| GET | `/v1/routing/assets` | assets routable on this network (XLM ⇄ USDC, testnet) **[live]** |
+| GET | `/v1/routing/quote` | best quote across active routers (`provider` + `alternatives[]`); `ROUTING_PROVIDERS`=aquarius,stellarbroker **[live]** |
+| POST | `/v1/routing/swap` | execute the best route; falls back to the next router on failure **[live]** |
+| GET | `/v1/routing/treasury/plan` | treasury balances + quotes to convert non-settlement holdings → USDC (read-only; execution is human-gated) **[live]** |
 
 ### Phase 4 — Settlement engine & SCOUT (D6)
 | Method | Path | Purpose | Status |

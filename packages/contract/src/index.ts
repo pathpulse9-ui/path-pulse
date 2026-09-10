@@ -353,7 +353,10 @@ export interface PayoutBatchPage {
   nextCursor: string | null;
 }
 
+export type RoutingProviderName = 'aquarius' | 'stellarbroker';
+
 export interface RoutingQuote {
+  provider: RoutingProviderName;
   from: AssetRef;
   to: AssetRef;
   sourceAmount: string;
@@ -363,6 +366,7 @@ export interface RoutingQuote {
   hops: number;
   pools: string[];
   route: string[];
+  alternatives?: RoutingQuote[];
 }
 
 export interface RoutingSwapRequest {
@@ -373,6 +377,7 @@ export interface RoutingSwapRequest {
 
 export interface RoutingSwapResult {
   id: string;
+  provider: RoutingProviderName;
   createdAt: string;
   network: StellarNetwork;
   sourceAddress: string;
@@ -385,6 +390,28 @@ export interface RoutingSwapResult {
   pools: string[];
   txHash: string;
   horizonUrl: string;
+}
+
+export interface TreasuryConversion {
+  from: AssetRef;
+  amount: string;
+  routable: boolean;
+  reason?: string;
+  quote?: {
+    provider: RoutingProviderName;
+    destinationAmount: string;
+    minDestinationAmount: string;
+  };
+}
+
+export interface TreasuryRoutingPlan {
+  treasury: string;
+  network: StellarNetwork;
+  settlementAsset: AssetRef;
+  balances: { asset: AssetRef; balance: string }[];
+  heldSettlementAsset: string;
+  conversions: TreasuryConversion[];
+  projectedSettlementAsset: string;
 }
 
 export interface OffRampQuoteFee {

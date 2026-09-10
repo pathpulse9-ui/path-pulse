@@ -211,7 +211,13 @@ export function getScoutTier(address: string) {
   return apiFetch<ScoutTierLookup>(`/v1/scout/${address}`);
 }
 
-// ── Aquarius liquidity routing (D5) ───────────────────────────────────
+// ── Cross-asset liquidity routing (D5) ────────────────────────────────
+
+export function getRoutableAssets() {
+  return apiFetch<{ items: { symbol: string; code: string; issuer?: string }[] }>(
+    '/v1/routing/assets',
+  );
+}
 
 export function getRoutingQuote(from: string, to: string, amount: string) {
   const q = new URLSearchParams({ from, to, amount });

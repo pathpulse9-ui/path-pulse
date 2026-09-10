@@ -2,47 +2,51 @@ import { Asset } from '@stellar/stellar-sdk';
 import type { AssetRef } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 
-export type RoutableSymbol = 'XLM' | 'USDC';
+export type RoutableSymbol = string;
 
 export interface RoutableAsset {
-  symbol: RoutableSymbol;
+  symbol: string;
   ref: AssetRef;
   asset: Asset;
   contractId: string;
 }
 
-const TESTNET_USDC_ISSUER = 'GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER';
-
-function build(symbol: RoutableSymbol, ref: AssetRef): RoutableAsset {
+function build(ref: AssetRef): RoutableAsset {
   const asset = ref.issuer ? new Asset(ref.code, ref.issuer) : Asset.native();
-  return { symbol, ref, asset, contractId: asset.contractId(env.networkPassphrase) };
+  return {
+    symbol: ref.code.toUpperCase(),
+    ref: ref.issuer ? { code: ref.code, issuer: ref.issuer } : { code: ref.code },
+    asset,
+    contractId: asset.contractId(env.networkPassphrase),
+  };
 }
 
-let cache: Record<RoutableSymbol, RoutableAsset> | null = null;
+let cache: Map<string, RoutableAsset> | null = null;
 
-function registry(): Record<RoutableSymbol, RoutableAsset> {
+function registry(): Map<string, RoutableAsset> {
   if (env.network !== 'testnet') {
-    throw new Error('Aquarius routing is testnet-only — mainnet pools are gated behind Phase 5');
+    throw new Error('Cross-asset routing is testnet-only — mainnet pools are gated behind Phase 5');
   }
   if (!cache) {
-    cache = {
-      XLM: build('XLM', { code: 'XLM' }),
-      USDC: build('USDC', { code: 'USDC', issuer: TESTNET_USDC_ISSUER }),
-    };
+    cache = new Map(env.routing.assets.map((ref) => [ref.code.toUpperCase(), build(ref)]));
   }
   return cache;
 }
 
-export const ROUTABLE_SYMBOLS: RoutableSymbol[] = ['XLM', 'USDC'];
-
-export function isRoutableSymbol(v: string): v is RoutableSymbol {
-  return (ROUTABLE_SYMBOLS as string[]).includes(v);
+export function isRoutableSymbol(v: string): boolean {
+  return registry().has(v.toUpperCase());
 }
 
-export function resolveAsset(symbol: RoutableSymbol): RoutableAsset {
-  return registry()[symbol];
+export function resolveAsset(symbol: string): RoutableAsset {
+  const found = registry().get(symbol.toUpperCase());
+  if (!found) {
+    throw new Error(
+      `Asset "${symbol}" is not routable — configured: ${[...registry().keys()].join(', ')}`,
+    );
+  }
+  return found;
 }
 
 export function listRoutableAssets(): RoutableAsset[] {
-  return ROUTABLE_SYMBOLS.map((s) => registry()[s]);
+  return [...registry().values()];
 }
