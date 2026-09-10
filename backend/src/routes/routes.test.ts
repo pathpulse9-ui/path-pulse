@@ -1,22 +1,18 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { createServer } from '../server.js';
-import { migrate, closeDb } from '../db/client.js';
+import { closeDb } from '../db/client.js';
+import { startTestApi, stopTestApi } from './testSupport.js';
 
-let server: Server;
-let base: string;
+let server: Server | undefined;
+let base = '';
 
 before(async () => {
-  await migrate();
-  server = createServer().listen(0);
-  await new Promise<void>((r) => server.once('listening', () => r()));
-  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  ({ server, base } = await startTestApi());
 });
 
 after(async () => {
-  await new Promise<void>((r) => server.close(() => r()));
+  await stopTestApi(server);
   await closeDb();
 });
 
@@ -28,11 +24,13 @@ const postJson = (p: string, body: unknown, init: RequestInit = {}) =>
     body: JSON.stringify(body),
     ...init,
   });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 test('GET /health reports network and version', async () => {
   const res = await get('/health');
   assert.equal(res.status, 200);
-  const body = await res.json() as any;
+  const body = await json(res);
   assert.equal(body.status, 'ok');
   assert.equal(body.network, 'testnet');
   assert.ok(body.version);
@@ -50,7 +48,7 @@ test('GET /.well-known/stellar.toml is public and carries the signing key', asyn
 test('GET /v1/auth/me without a cookie returns a null user', async () => {
   const res = await get('/v1/auth/me');
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { user: null });
+  assert.deepEqual(await json(res), { user: null });
 });
 
 test('guest session round-trips through an httpOnly cookie', async () => {
@@ -61,7 +59,7 @@ test('guest session round-trips through an httpOnly cookie', async () => {
   assert.match(setCookie, /HttpOnly/i);
 
   const me = await get('/v1/auth/me', { headers: { cookie: setCookie.split(';')[0] } });
-  const body = await me.json() as any;
+  const body = await json(me);
   assert.equal(body.user.method, 'guest');
   assert.match(body.user.userId, /^guest_/);
 });
@@ -72,7 +70,7 @@ test('POST /v1/tx/build without a session is rejected', async () => {
     operations: [{ type: 'payment', destination: 'GA', asset: { code: 'XLM' }, amount: '1' }],
   });
   assert.equal(res.status, 401);
-  assert.equal(((await res.json()) as any).error, 'unauthorized');
+  assert.equal((await json(res)).error, 'unauthorized');
 });
 
 test('POST /v1/routing/swap without a session is rejected before any network call', async () => {
@@ -93,7 +91,7 @@ test('GET /v1/routing/quote rejects an unknown asset', async () => {
 test('GET /v1/routing/assets lists the routable set', async () => {
   const res = await get('/v1/routing/assets');
   assert.equal(res.status, 200);
-  const body = await res.json() as any;
+  const body = await json(res);
   assert.ok(Array.isArray(body.items));
   assert.ok(body.items.some((a: { symbol: string }) => a.symbol === 'USDC'));
 });
@@ -101,7 +99,7 @@ test('GET /v1/routing/assets lists the routable set', async () => {
 test('GET /v1/routing/treasury/plan describes the treasury holdings and settlement target', async () => {
   const res = await get('/v1/routing/treasury/plan');
   assert.equal(res.status, 200);
-  const body = await res.json() as any;
+  const body = await json(res);
   assert.equal(body.settlementAsset.code, 'USDC');
   assert.ok(Array.isArray(body.balances));
   assert.ok(Array.isArray(body.conversions));
@@ -111,7 +109,7 @@ test('GET /v1/routing/treasury/plan describes the treasury holdings and settleme
 test('POST /v1/settlement/batches rejects an empty body', async () => {
   const res = await postJson('/v1/settlement/batches', {});
   assert.equal(res.status, 400);
-  assert.equal((await res.json() as any).error, 'ValidationError');
+  assert.equal((await json(res)).error, 'ValidationError');
 });
 
 test('POST /v1/settlement/batches rejects a malformed gross amount', async () => {
@@ -148,7 +146,7 @@ test('GET /v1/offramp/quotes requires a positive amount', async () => {
 test('POST /v1/offramp/callback fails closed without a valid signature', async () => {
   const res = await postJson('/v1/offramp/callback', { status: 'completed', order_id: '1' });
   assert.equal(res.status, 401);
-  assert.equal((await res.json() as any).error, 'InvalidSignature');
+  assert.equal((await json(res)).error, 'InvalidSignature');
 });
 
 test('GET /v1/ops/payouts/batches/:id returns 404 for an unknown batch', async () => {

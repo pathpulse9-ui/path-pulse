@@ -1,33 +1,33 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import jwt from 'jsonwebtoken';
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk';
-import { createServer } from '../server.js';
-import { migrate, db, closeDb } from '../db/client.js';
+import { db, closeDb } from '../db/client.js';
 import { createSessionToken, verifySessionToken } from '../services/session.js';
 import { buildChallenge, verifyChallenge } from '../services/walletAuth.js';
 import { verifyRampWebhook } from '../services/ramp.js';
 import { verifyCarretWebhook } from '../services/carret.js';
+import { startTestApi, stopTestApi } from './testSupport.js';
 
-let server: Server;
-let base: string;
+let server: Server | undefined;
+let base = '';
 const walletAddresses: string[] = [];
 
 before(async () => {
-  await migrate();
-  server = createServer().listen(0);
-  await new Promise<void>((r) => server.once('listening', () => r()));
-  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  ({ server, base } = await startTestApi());
 });
 
 after(async () => {
   if (walletAddresses.length) {
-    await db().query('delete from wallet_users where address = any($1)', [walletAddresses]);
+    try {
+      await db().query('delete from wallet_users where address = any($1)', [walletAddresses]);
+    } catch {
+      void 0;
+    }
   }
-  await new Promise<void>((r) => server.close(() => r()));
+  await stopTestApi(server);
   await closeDb();
 });
 
