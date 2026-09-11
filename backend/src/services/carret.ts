@@ -539,10 +539,48 @@ async function carretV2Fetch<T>(
     }),
   );
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Carret ${method} ${path} failed (${res.status}): ${text}`);
+    throw carretHttpError(res.status, await res.text().catch(() => ''), `${method} ${path}`);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * Wrap an upstream Carret error into an Error our route middleware will send
+ * back with a helpful HTTP status + a driver-safe message.
+ *
+ *   - Carret 4xx w/ `{"detail": "..."}` (DRF standard)  → status 422, message
+ *     = detail (surfaces PAN name mismatches, invalid file, etc.)
+ *   - Carret 4xx w/ `{"message": "..."}` or a bare string → same
+ *   - Carret 5xx → status 503 "Payments partner is briefly unavailable"
+ *
+ * The raw upstream body still goes into `err.upstream` for our own logs.
+ */
+function carretHttpError(status: number, rawText: string, ctx: string): Error {
+  const e = new Error() as Error & { status: number; upstream?: string };
+  e.name = 'CarretUpstreamError';
+  e.upstream = `${status} ${ctx}: ${rawText}`;
+  const parsed = safeParseJson(rawText);
+  const detail =
+    (parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>).detail ??
+        (parsed as Record<string, unknown>).message ??
+        (parsed as Record<string, unknown>).error
+      : undefined) ?? rawText;
+  const human = typeof detail === 'string' ? detail.trim() : '';
+  if (status >= 500) {
+    e.status = 503;
+    e.message = 'Payments partner is briefly unavailable. Please try again in a few minutes.';
+  } else {
+    // 4xx: pass Carret's own message through (they surface things like
+    // "PAN name doesn't match" or "Aadhaar signature verification failed").
+    e.status = 422;
+    e.message = human && human.length <= 240 ? human : 'Some of the details couldn\'t be accepted.';
+  }
+  return e;
+}
+
+function safeParseJson(text: string): unknown {
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 /**
@@ -636,8 +674,7 @@ export async function uploadKycFile(params: {
     }),
   );
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Carret POST /kyc/document_file/submit/ failed (${res.status}): ${text}`);
+    throw carretHttpError(res.status, await res.text().catch(() => ''), 'POST /kyc/document_file/submit/');
   }
   return res.json();
 }

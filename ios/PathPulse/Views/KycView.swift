@@ -2,322 +2,232 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
-/// Carret KYC — 6-section flow (PAT-79).
-///
-/// Mirrors `web/app/dashboard/kyc/page.tsx`:
-///   1. Sub-account (create fresh OR reuse existing accountId)
-///   2. Initiate KYC session
-///   3. PAN (JSON — number + name + dob)
-///   4. Aadhaar XML (file upload)
-///   5. Selfie (image upload)
-///   6. Status polling (every 3s until verified / rejected)
+/// Multi-page KYC wizard. Shows ONE step at a time with Continue / Back so it
+/// doesn't overwhelm the driver. Success on each step auto-advances to the
+/// next; polling for verification happens on the last page.
 struct KycView: View {
     @Environment(\.dismiss) private var dismiss
 
-    // Section state machine — each section holds an idle/busy/success/error tag + message.
-    @State private var steps: [Step: StepStatus] = [
-        .account: .idle, .initiate: .idle, .pan: .idle,
-        .aadhaar: .idle, .selfie: .idle, .polling: .idle, .done: .idle,
-    ]
+    // Wizard cursor + shared submission state.
+    @State private var page: WizardPage = .details
+    @State private var submitting = false
+    @State private var error: String? = nil
 
-    // Section 1 form inputs
+    // Section 1 — details
     @State private var accountId = ""
     @State private var firstName = ""
     @State private var lastName = ""
     @State private var email = ""
     @State private var phone = ""
-    @State private var dob = ""            // dd/mm/yyyy
+    @State private var dob = ""                    // dd/mm/yyyy
     @State private var country = "IN"
     @State private var gender: Gender = .male
     @State private var occupation = "Business Owner"
     @State private var income = "₹5 Lakhs-₹10 Lakhs"
 
-    // Section 2
+    // Section 2 — session (auto-initiated on entering PAN page)
     @State private var sessionId = ""
 
-    // Section 3
+    // Section 3 — PAN
     @State private var panNumber = ""
     @State private var panName = ""
     @State private var panDob = ""
 
-    // Section 4 + 5 file picks
+    // Section 4 — Aadhaar
     @State private var aadhaarPickerShown = false
     @State private var pickedAadhaarURL: URL? = nil
+    // Section 5 — selfie
     @State private var selfieItem: PhotosPickerItem? = nil
     @State private var pickedSelfieURL: URL? = nil
 
-    // Section 6
+    // Section 6 — polling
     @State private var kycStatus: CarretKycStatus? = nil
-    @State private var pollError: String? = nil
     @State private var pollingTask: Task<Void, Never>? = nil
 
     private let data = DataRepository()
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: PpSpace.md) {
-                    intro
-                    accountCard
-                    initiateCard
-                    panCard
-                    aadhaarCard
-                    selfieCard
-                    if (steps[.selfie]?.isSuccess ?? false) || kycStatus != nil {
-                        statusCard
-                    }
+            VStack(spacing: 0) {
+                progressBar
+                if let error {
+                    Text(error)
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.red600)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(PpSpace.md)
+                        .background(PathPulseColor.red100)
+                        .padding(.horizontal, PpSize.screenPadding)
+                        .padding(.bottom, PpSpace.sm)
                 }
-                .padding(.horizontal, PpSize.screenPadding)
-                .padding(.vertical, PpSpace.lg)
+                ScrollView { currentPage.padding(.bottom, PpSpace.xxl) }
+                actionBar
             }
             .background(PathPulseColor.background)
-            .navigationTitle("Driver KYC")
+            .navigationTitle(page.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { pollingTask?.cancel(); dismiss() }
+                    Button(page == .details ? "Close" : "Back") {
+                        if page == .details {
+                            pollingTask?.cancel(); dismiss()
+                        } else {
+                            error = nil
+                            page = page.previous
+                        }
+                    }
                 }
             }
         }
         .onDisappear { pollingTask?.cancel() }
     }
 
-    // MARK: - Header
+    // MARK: - Progress bar
 
     @ViewBuilder
-    private var intro: some View {
-        VStack(alignment: .leading, spacing: PpSpace.xs) {
-            Text("Verify your identity")
-                .font(PathPulseFont.titleMedium)
-                .foregroundStyle(PathPulseColor.black)
-            Text("A quick check so you can withdraw to your bank. Have your PAN and Aadhaar handy.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black60)
-        }
-        .padding(.bottom, PpSpace.sm)
-    }
-
-    // MARK: - Section 1 · Sub-account
-
-    @ViewBuilder
-    private var accountCard: some View {
-        section(num: 1, title: "Your details", step: .account) {
-            Text("A few basics we need on file before we can start verification.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black50)
-                .padding(.bottom, PpSpace.sm)
-
-            VStack(spacing: PpSpace.sm) {
-                HStack(spacing: PpSpace.sm) {
-                    field("First name", text: $firstName)
-                    field("Last name",  text: $lastName)
-                }
-                field("Email", text: $email, placeholder: "you+kyc@gmail.com", keyboard: .emailAddress)
-                field("Phone (12 char, no +)", text: $phone, placeholder: "919XXXXXXXXX", keyboard: .phonePad)
-                HStack(spacing: PpSpace.sm) {
-                    field("DOB (dd/mm/yyyy)", text: $dob, placeholder: "18/04/2003")
-                    field("Country (ISO-2)", text: $country)
-                }
-                Picker("Gender", selection: $gender) {
-                    ForEach(Gender.allCases) { Text($0.rawValue.capitalized).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                pickerField("Occupation", selection: $occupation, options: OCCUPATIONS)
-                pickerField("Annual income", selection: $income, options: INCOMES)
-            }
-
+    private var progressBar: some View {
+        let idx = Double(page.index) / Double(WizardPage.total - 1)
+        VStack(spacing: PpSpace.xs) {
             HStack {
-                Button(action: { Task { await createSubAccount() } }) {
-                    Text((steps[.account]?.isBusy ?? false) ? "Saving…" : "Save details")
-                        .font(PathPulseFont.labelMedium)
-                        .foregroundStyle(PathPulseColor.white)
-                        .padding(.horizontal, PpSpace.md)
-                        .padding(.vertical, PpSpace.sm)
-                        .background(PathPulseColor.black)
-                        .clipShape(Capsule())
+                Text("Step \(page.index + 1) of \(WizardPage.total)")
+                    .font(PathPulseFont.labelSmall)
+                    .foregroundStyle(PathPulseColor.black50)
+                Spacer()
+                Text(page.title)
+                    .font(PathPulseFont.labelSmall)
+                    .foregroundStyle(PathPulseColor.black70)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(PathPulseColor.black05)
+                    Capsule().fill(PathPulseColor.mint)
+                        .frame(width: max(4, geo.size.width * idx))
                 }
-                .disabled((steps[.account]?.isBusy ?? false))
             }
-            .padding(.top, PpSpace.md)
+            .frame(height: 4)
+        }
+        .padding(.horizontal, PpSize.screenPadding)
+        .padding(.top, PpSpace.md)
+        .padding(.bottom, PpSpace.md)
+    }
+
+    // MARK: - Page bodies
+
+    @ViewBuilder
+    private var currentPage: some View {
+        switch page {
+        case .details:  detailsPage
+        case .pan:      panPage
+        case .aadhaar:  aadhaarPage
+        case .selfie:   selfiePage
+        case .status:   statusPage
         }
     }
 
-    // MARK: - Section 2 · Initiate
-
     @ViewBuilder
-    private var initiateCard: some View {
-        section(num: 2, title: "Start verification", step: .initiate) {
-            Text("We'll ask for your PAN card, Aadhaar file, and a selfie next.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black50)
-                .padding(.bottom, PpSpace.sm)
-            Button(action: { Task { await initiate() } }) {
-                Text((steps[.initiate]?.isBusy ?? false) ? "Starting…" : "Start verification")
-                    .font(PathPulseFont.labelMedium)
-                    .foregroundStyle(PathPulseColor.white)
-                    .padding(.horizontal, PpSpace.md)
-                    .padding(.vertical, PpSpace.sm)
-                    .background(accountId.isEmpty ? PathPulseColor.black50 : PathPulseColor.black)
-                    .clipShape(Capsule())
+    private var detailsPage: some View {
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            hint("A few basics we'll need on file before we can start verification.")
+            HStack(spacing: PpSpace.sm) {
+                field("First name", text: $firstName)
+                field("Last name",  text: $lastName)
             }
-            .disabled(accountId.isEmpty || (steps[.initiate]?.isBusy ?? false))
+            field("Email", text: $email, placeholder: "you@gmail.com", keyboard: .emailAddress)
+            field("Phone (12 digits, no +)", text: $phone, placeholder: "919XXXXXXXXX", keyboard: .phonePad)
+            HStack(spacing: PpSpace.sm) {
+                field("Date of birth (dd/mm/yyyy)", text: $dob, placeholder: "18/04/2003")
+                field("Country (ISO-2)", text: $country)
+            }
+            picker("Gender", selection: $gender, options: Gender.allCases, label: \.rawValue)
+            pickerField("Occupation", selection: $occupation, options: OCCUPATIONS)
+            pickerField("Annual income", selection: $income, options: INCOMES)
         }
+        .padding(.horizontal, PpSize.screenPadding)
     }
 
-    // MARK: - Section 3 · PAN
-
     @ViewBuilder
-    private var panCard: some View {
-        section(num: 3, title: "PAN card", step: .pan) {
-            Text("Enter these exactly as printed on your PAN card.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black50)
-                .padding(.bottom, PpSpace.sm)
-            VStack(spacing: PpSpace.sm) {
-                field("PAN number (10 characters)", text: $panNumber, placeholder: "ABCDE1234F")
-                    .textInputAutocapitalization(.characters)
-                field("Name on card", text: $panName)
-                field("Date of birth (dd/mm/yyyy)", text: $panDob, placeholder: "18/04/2003")
-            }
-            Button(action: { Task { await submitPan() } }) {
-                Text((steps[.pan]?.isBusy ?? false) ? "Checking…" : "Submit PAN")
-                    .font(PathPulseFont.labelMedium)
-                    .foregroundStyle(PathPulseColor.white)
-                    .padding(.horizontal, PpSpace.md)
-                    .padding(.vertical, PpSpace.sm)
-                    .background(sessionId.isEmpty ? PathPulseColor.black50 : PathPulseColor.black)
-                    .clipShape(Capsule())
-            }
-            .disabled(sessionId.isEmpty || (steps[.pan]?.isBusy ?? false))
-            .padding(.top, PpSpace.md)
+    private var panPage: some View {
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            hint("Enter these exactly as printed on your PAN card. If anything doesn't match India's tax records, Carret will reject it — so double-check spelling and DOB.")
+            field("PAN number (10 characters)", text: $panNumber, placeholder: "ABCDE1234F")
+                .textInputAutocapitalization(.characters)
+            field("Name on card", text: $panName, placeholder: "e.g. RAHUL KUMAR SHARMA")
+            field("Date of birth (dd/mm/yyyy)", text: $panDob, placeholder: "18/04/2003")
         }
+        .padding(.horizontal, PpSize.screenPadding)
     }
 
-    // MARK: - Section 4 · Aadhaar XML
-
     @ViewBuilder
-    private var aadhaarCard: some View {
-        section(num: 4, title: "Aadhaar file", step: .aadhaar) {
-            Text("Open DigiLocker → Aadhaar → Share as XML. Upload the ZIP file you get here.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black50)
-                .padding(.bottom, PpSpace.sm)
-
+    private var aadhaarPage: some View {
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            hint("Upload your Aadhaar. Accepted formats: XML / ZIP from DigiLocker (most reliable), or a clear photo/PDF of your Aadhaar card.")
             Button(action: { aadhaarPickerShown = true }) {
                 HStack {
-                    Image(systemName: "doc.badge.plus")
-                    Text(pickedAadhaarURL?.lastPathComponent ?? "Choose Aadhaar file")
+                    Image(systemName: pickedAadhaarURL == nil ? "doc.badge.plus" : "checkmark.circle.fill")
+                        .foregroundStyle(pickedAadhaarURL == nil ? PathPulseColor.black70 : PathPulseColor.mint)
+                    Text(pickedAadhaarURL?.lastPathComponent ?? "Choose file (XML, ZIP, JPG, PNG, PDF)")
+                        .font(PathPulseFont.labelMedium)
+                        .foregroundStyle(PathPulseColor.black)
                         .lineLimit(1)
+                    Spacer()
                 }
-                .font(PathPulseFont.labelMedium)
-                .foregroundStyle(PathPulseColor.black)
-                .padding(.horizontal, PpSpace.md)
-                .padding(.vertical, PpSpace.sm)
+                .padding(PpSpace.md)
                 .frame(maxWidth: .infinity)
-                .background(PathPulseColor.black05)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(PathPulseColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PathPulseColor.black15, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .fileImporter(
                 isPresented: $aadhaarPickerShown,
-                allowedContentTypes: [UTType.xml, UTType.zip],
+                allowedContentTypes: [
+                    .xml, .zip,
+                    .image, .jpeg, .png,
+                    .pdf,
+                ],
             ) { result in
-                if case .success(let url) = result {
-                    pickedAadhaarURL = url
-                }
+                if case .success(let url) = result { pickedAadhaarURL = url }
             }
 
-            Button(action: { Task { await uploadAadhaar() } }) {
-                Text((steps[.aadhaar]?.isBusy ?? false) ? "Uploading…" : "Upload Aadhaar")
-                    .font(PathPulseFont.labelMedium)
-                    .foregroundStyle(PathPulseColor.white)
-                    .padding(.horizontal, PpSpace.md)
-                    .padding(.vertical, PpSpace.sm)
-                    .background(pickedAadhaarURL == nil || sessionId.isEmpty
-                                ? PathPulseColor.black50 : PathPulseColor.black)
-                    .clipShape(Capsule())
-            }
-            .disabled(pickedAadhaarURL == nil || sessionId.isEmpty || (steps[.aadhaar]?.isBusy ?? false))
-            .padding(.top, PpSpace.md)
+            hint("Tip: get the XML from DigiLocker → Aadhaar → Share as XML for the fastest verification.")
         }
+        .padding(.horizontal, PpSize.screenPadding)
     }
 
-    // MARK: - Section 5 · Selfie
-
     @ViewBuilder
-    private var selfieCard: some View {
-        section(num: 5, title: "Selfie", step: .selfie) {
-            Text("Take a clear, well-lit photo facing the camera. Plain background works best.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black50)
-                .padding(.bottom, PpSpace.sm)
-
+    private var selfiePage: some View {
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            hint("Take a clear, well-lit photo facing the camera. Plain background works best.")
             PhotosPicker(selection: $selfieItem, matching: .images) {
                 HStack {
-                    Image(systemName: "camera")
-                    Text(pickedSelfieURL?.lastPathComponent ?? "Choose selfie")
+                    Image(systemName: pickedSelfieURL == nil ? "camera" : "checkmark.circle.fill")
+                        .foregroundStyle(pickedSelfieURL == nil ? PathPulseColor.black70 : PathPulseColor.mint)
+                    Text(pickedSelfieURL?.lastPathComponent ?? "Choose a selfie")
+                        .font(PathPulseFont.labelMedium)
+                        .foregroundStyle(PathPulseColor.black)
                         .lineLimit(1)
+                    Spacer()
                 }
-                .font(PathPulseFont.labelMedium)
-                .foregroundStyle(PathPulseColor.black)
-                .padding(.horizontal, PpSpace.md)
-                .padding(.vertical, PpSpace.sm)
+                .padding(PpSpace.md)
                 .frame(maxWidth: .infinity)
-                .background(PathPulseColor.black05)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(PathPulseColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PathPulseColor.black15, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .onChange(of: selfieItem) { _, newItem in
                 Task { pickedSelfieURL = await savePickedPhoto(newItem) }
             }
-
-            Button(action: { Task { await uploadSelfie() } }) {
-                Text((steps[.selfie]?.isBusy ?? false) ? "Uploading…" : "Upload selfie")
-                    .font(PathPulseFont.labelMedium)
-                    .foregroundStyle(PathPulseColor.white)
-                    .padding(.horizontal, PpSpace.md)
-                    .padding(.vertical, PpSpace.sm)
-                    .background(pickedSelfieURL == nil || sessionId.isEmpty
-                                ? PathPulseColor.black50 : PathPulseColor.black)
-                    .clipShape(Capsule())
-            }
-            .disabled(pickedSelfieURL == nil || sessionId.isEmpty || (steps[.selfie]?.isBusy ?? false))
-            .padding(.top, PpSpace.md)
         }
+        .padding(.horizontal, PpSize.screenPadding)
     }
 
-    // MARK: - Section 6 · Status
-
     @ViewBuilder
-    private var statusCard: some View {
-        section(num: 6, title: "Verification status", step: .polling) {
+    private var statusPage: some View {
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            hint("We're checking your documents with the payments partner. This usually takes a few seconds.")
             if let s = kycStatus {
-                HStack {
-                    Text("Status:")
-                        .font(PathPulseFont.bodySmall)
-                        .foregroundStyle(PathPulseColor.black50)
-                    statusPill(friendlyStatus(s.kyc_status))
-                }
-                if s.kyc_status == "manual_review" {
-                    Text("Our team is taking a closer look. This can take a few hours — we'll notify you when it's done.")
-                        .font(PathPulseFont.bodySmall)
-                        .foregroundStyle(PathPulseColor.black60)
-                        .padding(.top, PpSpace.sm)
-                }
-                if s.kyc_status == "verified" {
-                    Text("All set. You're ready to withdraw to your bank.")
-                        .font(PathPulseFont.bodySmall)
-                        .foregroundStyle(PathPulseColor.black60)
-                        .padding(.top, PpSpace.sm)
-                }
-                if s.kyc_status == "rejected" {
-                    Text("Something didn't match. Tap \"Start over\" and try again with clearer documents.")
-                        .font(PathPulseFont.bodySmall)
-                        .foregroundStyle(PathPulseColor.black60)
-                        .padding(.top, PpSpace.sm)
-                }
+                statusCard(s)
             } else {
-                Text("Checking your verification…")
-                    .font(PathPulseFont.bodySmall)
-                    .foregroundStyle(PathPulseColor.black50)
+                loadingRow("Checking your verification…")
             }
             Button(action: { Task { await cleanupAndRetry() } }) {
                 Text("Start over")
@@ -329,13 +239,72 @@ struct KycView: View {
             }
             .padding(.top, PpSpace.md)
         }
+        .padding(.horizontal, PpSize.screenPadding)
     }
 
-    // MARK: - Action handlers
+    // MARK: - Action bar
+
+    @ViewBuilder
+    private var actionBar: some View {
+        if let action = page.action {
+            VStack(spacing: 0) {
+                Divider().background(PathPulseColor.black05)
+                Button(action: { Task { await performAction() } }) {
+                    HStack(spacing: PpSpace.sm) {
+                        if submitting {
+                            ProgressView().tint(PathPulseColor.white)
+                        }
+                        Text(submitting ? action.busyLabel : action.label)
+                            .font(PathPulseFont.labelLarge)
+                            .foregroundStyle(PathPulseColor.white)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: PpSize.control)
+                    .background(actionEnabled && !submitting ? PathPulseColor.black : PathPulseColor.black50)
+                    .clipShape(Capsule())
+                }
+                .disabled(!actionEnabled || submitting)
+                .padding(.horizontal, PpSize.screenPadding)
+                .padding(.vertical, PpSpace.md)
+                .background(PathPulseColor.background)
+            }
+        }
+    }
+
+    private var actionEnabled: Bool {
+        switch page {
+        case .details:
+            return !firstName.isEmpty && !lastName.isEmpty && !email.isEmpty
+                && !phone.isEmpty && !dob.isEmpty
+        case .pan:      return !panNumber.isEmpty && !panName.isEmpty && !panDob.isEmpty
+        case .aadhaar:  return pickedAadhaarURL != nil
+        case .selfie:   return pickedSelfieURL != nil
+        case .status:   return false
+        }
+    }
+
+    private func performAction() async {
+        submitting = true
+        error = nil
+        defer { submitting = false }
+        switch page {
+        case .details:
+            if await createSubAccount() { page = .pan; _ = await initiate() }
+        case .pan:
+            if await submitPan() { page = .aadhaar }
+        case .aadhaar:
+            if await uploadAadhaar() { page = .selfie }
+        case .selfie:
+            if await uploadSelfie() { page = .status; startPolling() }
+        case .status:
+            break
+        }
+    }
+
+    // MARK: - Backend calls
 
     @MainActor
-    private func createSubAccount() async {
-        setStep(.account, .busy, "Saving your details…")
+    private func createSubAccount() async -> Bool {
         do {
             let acc = try await data.createCarretSubAccount(CarretSubAccountInput(
                 email: email,
@@ -347,27 +316,27 @@ struct KycView: View {
                 annual_income: income,
             ))
             accountId = String(acc.id)
-            setStep(.account, .success, "Details saved.")
+            return true
         } catch {
-            setStep(.account, .error, UserErrors.message(error))
+            self.error = UserErrors.message(error)
+            return false
         }
     }
 
     @MainActor
-    private func initiate() async {
-        setStep(.initiate, .busy, "Getting things ready…")
+    private func initiate() async -> Bool {
         do {
             let r = try await data.initiateCarretKyc(accountId: accountId)
             sessionId = r.session.session_id
-            setStep(.initiate, .success, "Ready — please submit the documents below.")
+            return true
         } catch {
-            setStep(.initiate, .error, UserErrors.message(error))
+            self.error = UserErrors.message(error)
+            return false
         }
     }
 
     @MainActor
-    private func submitPan() async {
-        setStep(.pan, .busy, "Checking your PAN…")
+    private func submitPan() async -> Bool {
         do {
             _ = try await data.submitCarretKycDocument(
                 kycSessionId: sessionId,
@@ -377,42 +346,43 @@ struct KycView: View {
                     name: panName, dob: panDob,
                 ),
             )
-            setStep(.pan, .success, "PAN accepted.")
+            return true
         } catch {
-            setStep(.pan, .error, UserErrors.message(error))
+            self.error = UserErrors.message(error)
+            return false
         }
     }
 
     @MainActor
-    private func uploadAadhaar() async {
-        guard let url = pickedAadhaarURL else { return }
-        setStep(.aadhaar, .busy, "Uploading Aadhaar…")
+    private func uploadAadhaar() async -> Bool {
+        guard let url = pickedAadhaarURL else { return false }
         do {
-            // Get security-scoped access to the picked file.
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             try await data.uploadCarretKycFile(
-                kycSession: sessionId, docType: "aadhaar", fileType: "xml", fileURL: url,
+                kycSession: sessionId,
+                docType: "aadhaar",
+                fileType: aadhaarFileType(for: url),
+                fileURL: url,
             )
-            setStep(.aadhaar, .success, "Aadhaar received.")
+            return true
         } catch {
-            setStep(.aadhaar, .error, UserErrors.message(error))
+            self.error = UserErrors.message(error)
+            return false
         }
     }
 
     @MainActor
-    private func uploadSelfie() async {
-        guard let url = pickedSelfieURL else { return }
-        setStep(.selfie, .busy, "Uploading your photo…")
+    private func uploadSelfie() async -> Bool {
+        guard let url = pickedSelfieURL else { return false }
         do {
             try await data.uploadCarretKycFile(
                 kycSession: sessionId, docType: "selfie", fileType: "image", fileURL: url,
             )
-            setStep(.selfie, .success, "Photo received.")
-            setStep(.polling, .busy, "Checking your verification…")
-            startPolling()
+            return true
         } catch {
-            setStep(.selfie, .error, UserErrors.message(error))
+            self.error = UserErrors.message(error)
+            return false
         }
     }
 
@@ -421,22 +391,10 @@ struct KycView: View {
         do {
             try await data.cleanupCarretKyc(accountId: accountId)
             sessionId = ""; kycStatus = nil; pollingTask?.cancel()
-            setStep(.initiate, .idle, nil); setStep(.pan, .idle, nil)
-            setStep(.aadhaar, .idle, nil);  setStep(.selfie, .idle, nil)
-            setStep(.polling, .idle, nil);  setStep(.done, .idle, nil)
+            page = .details
+            error = nil
         } catch {
-            pollError = UserErrors.message(error)
-        }
-    }
-
-    /// Maps Carret's raw statuses to something a driver will read.
-    private func friendlyStatus(_ raw: String) -> String {
-        switch raw {
-        case "verified":      return "verified"
-        case "pending":       return "in progress"
-        case "manual_review": return "under review"
-        case "rejected":      return "needs attention"
-        default:              return raw
+            self.error = UserErrors.message(error)
         }
     }
 
@@ -448,29 +406,23 @@ struct KycView: View {
                     let s = try await data.getCarretKycStatus(accountId: accountId)
                     await MainActor.run {
                         kycStatus = s
-                        pollError = nil
-                        switch s.kyc_status {
-                        case "verified":
-                            setStep(.polling, .success, "KYC verified ✔")
-                            setStep(.done, .success, "All done — this sub-account is off-ramp ready.")
+                        if s.kyc_status == "verified" || s.kyc_status == "rejected" {
                             pollingTask?.cancel()
-                        case "rejected":
-                            setStep(.polling, .error, "Rejected. Use Cleanup and retry with corrected docs.")
-                            pollingTask?.cancel()
-                        case "manual_review":
-                            setStep(.polling, .busy, "Flagged for manual review at Carret — waiting on their team.")
-                        default: break
                         }
                     }
-                } catch {
-                    await MainActor.run { pollError = UserErrors.message(error) }
-                }
+                } catch { /* keep polling */ }
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
         }
     }
 
-    /// PhotosPickerItem → local file URL that our multipart uploader can read.
+    /// Pick the right file_type flag for whatever the user chose.
+    private func aadhaarFileType(for url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        return (ext == "xml" || ext == "zip") ? "xml" : "image"
+    }
+
+    /// PhotosPickerItem → local file URL that the multipart uploader can read.
     private func savePickedPhoto(_ item: PhotosPickerItem?) async -> URL? {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return nil }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("selfie-\(UUID().uuidString).jpg")
@@ -478,64 +430,50 @@ struct KycView: View {
         return tmp
     }
 
-    // MARK: - Section chrome
+    // MARK: - Small view builders
 
     @ViewBuilder
-    private func section<Content: View>(
-        num: Int, title: String, step: Step,
-        @ViewBuilder _ content: @escaping () -> Content,
-    ) -> some View {
-        PpCard {
-            HStack {
-                Text("\(num).")
-                    .font(PathPulseFont.titleMedium).foregroundStyle(PathPulseColor.black40)
-                Text(title)
-                    .font(PathPulseFont.titleMedium).foregroundStyle(PathPulseColor.black)
-                Spacer()
-                stepBadge(steps[step] ?? .idle)
+    private func statusCard(_ s: CarretKycStatus) -> some View {
+        let label = friendlyStatus(s.kyc_status)
+        let explainer: String? = {
+            switch s.kyc_status {
+            case "verified":      return "All set. You're ready to withdraw to your bank."
+            case "manual_review": return "Our team is taking a closer look. This can take a few hours — we'll notify you once it's done."
+            case "rejected":      return "Something didn't match. Tap Start over and try again with clearer documents."
+            default:              return nil
             }
-            if case let .busy(msg)    = steps[step]!, let msg { messageLine(msg, color: PathPulseColor.black60) }
-            if case let .success(msg) = steps[step]!, let msg { messageLine(msg, color: PathPulseColor.black60) }
-            if case let .error(msg)   = steps[step]!, let msg { messageLine(msg, color: PathPulseColor.red600) }
-            content()
-                .padding(.top, PpSpace.sm)
+        }()
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            HStack {
+                Text("Status")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black50)
+                Spacer()
+                statusPill(label)
+            }
+            if let explainer {
+                Text(explainer)
+                    .font(PathPulseFont.bodyMedium)
+                    .foregroundStyle(PathPulseColor.black70)
+            }
         }
-    }
-
-    @ViewBuilder
-    private func messageLine(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(PathPulseFont.bodySmall)
-            .foregroundStyle(color)
-            .padding(.top, PpSpace.xs)
-    }
-
-    @ViewBuilder
-    private func stepBadge(_ s: StepStatus) -> some View {
-        switch s {
-        case .idle: EmptyView()
-        case .busy:    pill("Running…", bg: PathPulseColor.blue50,  fg: PathPulseColor.blue700)
-        case .success: pill("Done",     bg: PathPulseColor.green100, fg: PathPulseColor.green700)
-        case .error:   pill("Error",    bg: PathPulseColor.red100,   fg: PathPulseColor.red700)
-        }
+        .padding(PpSpace.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PathPulseColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     @ViewBuilder
     private func statusPill(_ label: String) -> some View {
         let (bg, fg): (Color, Color) = {
             switch label {
-            case "verified":      return (PathPulseColor.green100, PathPulseColor.green700)
-            case "rejected":      return (PathPulseColor.red100,   PathPulseColor.red700)
-            case "manual_review": return (Color(hex: 0xFEF3C7),    Color(hex: 0xB45309))
-            default:              return (PathPulseColor.blue50,   PathPulseColor.blue700)
+            case "verified":     return (PathPulseColor.green100, PathPulseColor.green700)
+            case "needs attention": return (PathPulseColor.red100, PathPulseColor.red700)
+            case "under review": return (Color(hex: 0xFEF3C7), Color(hex: 0xB45309))
+            default:             return (PathPulseColor.blue50, PathPulseColor.blue700)
             }
         }()
-        pill(label, bg: bg, fg: fg)
-    }
-
-    @ViewBuilder
-    private func pill(_ text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
+        Text(label)
             .font(PathPulseFont.labelSmall)
             .foregroundStyle(fg)
             .padding(.horizontal, PpSpace.sm)
@@ -544,7 +482,32 @@ struct KycView: View {
             .clipShape(Capsule())
     }
 
-    // MARK: - Field helpers
+    private func friendlyStatus(_ raw: String) -> String {
+        switch raw {
+        case "verified":      return "verified"
+        case "pending":       return "in progress"
+        case "manual_review": return "under review"
+        case "rejected":      return "needs attention"
+        default:              return raw
+        }
+    }
+
+    @ViewBuilder
+    private func loadingRow(_ text: String) -> some View {
+        HStack(spacing: PpSpace.sm) {
+            ProgressView()
+            Text(text)
+                .font(PathPulseFont.bodyMedium)
+                .foregroundStyle(PathPulseColor.black70)
+        }
+    }
+
+    @ViewBuilder
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(PathPulseFont.bodyMedium)
+            .foregroundStyle(PathPulseColor.black70)
+    }
 
     @ViewBuilder
     private func field(
@@ -557,6 +520,24 @@ struct KycView: View {
             TextField(placeholder, text: text)
                 .keyboardType(keyboard)
                 .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    @ViewBuilder
+    private func picker<Value: Hashable & Identifiable>(
+        _ label: String,
+        selection: Binding<Value>,
+        options: [Value],
+        label labelKP: KeyPath<Value, String>,
+    ) -> some View {
+        VStack(alignment: .leading, spacing: PpSpace.xs) {
+            Text(label).font(PathPulseFont.labelSmall).foregroundStyle(PathPulseColor.black50)
+            Picker("", selection: selection) {
+                ForEach(options) { v in
+                    Text(v[keyPath: labelKP].capitalized).tag(v)
+                }
+            }
+            .pickerStyle(.segmented)
         }
     }
 
@@ -574,16 +555,44 @@ struct KycView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
+}
 
-    // Non-inline helpers stateful methods can call.
-    private func setStep(_ step: Step, _ tag: StepTag, _ msg: String?) {
-        switch tag {
-        case .idle:    steps[step] = .idle
-        case .busy:    steps[step] = .busy(msg)
-        case .success: steps[step] = .success(msg)
-        case .error:   steps[step] = .error(msg)
+// MARK: - Wizard model
+
+private enum WizardPage: Int, CaseIterable, Identifiable {
+    case details, pan, aadhaar, selfie, status
+    var id: Int { rawValue }
+    var index: Int { rawValue }
+    static var total: Int { WizardPage.allCases.count }
+
+    var previous: WizardPage {
+        WizardPage(rawValue: max(0, rawValue - 1)) ?? .details
+    }
+
+    var title: String {
+        switch self {
+        case .details: return "Your details"
+        case .pan:     return "PAN card"
+        case .aadhaar: return "Aadhaar"
+        case .selfie:  return "Selfie"
+        case .status:  return "Verification"
         }
     }
+
+    var action: WizardAction? {
+        switch self {
+        case .details: return WizardAction(label: "Continue",      busyLabel: "Saving…")
+        case .pan:     return WizardAction(label: "Verify PAN",    busyLabel: "Checking…")
+        case .aadhaar: return WizardAction(label: "Upload Aadhaar", busyLabel: "Uploading…")
+        case .selfie:  return WizardAction(label: "Upload photo",  busyLabel: "Uploading…")
+        case .status:  return nil
+        }
+    }
+}
+
+private struct WizardAction {
+    let label: String
+    let busyLabel: String
 }
 
 private enum Gender: String, CaseIterable, Identifiable {
@@ -599,20 +608,3 @@ private let INCOMES = [
     "< ₹5 Lakhs", "₹5 Lakhs-₹10 Lakhs", "₹10 Lakhs-₹25 Lakhs",
     "₹25 Lakhs-₹50 Lakhs", "₹50 Lakhs-1 Crore", ">₹1 Crore",
 ]
-
-private enum Step: Hashable {
-    case account, initiate, pan, aadhaar, selfie, polling, done
-}
-
-private enum StepStatus {
-    case idle
-    case busy(String?)
-    case success(String?)
-    case error(String?)
-
-    var isBusy: Bool    { if case .busy    = self { return true } else { return false } }
-    var isSuccess: Bool { if case .success = self { return true } else { return false } }
-    var isError: Bool   { if case .error   = self { return true } else { return false } }
-}
-
-private enum StepTag { case idle, busy, success, error }
