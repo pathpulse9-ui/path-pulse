@@ -1,6 +1,17 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { ProxyAgent } from 'undici';
 import { env, carretLive } from '../config/env.js';
 import type { OffRampStatus } from '@pathpulse/contract';
+
+const carretDispatcher: unknown = env.carret.httpsProxy
+  ? new ProxyAgent(env.carret.httpsProxy)
+  : undefined;
+
+function carretFetchOptions(init: RequestInit): RequestInit {
+  const opts: Record<string, unknown> = { signal: AbortSignal.timeout(30_000), ...init };
+  if (carretDispatcher) opts.dispatcher = carretDispatcher;
+  return opts as RequestInit;
+}
 
 /**
  * Carret Infra off-ramp (D4 · alt provider).
@@ -184,15 +195,18 @@ async function carretFetch<T>(
   }
   await takeToken();
   const doFetch = () =>
-    fetch(url.toString(), {
-      method,
-      headers: {
-        'API-KEY': env.carret.apiKey,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    });
+    fetch(
+      url.toString(),
+      carretFetchOptions({
+        method,
+        headers: {
+          'API-KEY': env.carret.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      }),
+    );
   let res = await doFetch();
   // Retry once on 429 with a small back-off.
   if (res.status === 429) {
@@ -512,15 +526,18 @@ async function carretV2Fetch<T>(
 ): Promise<T> {
   if (!carretLive) throw new Error('carretV2Fetch called without live credentials');
   const url = carretV2Base() + path;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      'API-KEY': env.carret.apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const res = await fetch(
+    url,
+    carretFetchOptions({
+      method,
+      headers: {
+        'API-KEY': env.carret.apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Carret ${method} ${path} failed (${res.status}): ${text}`);
@@ -606,15 +623,18 @@ export async function uploadKycFile(params: {
     );
   }
   const url = carretV2Base() + '/kyc/document_file/submit/';
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'API-KEY': env.carret.apiKey,
-      // Do NOT set Content-Type — fetch fills it with the multipart boundary.
-      Accept: 'application/json',
-    },
-    body: form,
-  });
+  const res = await fetch(
+    url,
+    carretFetchOptions({
+      method: 'POST',
+      headers: {
+        'API-KEY': env.carret.apiKey,
+        // Do NOT set Content-Type — fetch fills it with the multipart boundary.
+        Accept: 'application/json',
+      },
+      body: form,
+    }),
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Carret POST /kyc/document_file/submit/ failed (${res.status}): ${text}`);
