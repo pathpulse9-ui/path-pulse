@@ -636,7 +636,10 @@ const kycUpload = multer({
 
 const createSubAccountSchema = z.object({
   email: z.string().email(),
-  phone_number: z.string().min(10).max(12),
+  // Carret expects a bare 10-digit local number (no `+`, no country code).
+  // Mobile clients strip both before sending. See:
+  // https://carret-fluid.gitbook.io/carret_infra_api_documentation/account-management/sub-account
+  phone_number: z.string().regex(/^\d{10}$/, 'phone_number must be 10 digits'),
   first_name: z.string().min(1),
   last_name: z.string().min(1),
   user_ip_address: z.string().min(1).optional(),

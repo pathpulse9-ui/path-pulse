@@ -4,23 +4,58 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,50 +66,63 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pathpulse.driver.network.CarretKycDocumentSubmission
 import com.pathpulse.driver.network.CarretKycStatus
 import com.pathpulse.driver.network.CarretSubAccountInput
 import com.pathpulse.driver.network.DataRepository
 import com.pathpulse.driver.network.UserErrors
-import com.pathpulse.driver.ui.components.PpCard
-import com.pathpulse.driver.ui.components.PpPrimaryButton
-import com.pathpulse.driver.ui.components.PpSecondaryButton
+import com.pathpulse.driver.ui.theme.PpBackground
+import com.pathpulse.driver.ui.theme.PpBlack
 import com.pathpulse.driver.ui.theme.PpBlack05
+import com.pathpulse.driver.ui.theme.PpBlack15
 import com.pathpulse.driver.ui.theme.PpBlack40
 import com.pathpulse.driver.ui.theme.PpBlack50
+import com.pathpulse.driver.ui.theme.PpBlack60
 import com.pathpulse.driver.ui.theme.PpBlack70
-import com.pathpulse.driver.ui.theme.PpBlue50
-import com.pathpulse.driver.ui.theme.PpBlue700
-import com.pathpulse.driver.ui.theme.PpGreen100
-import com.pathpulse.driver.ui.theme.PpGreen700
-import com.pathpulse.driver.ui.theme.PpPillShape
+import com.pathpulse.driver.ui.theme.PpMint
+import com.pathpulse.driver.ui.theme.PpMint26
+import com.pathpulse.driver.ui.theme.PpMintInk
 import com.pathpulse.driver.ui.theme.PpRed100
 import com.pathpulse.driver.ui.theme.PpRed600
 import com.pathpulse.driver.ui.theme.PpRed700
 import com.pathpulse.driver.ui.theme.PpSize
 import com.pathpulse.driver.ui.theme.PpSpace
+import com.pathpulse.driver.ui.theme.PpSurface
+import com.pathpulse.driver.ui.theme.PpWhite
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Carret KYC — 6-section flow (PAT-79). Kotlin/Compose mirror of the iOS
- * `KycView` and the web `/dashboard/kyc` page. Handles PAN JSON, Aadhaar
- * XML file upload, selfie image upload, and 3s status polling.
+ * Polished multi-step KYC wizard — mirrors iOS `KycView`.
+ *
+ * Every step is a focused page with a hero mint circle icon, one big question
+ * or action, and a sticky primary CTA at the bottom. Pickers are card lists.
+ * File pickers are illustrated drop zones. Slim mint progress bar.
  */
-private enum class Step { Account, Initiate, Pan, Aadhaar, Selfie, Polling, Done }
+private enum class WizardPage(val stepIndex: Int) {
+    Welcome(0), Name(1), Contact(2), BornWhen(3), About(4),
+    Pan(5), Aadhaar(6), Selfie(7),
+    Checking(-1), Verified(-1), Rejected(-1);
+    companion object { const val STEP_COUNT = 8 }
+}
 
-private sealed class StepStatus {
-    object Idle : StepStatus()
-    data class Busy(val message: String? = null) : StepStatus()
-    data class Success(val message: String? = null) : StepStatus()
-    data class Error(val message: String) : StepStatus()
+private data class WizardAction(val label: String, val busyLabel: String)
+
+private enum class Gender(val icon: ImageVector, val label: String) {
+    male(Icons.Filled.Person, "Male"),
+    female(Icons.Filled.Person, "Female"),
+    other(Icons.Filled.Person, "Other"),
 }
 
 private val OCCUPATIONS = listOf(
@@ -91,472 +139,997 @@ private val INCOMES = listOf(
 fun KycScreen(
     modifier: Modifier = Modifier,
     dataRepository: DataRepository = remember { DataRepository() },
+    onDismiss: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val steps = remember {
-        mutableStateOf<Map<Step, StepStatus>>(Step.entries.associateWith { StepStatus.Idle })
-    }
-    fun setStep(step: Step, s: StepStatus) {
-        steps.value = steps.value.toMutableMap().apply { put(step, s) }
-    }
+    var page by remember { mutableStateOf(WizardPage.Welcome) }
+    var submitting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
 
-    // Section 1
     var accountId by remember { mutableStateOf("") }
+    var sessionId by remember { mutableStateOf("") }
+
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var dob by remember { mutableStateOf("") }
-    var country by remember { mutableStateOf("IN") }
-    var gender by remember { mutableStateOf("male") }
+    var phone by remember { mutableStateOf("") }          // digits only, no country code
+    var dialCode by remember { mutableStateOf(DialCode.India) }
+    // Nullable Long = millis since epoch (UTC). Backend format = dd/MM/yyyy.
+    var dobMillis by remember { mutableStateOf<Long?>(null) }
+    val country = "IN"
+    var gender by remember { mutableStateOf(Gender.male) }
     var occupation by remember { mutableStateOf("Business Owner") }
     var income by remember { mutableStateOf("₹5 Lakhs-₹10 Lakhs") }
 
-    // Section 2
-    var sessionId by remember { mutableStateOf("") }
-
-    // Section 3
     var panNumber by remember { mutableStateOf("") }
     var panName by remember { mutableStateOf("") }
-    var panDob by remember { mutableStateOf("") }
+    var panDobMillis by remember { mutableStateOf<Long?>(null) }
 
-    // Section 4 + 5 file picks — GetContent returns a content:// Uri.
+    val dob = dobMillis?.let { formatDob(it) } ?: ""
+    val panDob = panDobMillis?.let { formatDob(it) } ?: ""
+    // Carret's /register/ expects a bare 10-digit local number (no `+`, no
+    // country code). The dial-code picker is UI-only — we only send `phone`.
+    val fullPhone = phone.filter { it.isDigit() }
+
     var aadhaarUri by remember { mutableStateOf<Uri?>(null) }
-    var selfieUri  by remember { mutableStateOf<Uri?>(null) }
+    var aadhaarName by remember { mutableStateOf<String?>(null) }
+    var selfieUri by remember { mutableStateOf<Uri?>(null) }
+    var selfieName by remember { mutableStateOf<String?>(null) }
+
     val pickAadhaar = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
-    ) { aadhaarUri = it }
+    ) { uri ->
+        aadhaarUri = uri
+        aadhaarName = uri?.let { readDisplayName(ctx, it) }
+    }
     val pickSelfie = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
-    ) { selfieUri = it }
+    ) { uri ->
+        selfieUri = uri
+        selfieName = uri?.let { readDisplayName(ctx, it) }
+    }
 
-    // Section 6
     var kycStatus by remember { mutableStateOf<CarretKycStatus?>(null) }
-    var pollError by remember { mutableStateOf<String?>(null) }
+    var pollingJob by remember { mutableStateOf<Job?>(null) }
 
-    fun readUri(uri: Uri): Pair<String, ByteArray>? {
-        val name = ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-            if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
-        } ?: "file"
-        val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-        return name to bytes
+    fun startPolling() {
+        pollingJob?.cancel()
+        pollingJob = scope.launch {
+            while (isActive) {
+                try {
+                    val s = dataRepository.getCarretKycStatus(accountId)
+                    kycStatus = s
+                    when (s.kyc_status) {
+                        "verified" -> { page = WizardPage.Verified; break }
+                        "rejected" -> { page = WizardPage.Rejected; break }
+                    }
+                } catch (_: Exception) { /* keep polling */ }
+                delay(3000)
+            }
+        }
     }
 
-    // Polling loop — only runs while step Polling is Busy.
-    LaunchedEffect(steps.value[Step.Polling]) {
-        val s = steps.value[Step.Polling]
-        if (s !is StepStatus.Busy) return@LaunchedEffect
-        while (isActive) {
+    suspend fun doCreateSubAccount(): Boolean = try {
+        val acc = dataRepository.createCarretSubAccount(
+            CarretSubAccountInput(
+                email = email,
+                phone_number = fullPhone,
+                first_name = firstName, last_name = lastName,
+                dob = dob, country = country,
+                gender = gender.name,
+                occupation = occupation,
+                annual_income = income,
+            ),
+        )
+        accountId = acc.id.toString(); true
+    } catch (e: Exception) { error = UserErrors.message(e); false }
+
+    suspend fun doInitiate(): Boolean = try {
+        val r = dataRepository.initiateCarretKyc(accountId)
+        sessionId = r.session.session_id; true
+    } catch (e: Exception) { error = UserErrors.message(e); false }
+
+    suspend fun doSubmitPan(): Boolean = try {
+        dataRepository.submitCarretKycDocument(
+            sessionId,
+            CarretKycDocumentSubmission(
+                document_type = "pan",
+                document_number = panNumber.uppercase(),
+                name = panName, dob = panDob,
+            ),
+        ); true
+    } catch (e: Exception) { error = UserErrors.message(e); false }
+
+    suspend fun doUploadAadhaar(): Boolean {
+        val uri = aadhaarUri ?: return false
+        val name = aadhaarName ?: "aadhaar"
+        val (bytes, mime) = readBytesAndMime(ctx, uri) ?: return false
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val fileType = if (ext == "xml" || ext == "zip") "xml" else "image"
+        return try {
+            dataRepository.uploadCarretKycFile(
+                kycSession = sessionId, docType = "aadhaar",
+                fileType = fileType, filename = name,
+                fileBytes = bytes, mimeType = mime,
+            ); true
+        } catch (e: Exception) { error = UserErrors.message(e); false }
+    }
+
+    suspend fun doUploadSelfie(): Boolean {
+        val uri = selfieUri ?: return false
+        val name = selfieName ?: "selfie.jpg"
+        val (bytes, mime) = readBytesAndMime(ctx, uri) ?: return false
+        return try {
+            dataRepository.uploadCarretKycFile(
+                kycSession = sessionId, docType = "selfie",
+                fileType = "image", filename = name,
+                fileBytes = bytes, mimeType = mime,
+            ); true
+        } catch (e: Exception) { error = UserErrors.message(e); false }
+    }
+
+    suspend fun doCleanupAndRetry() {
+        try {
+            dataRepository.cleanupCarretKyc(accountId)
+            sessionId = ""; kycStatus = null; pollingJob?.cancel()
+            page = WizardPage.Name; error = null
+        } catch (e: Exception) { error = UserErrors.message(e) }
+    }
+
+    fun onLeft() {
+        error = null
+        val prev = previousPage(page)
+        if (prev != null) page = prev else { pollingJob?.cancel(); onDismiss() }
+    }
+
+    fun performAction() {
+        scope.launch {
+            submitting = true; error = null
             try {
-                val st = dataRepository.getCarretKycStatus(accountId)
-                kycStatus = st
-                pollError = null
-                when (st.kyc_status) {
-                    "verified" -> {
-                        setStep(Step.Polling, StepStatus.Success("All set. You're ready to withdraw to your bank."))
-                        setStep(Step.Done, StepStatus.Success("You're all done."))
-                        break
+                when (page) {
+                    WizardPage.Welcome  -> page = WizardPage.Name
+                    WizardPage.Name     -> page = WizardPage.Contact
+                    WizardPage.Contact  -> page = WizardPage.BornWhen
+                    WizardPage.BornWhen -> {
+                        page = WizardPage.About
+                        if (panDobMillis == null) panDobMillis = dobMillis
                     }
-                    "rejected" -> {
-                        setStep(Step.Polling, StepStatus.Error("Something didn't match. Tap Start over and try again."))
-                        break
+                    WizardPage.About    -> if (doCreateSubAccount() && doInitiate()) page = WizardPage.Pan
+                    WizardPage.Pan      -> if (doSubmitPan()) page = WizardPage.Aadhaar
+                    WizardPage.Aadhaar  -> if (doUploadAadhaar()) page = WizardPage.Selfie
+                    WizardPage.Selfie   -> if (doUploadSelfie()) {
+                        page = WizardPage.Checking
+                        startPolling()
                     }
-                    "manual_review" -> setStep(Step.Polling, StepStatus.Busy("Our team is taking a closer look. This can take a few hours."))
+                    else -> Unit
                 }
-            } catch (e: Exception) {
-                pollError = UserErrors.message(e)
-            }
-            delay(3000)
+            } finally { submitting = false }
         }
     }
 
-    Column(
-        modifier = modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = PpSize.screenPadding)
-            .padding(vertical = PpSpace.lg),
-        verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+    val action = actionFor(page)
+    val actionEnabled = when (page) {
+        WizardPage.Welcome  -> true
+        WizardPage.Name     -> firstName.isNotEmpty() && lastName.isNotEmpty()
+        WizardPage.Contact  -> email.contains("@") && phone.length == 10
+        WizardPage.BornWhen -> dobMillis != null
+        WizardPage.About    -> true
+        WizardPage.Pan      -> panNumber.length >= 10 && panName.isNotEmpty() && panDobMillis != null
+        WizardPage.Aadhaar  -> aadhaarUri != null
+        WizardPage.Selfie   -> selfieUri != null
+        else -> false
+    }
+
+    Box(modifier = modifier.fillMaxSize().background(PpBackground)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Toolbar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PpSpace.sm, vertical = PpSpace.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { onLeft() }) {
+                    Icon(
+                        if (page == WizardPage.Welcome) Icons.Filled.Close else Icons.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = PpBlack,
+                    )
+                }
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        navTitle(page),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = PpBlack,
+                    )
+                }
+                Spacer(modifier = Modifier.width(48.dp))
+            }
+
+            // Progress bar
+            if (page != WizardPage.Verified && page != WizardPage.Rejected && page.stepIndex >= 0) {
+                val frac = (page.stepIndex + 1).toFloat() / WizardPage.STEP_COUNT.toFloat()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PpSize.screenPadding, vertical = PpSpace.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PpSpace.sm),
+                ) {
+                    LinearProgressIndicator(
+                        progress = { frac },
+                        color = PpMint,
+                        trackColor = PpBlack05,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                    )
+                    Text(
+                        "Step ${page.stepIndex + 1} of ${WizardPage.STEP_COUNT}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PpBlack50,
+                    )
+                }
+            }
+
+            // Error banner
+            error?.let { msg ->
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = PpSize.screenPadding, vertical = PpSpace.xs)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(PpRed100)
+                        .padding(PpSpace.md),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(PpSpace.sm),
+                ) {
+                    Icon(Icons.Filled.Warning, contentDescription = null, tint = PpRed600, modifier = Modifier.size(20.dp))
+                    Text(msg, style = MaterialTheme.typography.bodySmall, color = PpRed700)
+                }
+            }
+
+            // Content
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = PpSpace.xxxl),
+            ) {
+                when (page) {
+                    WizardPage.Welcome -> WelcomePage()
+                    WizardPage.Name -> NamePage(firstName, { firstName = it }, lastName, { lastName = it })
+                    WizardPage.Contact -> ContactPage(
+                        email, { email = it },
+                        phone, { phone = it.filter { c -> c.isDigit() } },
+                        dialCode, { dialCode = it },
+                    )
+                    WizardPage.BornWhen -> DobPage(dobMillis) { dobMillis = it }
+                    WizardPage.About -> AboutPage(gender, { gender = it }, occupation, { occupation = it }, income, { income = it })
+                    WizardPage.Pan -> PanPage(
+                        panNumber, { panNumber = it.uppercase() },
+                        panName, { panName = it },
+                        panDobMillis, { panDobMillis = it },
+                    )
+                    WizardPage.Aadhaar -> AadhaarPage(aadhaarName) { pickAadhaar.launch("*/*") }
+                    WizardPage.Selfie -> SelfiePage(selfieName) { pickSelfie.launch("image/*") }
+                    WizardPage.Checking -> CheckingPage(kycStatus?.kyc_status == "manual_review")
+                    WizardPage.Verified -> OutcomePage(
+                        iconBg = PpMint26, iconFg = PpMint, icon = Icons.Filled.CheckCircle,
+                        title = "You're verified",
+                        subtitle = "All set. You can now withdraw your USDC rewards to your bank.",
+                        primary = "Start using PathPulse",
+                        primaryAction = { pollingJob?.cancel(); onDismiss() },
+                    )
+                    WizardPage.Rejected -> OutcomePage(
+                        iconBg = PpRed100, iconFg = PpRed600, icon = Icons.Filled.Warning,
+                        title = "We couldn't verify you",
+                        subtitle = "Something didn't match. Try again with clearer documents — usually a name spelling mismatch on PAN, or a low-quality Aadhaar upload.",
+                        primary = "Start over",
+                        primaryAction = { scope.launch { doCleanupAndRetry() } },
+                    )
+                }
+            }
+
+            // Sticky CTA
+            if (action != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(PpBackground)
+                        .padding(horizontal = PpSize.screenPadding, vertical = PpSpace.md),
+                ) {
+                    val enabled = actionEnabled && !submitting
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(CircleShape)
+                            .background(if (enabled) PpBlack else PpBlack50)
+                            .clickable(enabled = enabled) { performAction() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+                            if (submitting) {
+                                CircularProgressIndicator(
+                                    color = PpWhite, strokeWidth = 2.dp,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Text(
+                                if (submitting) action.busyLabel else action.label,
+                                color = PpWhite,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        // Nothing on mount — polling is triggered from Selfie submission.
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Pages
+// -----------------------------------------------------------------------------
+
+@Composable
+private fun WelcomePage() {
+    PageShell(
+        icon = Icons.Filled.Shield,
+        title = "Let's verify your identity",
+        subtitle = "A one-time check so you can withdraw to your bank. Takes about 3 minutes.",
     ) {
-        // Header
-        Column(verticalArrangement = Arrangement.spacedBy(PpSpace.xs)) {
-            Text("Verify your identity", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "A quick check so you can withdraw to your bank. Have your PAN and Aadhaar handy.",
-                style = MaterialTheme.typography.bodySmall,
-                color = PpBlack50,
-            )
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            Bullet("Your name & basic details")
+            Bullet("PAN card")
+            Bullet("Aadhaar (from DigiLocker, or a photo)")
+            Bullet("A quick selfie")
         }
+    }
+}
 
-        // Section 1 — Sub-account
-        Section(1, "Your details", steps.value[Step.Account]!!) {
-            Text(
-                "A few basics we need on file before we can start verification.",
-                style = MaterialTheme.typography.bodySmall,
-                color = PpBlack50,
-                modifier = Modifier.padding(bottom = PpSpace.sm),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
-                Field("First name", firstName, { firstName = it }, Modifier.weight(1f))
-                Field("Last name",  lastName,  { lastName  = it }, Modifier.weight(1f))
-            }
-            Field("Email", email, { email = it }, keyboard = KeyboardType.Email, placeholder = "you+kyc@gmail.com")
-            Field("Phone (12 char, no +)", phone, { phone = it }, keyboard = KeyboardType.Phone, placeholder = "919XXXXXXXXX")
-            Row(horizontalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
-                Field("DOB (dd/mm/yyyy)", dob, { dob = it }, Modifier.weight(1f), placeholder = "18/04/2003")
-                Field("Country (ISO-2)", country, { country = it }, Modifier.weight(1f))
-            }
-            DropdownField("Gender",     gender,     listOf("male", "female", "other")) { gender = it }
-            DropdownField("Occupation", occupation, OCCUPATIONS)                        { occupation = it }
-            DropdownField("Income",     income,     INCOMES)                            { income = it }
-
-            PpPrimaryButton(
-                text = if (steps.value[Step.Account] is StepStatus.Busy) "Saving…" else "Save details",
-                enabled = steps.value[Step.Account] !is StepStatus.Busy,
-                onClick = {
-                    scope.launch {
-                        setStep(Step.Account, StepStatus.Busy("Saving your details…"))
-                        try {
-                            val acc = dataRepository.createCarretSubAccount(
-                                CarretSubAccountInput(
-                                    email = email,
-                                    phone_number = phone.replace("+", ""),
-                                    first_name = firstName, last_name = lastName,
-                                    dob = dob, country = country,
-                                    gender = gender,
-                                    occupation = occupation,
-                                    annual_income = income,
-                                ),
-                            )
-                            accountId = acc.id.toString()
-                            setStep(Step.Account, StepStatus.Success("Details saved."))
-                        } catch (e: Exception) {
-                            setStep(Step.Account, StepStatus.Error(UserErrors.message(e)))
-                        }
-                    }
-                },
-                modifier = Modifier.padding(top = PpSpace.md),
-            )
-            Field(
-                "…or paste an existing pending account id",
-                accountId, { accountId = it },
-                Modifier.padding(top = PpSpace.md),
-                keyboard = KeyboardType.Number,
-                placeholder = "48560",
-            )
+@Composable
+private fun NamePage(firstName: String, onFirst: (String) -> Unit, lastName: String, onLast: (String) -> Unit) {
+    PageShell(
+        icon = Icons.Filled.Person,
+        title = "What's your name?",
+        subtitle = "Enter your name exactly as it appears on your PAN card.",
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            BigField("First name", firstName, onFirst)
+            BigField("Last name", lastName, onLast)
         }
+    }
+}
 
-        // Section 2 — Start verification
-        Section(2, "Start verification", steps.value[Step.Initiate]!!) {
-            PpPrimaryButton(
-                text = if (steps.value[Step.Initiate] is StepStatus.Busy) "Starting…" else "Start verification",
-                enabled = accountId.isNotEmpty() && steps.value[Step.Initiate] !is StepStatus.Busy,
-                onClick = {
-                    scope.launch {
-                        setStep(Step.Initiate, StepStatus.Busy("Getting things ready…"))
-                        try {
-                            val r = dataRepository.initiateCarretKyc(accountId)
-                            sessionId = r.session.session_id
-                            setStep(Step.Initiate, StepStatus.Success("Ready — please submit your documents below."))
-                        } catch (e: Exception) {
-                            setStep(Step.Initiate, StepStatus.Error(UserErrors.message(e)))
-                        }
-                    }
-                },
-            )
+@Composable
+private fun ContactPage(
+    email: String, onEmail: (String) -> Unit,
+    phone: String, onPhone: (String) -> Unit,
+    dialCode: DialCode, onDialCode: (DialCode) -> Unit,
+) {
+    PageShell(
+        icon = Icons.Filled.Email,
+        title = "How can we reach you?",
+        subtitle = "We'll send transaction updates to your email and phone.",
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            BigField("Email", email, onEmail, placeholder = "you@gmail.com", keyboard = KeyboardType.Email)
+            PhoneField(phone = phone, onPhone = onPhone, dialCode = dialCode, onDialCode = onDialCode)
         }
+    }
+}
 
-        // Section 3 — PAN
-        Section(3, "PAN card", steps.value[Step.Pan]!!) {
-            Text(
-                "Enter these exactly as printed on your PAN card.",
-                style = MaterialTheme.typography.bodySmall,
-                color = PpBlack50,
-                modifier = Modifier.padding(bottom = PpSpace.sm),
-            )
-            Field("PAN number (10 characters)", panNumber, { panNumber = it.uppercase() },
-                  placeholder = "ABCDE1234F",
-                  keyboardCapitalization = KeyboardCapitalization.Characters)
-            Field("Name on card", panName, { panName = it })
-            Field("Date of birth (dd/mm/yyyy)", panDob, { panDob = it }, placeholder = "18/04/2003")
-            PpPrimaryButton(
-                text = if (steps.value[Step.Pan] is StepStatus.Busy) "Checking…" else "Submit PAN",
-                enabled = sessionId.isNotEmpty() && steps.value[Step.Pan] !is StepStatus.Busy,
-                onClick = {
-                    scope.launch {
-                        setStep(Step.Pan, StepStatus.Busy("Checking your PAN…"))
-                        try {
-                            dataRepository.submitCarretKycDocument(
-                                sessionId,
-                                CarretKycDocumentSubmission(
-                                    document_type = "pan",
-                                    document_number = panNumber.uppercase(),
-                                    name = panName, dob = panDob,
-                                ),
-                            )
-                            setStep(Step.Pan, StepStatus.Success("PAN accepted."))
-                        } catch (e: Exception) {
-                            setStep(Step.Pan, StepStatus.Error(UserErrors.message(e)))
-                        }
-                    }
-                },
-                modifier = Modifier.padding(top = PpSpace.md),
-            )
-        }
-
-        // Section 4 — Aadhaar XML
-        Section(4, "Aadhaar file", steps.value[Step.Aadhaar]!!) {
-            Text(
-                "Open DigiLocker → Aadhaar → Share as XML. Upload the ZIP file you get here.",
-                style = MaterialTheme.typography.bodySmall,
-                color = PpBlack50,
-                modifier = Modifier.padding(bottom = PpSpace.sm),
-            )
-            PpSecondaryButton(
-                text = aadhaarUri?.lastPathSegment ?: "Choose Aadhaar file",
-                onClick = { pickAadhaar.launch("*/*") },
-            )
-            PpPrimaryButton(
-                text = if (steps.value[Step.Aadhaar] is StepStatus.Busy) "Uploading…" else "Upload Aadhaar",
-                enabled = aadhaarUri != null && sessionId.isNotEmpty() && steps.value[Step.Aadhaar] !is StepStatus.Busy,
-                onClick = {
-                    scope.launch {
-                        val uri = aadhaarUri ?: return@launch
-                        val (name, bytes) = readUri(uri) ?: return@launch
-                        setStep(Step.Aadhaar, StepStatus.Busy("Uploading Aadhaar…"))
-                        try {
-                            dataRepository.uploadCarretKycFile(
-                                kycSession = sessionId, docType = "aadhaar",
-                                fileType = "xml", filename = name,
-                                fileBytes = bytes, mimeType = "application/xml",
-                            )
-                            setStep(Step.Aadhaar, StepStatus.Success("Aadhaar received."))
-                        } catch (e: Exception) {
-                            setStep(Step.Aadhaar, StepStatus.Error(UserErrors.message(e)))
-                        }
-                    }
-                },
-                modifier = Modifier.padding(top = PpSpace.md),
-            )
-        }
-
-        // Section 5 — Selfie
-        Section(5, "Selfie", steps.value[Step.Selfie]!!) {
-            Text(
-                "Take a clear, well-lit photo facing the camera. Plain background works best.",
-                style = MaterialTheme.typography.bodySmall,
-                color = PpBlack50,
-                modifier = Modifier.padding(bottom = PpSpace.sm),
-            )
-            PpSecondaryButton(
-                text = selfieUri?.lastPathSegment ?: "Choose selfie",
-                onClick = { pickSelfie.launch("image/*") },
-            )
-            PpPrimaryButton(
-                text = if (steps.value[Step.Selfie] is StepStatus.Busy) "Uploading…" else "Upload selfie",
-                enabled = selfieUri != null && sessionId.isNotEmpty() && steps.value[Step.Selfie] !is StepStatus.Busy,
-                onClick = {
-                    scope.launch {
-                        val uri = selfieUri ?: return@launch
-                        val (name, bytes) = readUri(uri) ?: return@launch
-                        setStep(Step.Selfie, StepStatus.Busy("Uploading your photo…"))
-                        try {
-                            dataRepository.uploadCarretKycFile(
-                                kycSession = sessionId, docType = "selfie",
-                                fileType = "image", filename = name,
-                                fileBytes = bytes, mimeType = "image/jpeg",
-                            )
-                            setStep(Step.Selfie, StepStatus.Success("Photo received."))
-                            setStep(Step.Polling, StepStatus.Busy("Checking your verification…"))
-                        } catch (e: Exception) {
-                            setStep(Step.Selfie, StepStatus.Error(UserErrors.message(e)))
-                        }
-                    }
-                },
-                modifier = Modifier.padding(top = PpSpace.md),
-            )
-        }
-
-        // Section 6 — Status
-        if (steps.value[Step.Selfie] is StepStatus.Success || kycStatus != null) {
-            Section(6, "Verification status", steps.value[Step.Polling]!!) {
-                val s = kycStatus
-                if (s != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Status:", style = MaterialTheme.typography.bodySmall, color = PpBlack50)
-                        StatusPill(label = friendlyStatus(s.kyc_status), modifier = Modifier.padding(start = PpSpace.sm))
-                    }
-                    val explainer = when (s.kyc_status) {
-                        "verified"      -> "All set. You're ready to withdraw to your bank."
-                        "rejected"      -> "Something didn't match. Tap Start over and try again with clearer documents."
-                        "manual_review" -> "Our team is taking a closer look. This can take a few hours."
-                        else            -> null
-                    }
-                    if (explainer != null) {
-                        Text(
-                            explainer,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = PpBlack70,
-                            modifier = Modifier.padding(top = PpSpace.sm),
+@Composable
+private fun PhoneField(
+    phone: String,
+    onPhone: (String) -> Unit,
+    dialCode: DialCode,
+    onDialCode: (DialCode) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(PpSpace.xs)) {
+        Text("Phone", style = MaterialTheme.typography.labelSmall, color = PpBlack50)
+        Row(horizontalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+            Box {
+                Row(
+                    modifier = Modifier
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(PpSurface)
+                        .border(1.dp, PpBlack15, RoundedCornerShape(14.dp))
+                        .clickable { expanded = true }
+                        .padding(horizontal = PpSpace.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PpSpace.xs),
+                ) {
+                    Text(dialCode.flag, fontSize = 18.sp)
+                    Text("+${dialCode.digits}", style = MaterialTheme.typography.bodyLarge, color = PpBlack)
+                    Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = PpBlack50, modifier = Modifier.size(16.dp))
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DialCode.entries.forEach { dc ->
+                        DropdownMenuItem(
+                            text = { Text("${dc.flag}  ${dc.displayName}  +${dc.digits}") },
+                            onClick = { onDialCode(dc); expanded = false },
                         )
                     }
-                } else {
-                    Text("Checking your verification…", style = MaterialTheme.typography.bodySmall, color = PpBlack50)
                 }
-                PpSecondaryButton(
-                    text = "Start over",
-                    onClick = {
-                        scope.launch {
-                            try {
-                                dataRepository.cleanupCarretKyc(accountId)
-                                sessionId = ""; kycStatus = null
-                                listOf(Step.Initiate, Step.Pan, Step.Aadhaar, Step.Selfie, Step.Polling, Step.Done).forEach {
-                                    setStep(it, StepStatus.Idle)
-                                }
-                            } catch (e: Exception) {
-                                pollError = UserErrors.message(e)
-                            }
-                        }
-                    },
-                    modifier = Modifier.padding(top = PpSpace.md),
+            }
+            OutlinedTextField(
+                value = phone,
+                onValueChange = onPhone,
+                singleLine = true,
+                placeholder = { Text("9XXXXXXXXX", color = PpBlack40) },
+                shape = RoundedCornerShape(14.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = PpSurface,
+                    unfocusedContainerColor = PpSurface,
+                    focusedIndicatorColor = PpMint,
+                    unfocusedIndicatorColor = PpBlack15,
+                ),
+                modifier = Modifier.weight(1f).height(56.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DobPage(millis: Long?, onMillis: (Long?) -> Unit) {
+    PageShell(
+        icon = Icons.Filled.DateRange,
+        title = "Your date of birth",
+        subtitle = "Pick the date exactly as it appears on your PAN card.",
+    ) {
+        Column(modifier = Modifier.padding(top = PpSpace.lg)) {
+            DatePickerField(label = "Date of birth", millis = millis, onMillis = onMillis)
+        }
+    }
+}
+
+@Composable
+private fun AboutPage(
+    gender: Gender, onGender: (Gender) -> Unit,
+    occupation: String, onOccupation: (String) -> Unit,
+    income: String, onIncome: (String) -> Unit,
+) {
+    PageShell(
+        icon = Icons.Filled.Badge,
+        title = "Tell us about yourself",
+        subtitle = "A few quick details required by the payments partner.",
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.lg),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            LabeledSection("Gender") {
+                Row(horizontalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+                    Gender.entries.forEach { g ->
+                        GenderChip(g, selected = gender == g, onClick = { onGender(g) }, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+            LabeledSection("Occupation") {
+                CardPicker(selection = occupation, options = OCCUPATIONS, onSelect = onOccupation)
+            }
+            LabeledSection("Annual income") {
+                CardPicker(selection = income, options = INCOMES, onSelect = onIncome)
+            }
+            LabeledSection("Country") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(PpSurface)
+                        .border(1.5.dp, PpMint, RoundedCornerShape(14.dp))
+                        .padding(PpSpace.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("🇮🇳", fontSize = 22.sp)
+                    Spacer(modifier = Modifier.width(PpSpace.sm))
+                    Text("India", style = MaterialTheme.typography.bodyLarge, color = PpBlack)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = PpMint, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PanPage(
+    panNumber: String, onPan: (String) -> Unit,
+    panName: String, onName: (String) -> Unit,
+    panDobMillis: Long?, onPanDobMillis: (Long?) -> Unit,
+) {
+    PageShell(
+        icon = Icons.Filled.CreditCard,
+        title = "Enter your PAN card",
+        subtitle = "Copy these exactly as printed on the card — name spelling and DOB must match India's tax records.",
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            BigField("PAN number (10 characters)", panNumber, onPan, placeholder = "ABCDE1234F", capitalization = KeyboardCapitalization.Characters)
+            BigField("Name on card", panName, onName, placeholder = "e.g. RAHUL KUMAR SHARMA")
+            DatePickerField(label = "Date of birth", millis = panDobMillis, onMillis = onPanDobMillis)
+        }
+    }
+}
+
+@Composable
+private fun AadhaarPage(fileName: String?, onPick: () -> Unit) {
+    PageShell(
+        icon = Icons.Filled.CloudUpload,
+        title = "Upload your Aadhaar",
+        subtitle = "The DigiLocker XML verifies fastest, but a clear photo or PDF of your card also works.",
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            DropZone(
+                icon = if (fileName == null) Icons.Filled.CloudUpload else Icons.Filled.CheckCircle,
+                title = fileName ?: "Choose Aadhaar file",
+                subtitle = if (fileName == null) "XML, ZIP, JPG, PNG, or PDF" else "Ready to upload",
+                selected = fileName != null,
+                onClick = onPick,
+            )
+            InfoTile(
+                icon = Icons.Filled.Lightbulb,
+                text = "Pro tip: DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP. That's the fastest path to verified.",
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelfiePage(fileName: String?, onPick: () -> Unit) {
+    PageShell(
+        icon = Icons.Filled.CameraAlt,
+        title = "Take a selfie",
+        subtitle = "Front-facing, well-lit, plain background. We'll match it against your Aadhaar photo.",
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(PpSpace.md),
+            modifier = Modifier.padding(top = PpSpace.lg),
+        ) {
+            DropZone(
+                icon = if (fileName == null) Icons.Filled.PhotoCamera else Icons.Filled.CheckCircle,
+                title = fileName ?: "Choose a selfie",
+                subtitle = if (fileName == null) "From your camera roll" else "Ready to upload",
+                selected = fileName != null,
+                onClick = onPick,
+            )
+            InfoTile(
+                icon = Icons.Filled.Lightbulb,
+                text = "For best results: no mask, no sunglasses, face fully lit, blank wall behind you.",
+            )
+        }
+    }
+}
+
+@Composable
+private fun CheckingPage(manualReview: Boolean) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = PpSpace.xxxl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PpSpace.xl),
+    ) {
+        Box(
+            modifier = Modifier.size(140.dp).clip(CircleShape).background(PpMint26),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(color = PpMint, strokeWidth = 4.dp, modifier = Modifier.size(72.dp))
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+            Text("Verifying your identity", style = MaterialTheme.typography.headlineSmall, color = PpBlack)
+            Text(
+                "This usually takes a few seconds. We'll show the result here as soon as it's done.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = PpBlack60,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = PpSize.screenPadding),
+            )
+        }
+        if (manualReview) {
+            Box(modifier = Modifier.padding(horizontal = PpSize.screenPadding)) {
+                InfoTile(
+                    icon = Icons.Filled.Person,
+                    text = "Under manual review by our partner. This can take a few hours — we'll notify you when it's done.",
                 )
             }
         }
     }
 }
 
-private fun friendlyStatus(raw: String): String = when (raw) {
-    "verified"      -> "verified"
-    "pending"       -> "in progress"
-    "manual_review" -> "under review"
-    "rejected"      -> "needs attention"
-    else            -> raw
-}
-
 @Composable
-private fun Section(num: Int, title: String, status: StepStatus, content: @Composable () -> Unit) {
-    PpCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("$num.", style = MaterialTheme.typography.titleMedium, color = PpBlack40)
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = PpSpace.sm).weight(1f),
-            )
-            StepBadge(status)
+private fun OutcomePage(
+    iconBg: androidx.compose.ui.graphics.Color,
+    iconFg: androidx.compose.ui.graphics.Color,
+    icon: ImageVector,
+    title: String, subtitle: String,
+    primary: String, primaryAction: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = PpSpace.xxxl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PpSpace.xl),
+    ) {
+        Box(
+            modifier = Modifier.size(140.dp).clip(CircleShape).background(iconBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = iconFg, modifier = Modifier.size(72.dp))
         }
-        val msg = when (status) {
-            is StepStatus.Busy    -> status.message
-            is StepStatus.Success -> status.message
-            is StepStatus.Error   -> status.message
-            else -> null
-        }
-        if (msg != null) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall, color = PpBlack, textAlign = TextAlign.Center)
             Text(
-                msg,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (status is StepStatus.Error) PpRed600 else PpBlack70,
-                modifier = Modifier.padding(top = PpSpace.xs),
+                subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = PpBlack60,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = PpSize.screenPadding),
             )
         }
-        Column(modifier = Modifier.padding(top = PpSpace.sm)) { content() }
+        Spacer(modifier = Modifier.height(PpSpace.xl))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PpSize.screenPadding)
+                .height(56.dp)
+                .clip(CircleShape)
+                .background(PpBlack)
+                .clickable(onClick = primaryAction),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(primary, color = PpWhite, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
+// -----------------------------------------------------------------------------
+// Reusable chunks
+// -----------------------------------------------------------------------------
+
 @Composable
-private fun StepBadge(status: StepStatus) {
-    val (label, bg, fg) = when (status) {
-        StepStatus.Idle           -> return
-        is StepStatus.Busy        -> Triple("Running…", PpBlue50, PpBlue700)
-        is StepStatus.Success     -> Triple("Done",      PpGreen100, PpGreen700)
-        is StepStatus.Error       -> Triple("Error",     PpRed100,   PpRed700)
-    }
-    Box(
-        modifier = Modifier
-            .clip(PpPillShape)
-            .background(bg)
-            .padding(horizontal = PpSpace.sm, vertical = 3.dp),
+private fun PageShell(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = PpSize.screenPadding),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PpSpace.md),
     ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = fg)
+        Box(
+            modifier = Modifier.padding(top = PpSpace.xl).size(96.dp).clip(CircleShape).background(PpMint26),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = PpMintInk, modifier = Modifier.size(48.dp))
+        }
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = PpBlack,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = PpBlack60,
+            textAlign = TextAlign.Center,
+        )
+        Box(modifier = Modifier.fillMaxWidth()) { content() }
     }
 }
 
 @Composable
-private fun StatusPill(label: String, modifier: Modifier = Modifier) {
-    val (bg, fg) = when (label) {
-        "verified"      -> PpGreen100 to PpGreen700
-        "rejected"      -> PpRed100 to PpRed700
-        "manual_review" -> Color(0xFFFEF3C7) to Color(0xFFB45309)
-        else            -> PpBlue50 to PpBlue700
-    }
-    Box(
-        modifier = modifier
-            .clip(PpPillShape)
-            .background(bg)
-            .padding(horizontal = PpSpace.sm, vertical = 3.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = fg)
+private fun Bullet(text: String) {
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+        Box(
+            modifier = Modifier.size(24.dp).clip(CircleShape).background(PpMint26),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = PpMintInk, modifier = Modifier.size(14.dp))
+        }
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = PpBlack70)
     }
 }
 
 @Composable
-private fun Field(
+private fun BigField(
     label: String,
     value: String,
     onChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    keyboard: KeyboardType = KeyboardType.Text,
-    keyboardCapitalization: KeyboardCapitalization = KeyboardCapitalization.None,
     placeholder: String = "",
+    keyboard: KeyboardType = KeyboardType.Text,
+    capitalization: KeyboardCapitalization = KeyboardCapitalization.None,
 ) {
-    Column(modifier = modifier.padding(vertical = PpSpace.xs)) {
+    Column(verticalArrangement = Arrangement.spacedBy(PpSpace.xs)) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = PpBlack50)
         OutlinedTextField(
             value = value,
             onValueChange = onChange,
             singleLine = true,
-            placeholder = { Text(placeholder) },
-            keyboardOptions = KeyboardOptions(keyboardType = keyboard, capitalization = keyboardCapitalization),
+            placeholder = { Text(placeholder, color = PpBlack40) },
+            shape = RoundedCornerShape(14.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard, capitalization = capitalization),
             colors = TextFieldDefaults.colors(
-                focusedContainerColor = PpBlack05,
-                unfocusedContainerColor = PpBlack05,
+                focusedContainerColor = PpSurface,
+                unfocusedContainerColor = PpSurface,
+                focusedIndicatorColor = PpMint,
+                unfocusedIndicatorColor = PpBlack15,
             ),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(56.dp),
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DropdownField(label: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Column(modifier = Modifier.padding(vertical = PpSpace.xs)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = PpBlack50)
-        Box {
-            OutlinedTextField(
-                value = value,
-                onValueChange = {},
-                readOnly = true,
-                singleLine = true,
-                trailingIcon = {
-                    TextButton(onClick = { expanded = true }) { Text("▾", color = PpBlack70) }
-                },
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = PpBlack05,
-                    unfocusedContainerColor = PpBlack05,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { opt ->
-                    DropdownMenuItem(
-                        text = { Text(opt) },
-                        onClick = { onSelect(opt); expanded = false },
-                    )
-                }
+private fun LabeledSection(label: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = PpBlack70)
+        content()
+    }
+}
+
+@Composable
+private fun GenderChip(g: Gender, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .height(72.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) PpMint26 else PpSurface)
+            .border(1.5.dp, if (selected) PpMint else PpBlack05, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(g.icon, contentDescription = null, tint = if (selected) PpMintInk else PpBlack70, modifier = Modifier.size(22.dp))
+        Spacer(modifier = Modifier.height(PpSpace.xs))
+        Text(g.label, style = MaterialTheme.typography.labelMedium, color = if (selected) PpMintInk else PpBlack)
+    }
+}
+
+@Composable
+private fun CardPicker(selection: String, options: List<String>, onSelect: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(PpSpace.xs)) {
+        options.forEach { opt ->
+            val selected = selection == opt
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selected) PpMint26 else PpSurface)
+                    .border(1.5.dp, if (selected) PpMint else PpBlack05, RoundedCornerShape(14.dp))
+                    .clickable { onSelect(opt) }
+                    .padding(PpSpace.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(opt, style = MaterialTheme.typography.bodyLarge, color = PpBlack, modifier = Modifier.weight(1f))
+                Icon(
+                    if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (selected) PpMint else PpBlack15,
+                    modifier = Modifier.size(22.dp),
+                )
             }
         }
     }
+}
+
+@Composable
+private fun DropZone(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(PpSurface)
+            .border(1.5.dp, if (selected) PpMint else PpBlack05, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(PpSpace.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PpSpace.md),
+    ) {
+        Box(
+            modifier = Modifier.size(56.dp).clip(CircleShape).background(if (selected) PpMint26 else PpBlack05),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = if (selected) PpMint else PpBlack70, modifier = Modifier.size(24.dp))
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = PpBlack, maxLines = 1)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = PpBlack50)
+        }
+        Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = PpBlack40, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun InfoTile(icon: ImageVector, text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(PpMint26.copy(alpha = 0.4f))
+            .padding(PpSpace.md),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(PpSpace.sm),
+    ) {
+        Icon(icon, contentDescription = null, tint = PpMint, modifier = Modifier.size(18.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = PpBlack70, modifier = Modifier.weight(1f))
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Wizard helpers
+// -----------------------------------------------------------------------------
+
+private fun previousPage(p: WizardPage): WizardPage? = when (p) {
+    WizardPage.Welcome  -> null
+    WizardPage.Name     -> WizardPage.Welcome
+    WizardPage.Contact  -> WizardPage.Name
+    WizardPage.BornWhen -> WizardPage.Contact
+    WizardPage.About    -> WizardPage.BornWhen
+    WizardPage.Pan      -> WizardPage.About
+    WizardPage.Aadhaar  -> WizardPage.Pan
+    WizardPage.Selfie   -> WizardPage.Aadhaar
+    WizardPage.Checking, WizardPage.Verified, WizardPage.Rejected -> null
+}
+
+private fun navTitle(p: WizardPage): String = when (p) {
+    WizardPage.Welcome -> "Verification"
+    WizardPage.Name, WizardPage.Contact, WizardPage.BornWhen, WizardPage.About -> "About you"
+    WizardPage.Pan -> "PAN card"
+    WizardPage.Aadhaar -> "Aadhaar"
+    WizardPage.Selfie -> "Selfie"
+    WizardPage.Checking -> "Verifying"
+    WizardPage.Verified, WizardPage.Rejected -> "Verification"
+}
+
+private fun actionFor(p: WizardPage): WizardAction? = when (p) {
+    WizardPage.Welcome  -> WizardAction("Get started",    "Get started")
+    WizardPage.Name, WizardPage.Contact, WizardPage.BornWhen -> WizardAction("Continue", "Continue")
+    WizardPage.About    -> WizardAction("Continue",       "Saving…")
+    WizardPage.Pan      -> WizardAction("Verify PAN",     "Checking…")
+    WizardPage.Aadhaar  -> WizardAction("Upload Aadhaar", "Uploading…")
+    WizardPage.Selfie   -> WizardAction("Upload photo",   "Uploading…")
+    else -> null
+}
+
+// -----------------------------------------------------------------------------
+// File helpers
+// -----------------------------------------------------------------------------
+
+/**
+ * Common ISD codes for the KYC phone field. India first (most drivers).
+ * Backend expects a bare 10–12 digit string (no `+`), so callers concat
+ * `digits + local`.
+ */
+private enum class DialCode(val digits: String, val flag: String, val displayName: String) {
+    India("91", "🇮🇳", "India"),
+    UAE("971", "🇦🇪", "UAE"),
+    USA("1", "🇺🇸", "USA"),
+    UK("44", "🇬🇧", "UK"),
+    Singapore("65", "🇸🇬", "Singapore"),
+    Canada("1", "🇨🇦", "Canada"),
+    Australia("61", "🇦🇺", "Australia"),
+}
+
+private val DOB_FORMAT = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale("en", "IN")).apply {
+    timeZone = java.util.TimeZone.getTimeZone("UTC")
+}
+private fun formatDob(millis: Long): String = DOB_FORMAT.format(java.util.Date(millis))
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DatePickerField(label: String, millis: Long?, onMillis: (Long?) -> Unit) {
+    var showPicker by remember { mutableStateOf(false) }
+    val maxMillis = remember {
+        // 18 years ago today (KYC minimum age).
+        val c = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        c.add(java.util.Calendar.YEAR, -18)
+        c.timeInMillis
+    }
+    val minMillis = remember {
+        val c = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        c.add(java.util.Calendar.YEAR, -100)
+        c.timeInMillis
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(PpSpace.xs)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = PpBlack50)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(PpSurface)
+                .border(1.dp, PpBlack15, RoundedCornerShape(14.dp))
+                .clickable { showPicker = true }
+                .padding(horizontal = PpSpace.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.DateRange, contentDescription = null, tint = PpBlack50, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(PpSpace.sm))
+            Text(
+                millis?.let { formatDob(it) } ?: "Pick a date",
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (millis == null) PpBlack40 else PpBlack,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = PpBlack40, modifier = Modifier.size(20.dp))
+        }
+    }
+
+    if (showPicker) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = millis ?: maxMillis,
+            yearRange = run {
+                val cal = java.util.Calendar.getInstance()
+                (cal.get(java.util.Calendar.YEAR) - 100)..(cal.get(java.util.Calendar.YEAR) - 18)
+            },
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                    utcTimeMillis in minMillis..maxMillis
+            },
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    onMillis(state.selectedDateMillis)
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel") }
+            },
+        ) {
+            DatePicker(state = state, showModeToggle = true)
+        }
+    }
+}
+
+private fun readDisplayName(ctx: android.content.Context, uri: Uri): String? =
+    ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+        val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+        if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
+    }
+
+private fun readBytesAndMime(ctx: android.content.Context, uri: Uri): Pair<ByteArray, String>? {
+    val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
+    val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+    return bytes to mime
 }

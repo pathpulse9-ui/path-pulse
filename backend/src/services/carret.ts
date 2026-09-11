@@ -720,7 +720,13 @@ export interface CarretSubAccount {
   [k: string]: unknown;
 }
 
-/** POST /register/ — creates a sub-account under the main API-KEY. Irreversible (no DELETE endpoint). */
+/** POST /register/ — creates a sub-account under the main API-KEY. Irreversible (no DELETE endpoint).
+ *
+ * Carret's docs example (`"phone_number": 815880XXX`) shows the value as an
+ * unquoted JSON number. We accept the input as a string of 10 digits, then
+ * forward it as a number so DRF's IntegerField happily accepts it. */
 export async function createSubAccount(input: SubAccountInput): Promise<CarretSubAccount> {
-  return carretFetch<CarretSubAccount>('POST', '/register/', { body: input });
+  const phoneDigits = String(input.phone_number).replace(/\D/g, '');
+  const body = { ...input, phone_number: Number(phoneDigits) };
+  return carretFetch<CarretSubAccount>('POST', '/register/', { body });
 }

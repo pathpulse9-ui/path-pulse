@@ -40,7 +40,8 @@ object UserErrors {
         409 -> "That was already submitted. Refresh and try again if you don't see it."
         422 -> safeMsg ?: "Some of the details couldn't be accepted. Please review and try again."
         429 -> "You've reached today's withdraw limit. Available again tomorrow."
-        in 500..599 -> "Something's off on our side. Please try again in a moment."
+        503 -> safeMsg ?: "Our payments partner is briefly unavailable. Please try again in a few minutes."
+        in 500..599 -> safeMsg ?: "Something's off on our side. Please try again in a moment."
         else -> "Something went wrong. Please try again."
     }
 

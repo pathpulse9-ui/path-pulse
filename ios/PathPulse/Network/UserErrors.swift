@@ -48,7 +48,14 @@ public struct UserErrors {
             return firstUsableSentence(msg) ?? "Some of the details couldn't be accepted. Please review and try again."
         case 429:
             return "You've reached today's withdraw limit. Available again tomorrow."
+        case 503:
+            // Backend uses 503 for upstream partner failures — the message is
+            // already driver-safe ("Payments partner is briefly unavailable…").
+            if let msg = firstUsableSentence(payload?.message ?? "") { return msg }
+            return "Our payments partner is briefly unavailable. Please try again in a few minutes."
         case 500...599:
+            // Some server-thrown errors carry a helpful, user-safe message.
+            if let msg = firstUsableSentence(payload?.message ?? "") { return msg }
             return "Something's off on our side. Please try again in a moment."
         default:
             return "Something went wrong. Please try again."
