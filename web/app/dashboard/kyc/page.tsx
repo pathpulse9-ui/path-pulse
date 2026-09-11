@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createCarretSubAccount,
   initiateCarretKyc,
@@ -13,25 +13,28 @@ import {
 } from '../../lib/api';
 
 /**
- * Carret Infra KYC flow (D4 · dev-onboarding).
- *
- * Two entry points: create a fresh sub-account, or point at an existing
- * pending account_id. Then walks initiate → PAN JSON → Aadhaar XML file →
- * selfie → poll status. Backend proxies every call so the API-KEY never
- * touches the browser.
+ * Polished multi-step KYC wizard — mirrors iOS `KycView` and Android
+ * `KycScreen`. Every step is a focused card with a hero mint circle icon,
+ * one big question or action, and a sticky primary CTA at the bottom.
+ * Backend still proxies every Carret call so the API-KEY never touches
+ * the browser.
  */
 
-type Step = 'account' | 'initiate' | 'pan' | 'aadhaar' | 'selfie' | 'polling' | 'done';
-type StepState = 'idle' | 'busy' | 'success' | 'error';
+type WizardPage =
+  | 'welcome' | 'name' | 'contact' | 'bornWhen' | 'about'
+  | 'pan' | 'aadhaar' | 'selfie'
+  | 'checking' | 'verified' | 'rejected';
 
-interface StepStatus {
-  state: StepState;
-  message?: string;
-}
+const STEP_INDEX: Record<WizardPage, number> = {
+  welcome: 0, name: 1, contact: 2, bornWhen: 3, about: 4,
+  pan: 5, aadhaar: 6, selfie: 7,
+  checking: -1, verified: -1, rejected: -1,
+};
+const STEP_COUNT = 8;
 
 const OCCUPATIONS = [
   'Private Job',
-  'Goverment Job', // sic — Carret's enum
+  'Goverment Job',
   'Business Owner',
   'Home Maker',
   'Freelancer',
@@ -49,96 +52,110 @@ const INCOMES = [
   '>₹1 Crore',
 ] as const;
 
-const INPUT_CLASS =
-  'rounded-xl border border-black/10 bg-white text-black placeholder:text-black/30 px-3 py-2 text-sm w-full focus:outline-none focus:border-black/30';
+const DIAL_CODES = [
+  { code: '91',  flag: '🇮🇳', name: 'India' },
+  { code: '971', flag: '🇦🇪', name: 'UAE' },
+  { code: '1',   flag: '🇺🇸', name: 'USA' },
+  { code: '44',  flag: '🇬🇧', name: 'UK' },
+  { code: '65',  flag: '🇸🇬', name: 'Singapore' },
+  { code: '1',   flag: '🇨🇦', name: 'Canada' },
+  { code: '61',  flag: '🇦🇺', name: 'Australia' },
+] as const;
 
-const LABEL_CLASS = 'block text-black/50 text-xs mb-1';
+// dd/mm/yyyy — Carret's required format.
+function formatDob(iso: string): string {
+  // <input type="date"> gives us YYYY-MM-DD; Carret wants DD/MM/YYYY.
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  if (!y || !m || !d) return '';
+  return `${d}/${m}/${y}`;
+}
+
+// 18 years ago today — youngest allowed.
+function maxDobIso(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+}
+function minDobIso(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 100);
+  return d.toISOString().slice(0, 10);
+}
 
 export default function KycPage() {
+  const [page, setPage] = useState<WizardPage>('welcome');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Account / session
   const [accountId, setAccountId] = useState('');
   const [sessionId, setSessionId] = useState('');
+
+  // Wizard state
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [dialCode, setDialCode] = useState(DIAL_CODES[0].code);
+  const [dobIso, setDobIso] = useState(''); // YYYY-MM-DD from <input type=date>
+  const [gender, setGender] = useState<'male' | 'female' | 'other'>('male');
+  const [occupation, setOccupation] = useState<string>('Business Owner');
+  const [income, setIncome] = useState<string>('₹5 Lakhs-₹10 Lakhs');
+
+  // PAN
+  const [panNumber, setPanNumber] = useState('');
+  const [panName, setPanName] = useState('');
+  const [panDobIso, setPanDobIso] = useState('');
+
+  // Files
+  const aadhaarFileRef = useRef<HTMLInputElement>(null);
+  const selfieFileRef = useRef<HTMLInputElement>(null);
+  const [aadhaarName, setAadhaarName] = useState<string>('');
+  const [selfieName, setSelfieName] = useState<string>('');
+
+  // Poll
   const [status, setStatus] = useState<CarretKycStatus | null>(null);
-  const [pollError, setPollError] = useState<string | null>(null);
 
-  const [steps, setSteps] = useState<Record<Step, StepStatus>>({
-    account: { state: 'idle' },
-    initiate: { state: 'idle' },
-    pan: { state: 'idle' },
-    aadhaar: { state: 'idle' },
-    selfie: { state: 'idle' },
-    polling: { state: 'idle' },
-    done: { state: 'idle' },
-  });
-  const set = useCallback((step: Step, s: StepStatus) => {
-    setSteps((prev) => ({ ...prev, [step]: s }));
-  }, []);
+  const dob = useMemo(() => formatDob(dobIso), [dobIso]);
+  const panDob = useMemo(() => formatDob(panDobIso), [panDobIso]);
 
-  // ── Section 1: sub-account (create fresh OR use existing) ──
-  const [subFirstName, setSubFirstName] = useState('');
-  const [subLastName, setSubLastName] = useState('');
-  const [subEmail, setSubEmail] = useState('');
-  const [subPhone, setSubPhone] = useState('');
-  const [subDob, setSubDob] = useState(''); // dd/mm/yyyy
-  const [subCountry, setSubCountry] = useState('IN');
-  const [subGender, setSubGender] = useState<'male' | 'female' | 'other'>('male');
-  const [subOccupation, setSubOccupation] = useState<string>('Business Owner');
-  const [subIncome, setSubIncome] = useState<string>('₹5 Lakhs-₹10 Lakhs');
+  // ── Actions ─────────────────────────────────────────────────
 
-  async function handleCreateSubAccount() {
-    set('account', { state: 'busy', message: 'Registering sub-account with Carret…' });
+  async function doCreateSubAccount(): Promise<boolean> {
     try {
       const input: CarretSubAccountInput = {
-        email: subEmail,
-        phone_number: subPhone.replace(/\+/g, ''),
-        first_name: subFirstName,
-        last_name: subLastName,
-        dob: subDob,
-        country: subCountry,
-        gender: subGender,
-        occupation: subOccupation,
-        annual_income: subIncome,
+        email,
+        phone_number: phone.replace(/\D/g, ''), // bare 10 digits — Carret contract
+        first_name: firstName,
+        last_name: lastName,
+        dob,
+        country: 'IN',
+        gender,
+        occupation,
+        annual_income: income,
       };
       const acc = await createCarretSubAccount(input);
       setAccountId(String(acc.id));
-      set('account', {
-        state: 'success',
-        message: `Sub-account ${acc.id} · ref ${acc.reference_id} · kyc_status: ${acc.kyc_status}`,
-      });
+      return true;
     } catch (e) {
-      set('account', {
-        state: 'error',
-        message: e instanceof Error ? e.message : 'Failed to create sub-account',
-      });
+      setError(e instanceof Error ? e.message : 'Failed to create sub-account');
+      return false;
     }
   }
 
-  // ── Section 2: initiate KYC session ──
-  async function handleInitiate() {
-    if (!accountId) return;
-    set('initiate', { state: 'busy', message: 'Requesting KYC session…' });
+  async function doInitiate(): Promise<boolean> {
     try {
       const r = await initiateCarretKyc(accountId);
       setSessionId(r.session.session_id);
-      set('initiate', {
-        state: 'success',
-        message: `Session ${r.session.session_id} · status ${r.session.status}`,
-      });
+      return true;
     } catch (e) {
-      set('initiate', {
-        state: 'error',
-        message: e instanceof Error ? e.message : 'Failed to initiate KYC',
-      });
+      setError(e instanceof Error ? e.message : 'Failed to initiate KYC');
+      return false;
     }
   }
 
-  // ── Section 3: PAN (JSON) ──
-  const [panNumber, setPanNumber] = useState('');
-  const [panName, setPanName] = useState('');
-  const [panDob, setPanDob] = useState(''); // dd/mm/yyyy
-
-  async function handleSubmitPan() {
-    if (!sessionId) return;
-    set('pan', { state: 'busy', message: 'Verifying PAN against NSDL…' });
+  async function doSubmitPan(): Promise<boolean> {
     try {
       await submitCarretKycDocument(sessionId, {
         document_type: 'pan',
@@ -146,384 +163,655 @@ export default function KycPage() {
         name: panName,
         dob: panDob,
       });
-      set('pan', { state: 'success', message: 'PAN accepted by Carret.' });
+      return true;
     } catch (e) {
-      set('pan', {
-        state: 'error',
-        message: e instanceof Error ? e.message : 'PAN submission failed',
-      });
+      setError(e instanceof Error ? e.message : 'PAN submission failed');
+      return false;
     }
   }
 
-  // ── Section 4: Aadhaar XML ──
-  const aadhaarFileRef = useRef<HTMLInputElement>(null);
-
-  async function handleSubmitAadhaar() {
-    if (!sessionId) return;
+  async function doUploadAadhaar(): Promise<boolean> {
     const file = aadhaarFileRef.current?.files?.[0];
-    if (!file) {
-      set('aadhaar', { state: 'error', message: 'Choose an Aadhaar XML file first.' });
-      return;
-    }
-    set('aadhaar', { state: 'busy', message: 'Uploading Aadhaar XML to Carret…' });
+    if (!file) { setError('Choose an Aadhaar file first.'); return false; }
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    const fileType = ext === 'xml' || ext === 'zip' ? 'xml' : 'image';
     try {
-      await uploadCarretKycFile({
-        kycSession: sessionId,
-        docType: 'aadhaar',
-        fileType: 'xml',
-        file,
-      });
-      set('aadhaar', { state: 'success', message: `Aadhaar XML "${file.name}" uploaded.` });
+      await uploadCarretKycFile({ kycSession: sessionId, docType: 'aadhaar', fileType, file });
+      return true;
     } catch (e) {
-      set('aadhaar', {
-        state: 'error',
-        message: e instanceof Error ? e.message : 'Aadhaar upload failed',
-      });
+      setError(e instanceof Error ? e.message : 'Aadhaar upload failed');
+      return false;
     }
   }
 
-  // ── Section 5: Selfie ──
-  const selfieRef = useRef<HTMLInputElement>(null);
-
-  async function handleSubmitSelfie() {
-    if (!sessionId) return;
-    const file = selfieRef.current?.files?.[0];
-    if (!file) {
-      set('selfie', { state: 'error', message: 'Choose a selfie image first.' });
-      return;
-    }
-    set('selfie', { state: 'busy', message: 'Uploading selfie — face match starts server-side…' });
+  async function doUploadSelfie(): Promise<boolean> {
+    const file = selfieFileRef.current?.files?.[0];
+    if (!file) { setError('Choose a selfie first.'); return false; }
     try {
-      await uploadCarretKycFile({
-        kycSession: sessionId,
-        docType: 'selfie',
-        fileType: 'image',
-        file,
-      });
-      set('selfie', {
-        state: 'success',
-        message: `Selfie "${file.name}" uploaded. Face-match running at Carret.`,
-      });
-      set('polling', { state: 'busy', message: 'Polling KYC status every 3s…' });
+      await uploadCarretKycFile({ kycSession: sessionId, docType: 'selfie', fileType: 'image', file });
+      return true;
     } catch (e) {
-      set('selfie', {
-        state: 'error',
-        message: e instanceof Error ? e.message : 'Selfie upload failed',
-      });
+      setError(e instanceof Error ? e.message : 'Selfie upload failed');
+      return false;
     }
   }
 
-  // ── Polling GET /kyc/{account_id}/ every 3s once selfie is in ──
+  async function doCleanupAndRetry() {
+    try {
+      await cleanupCarretKyc(accountId);
+      setSessionId(''); setStatus(null);
+      setError(null); setPage('name');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Cleanup failed');
+    }
+  }
+
+  // Sticky CTA click.
+  const performAction = useCallback(async () => {
+    setSubmitting(true); setError(null);
+    try {
+      switch (page) {
+        case 'welcome':  setPage('name'); break;
+        case 'name':     setPage('contact'); break;
+        case 'contact':  setPage('bornWhen'); break;
+        case 'bornWhen':
+          setPage('about');
+          if (!panDobIso) setPanDobIso(dobIso);
+          break;
+        case 'about':
+          if (await doCreateSubAccount() && await doInitiate()) setPage('pan');
+          break;
+        case 'pan':      if (await doSubmitPan()) setPage('aadhaar'); break;
+        case 'aadhaar':  if (await doUploadAadhaar()) setPage('selfie'); break;
+        case 'selfie':
+          if (await doUploadSelfie()) setPage('checking');
+          break;
+      }
+    } finally { setSubmitting(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, firstName, lastName, email, phone, dobIso, panDobIso, gender, occupation, income, panNumber, panName, sessionId, accountId]);
+
+  // ── Polling — driven by page === 'checking' ─────────────────
   useEffect(() => {
-    if (steps.polling.state !== 'busy' || !accountId) return;
+    if (page !== 'checking' || !accountId) return;
     let cancelled = false;
     const tick = async () => {
       try {
         const s = await getCarretKycStatus(accountId);
         if (cancelled) return;
         setStatus(s);
-        setPollError(null);
-        if (s.kyc_status === 'verified') {
-          set('polling', { state: 'success', message: 'KYC verified ✔' });
-          set('done', { state: 'success', message: 'All done — this sub-account is off-ramp ready.' });
-        } else if (s.kyc_status === 'rejected') {
-          set('polling', { state: 'error', message: 'Rejected. Use Cleanup and retry with corrected docs.' });
-        } else if (s.kyc_status === 'manual_review') {
-          set('polling', {
-            state: 'busy',
-            message: 'Flagged for manual review at Carret — waiting on their team.',
-          });
-        }
-      } catch (e) {
-        if (!cancelled) setPollError(e instanceof Error ? e.message : 'poll failed');
-      }
+        if (s.kyc_status === 'verified') setPage('verified');
+        else if (s.kyc_status === 'rejected') setPage('rejected');
+      } catch { /* keep polling */ }
     };
     void tick();
     const t = setInterval(tick, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [steps.polling.state, accountId, set]);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [page, accountId]);
 
-  // ── Cleanup (retry a failed session) ──
-  async function handleCleanup() {
-    if (!accountId) return;
-    try {
-      await cleanupCarretKyc(accountId);
-      setSessionId('');
-      setStatus(null);
-      setSteps({
-        account: steps.account,
-        initiate: { state: 'idle' },
-        pan: { state: 'idle' },
-        aadhaar: { state: 'idle' },
-        selfie: { state: 'idle' },
-        polling: { state: 'idle' },
-        done: { state: 'idle' },
-      });
-    } catch (e) {
-      console.error(e);
+  const actionEnabled = (() => {
+    switch (page) {
+      case 'welcome':  return true;
+      case 'name':     return !!firstName && !!lastName;
+      case 'contact':  return email.includes('@') && phone.length === 10;
+      case 'bornWhen': return !!dobIso;
+      case 'about':    return true;
+      case 'pan':      return panNumber.length >= 10 && !!panName && !!panDobIso;
+      case 'aadhaar':  return !!aadhaarName;
+      case 'selfie':   return !!selfieName;
+      default:         return false;
     }
-  }
+  })();
 
-  const isSelfieDone = steps.selfie.state === 'success';
+  const action = actionFor(page);
+
+  const stepIdx = STEP_INDEX[page];
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl bg-white p-6 space-y-2">
-        <h1 className="text-black text-2xl font-medium tracking-[-0.02em]">Driver KYC</h1>
-        <p className="text-sm text-black/50">
-          Runs the real Carret Infra KYC pipeline: PAN → Aadhaar XML → Selfie → face-match. Documents
-          verify against NSDL + UIDAI. Not a mock.
-        </p>
+    <div className="min-h-[calc(100vh-6rem)] flex flex-col">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 pb-2">
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            const prev = previousPage(page);
+            if (prev) setPage(prev);
+          }}
+          className="grid place-items-center h-9 w-9 rounded-full hover:bg-black/5 disabled:opacity-30"
+          disabled={!previousPage(page)}
+          aria-label="Back"
+        >
+          <ChevronIcon dir="left" />
+        </button>
+        <div className="flex-1 text-center text-sm font-medium text-black">
+          {navTitle(page)}
+        </div>
+        <div className="w-9" />
       </div>
 
-      {/* Section 1 — Sub-account */}
-      <SectionCard num={1} title="Sub-account" state={steps.account}>
-        <p className="text-xs text-black/50 mb-4">
-          KYC runs against a Carret sub-account. Create a fresh one below, or paste an existing
-          <code className="mx-1 rounded bg-black/5 px-1 py-0.5">pending</code> account id.
-        </p>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div>
-            <label className={LABEL_CLASS}>First name</label>
-            <input className={INPUT_CLASS} value={subFirstName} onChange={(e) => setSubFirstName(e.target.value)} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Last name</label>
-            <input className={INPUT_CLASS} value={subLastName} onChange={(e) => setSubLastName(e.target.value)} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Email</label>
-            <input className={INPUT_CLASS} value={subEmail} onChange={(e) => setSubEmail(e.target.value)} placeholder="you+kyc@gmail.com" />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Phone (12 char, no +)</label>
-            <input className={INPUT_CLASS} value={subPhone} onChange={(e) => setSubPhone(e.target.value)} placeholder="919XXXXXXXXX" />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>DOB (dd/mm/yyyy)</label>
-            <input className={INPUT_CLASS} value={subDob} onChange={(e) => setSubDob(e.target.value)} placeholder="18/04/2003" />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Country</label>
-            <input className={INPUT_CLASS} value={subCountry} onChange={(e) => setSubCountry(e.target.value)} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Gender</label>
-            <select
-              className={INPUT_CLASS}
-              value={subGender}
-              onChange={(e) => setSubGender(e.target.value as 'male' | 'female' | 'other')}
-            >
-              <option value="male">male</option>
-              <option value="female">female</option>
-              <option value="other">other</option>
-            </select>
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Occupation</label>
-            <select className={INPUT_CLASS} value={subOccupation} onChange={(e) => setSubOccupation(e.target.value)}>
-              {OCCUPATIONS.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="sm:col-span-2">
-            <label className={LABEL_CLASS}>Annual income</label>
-            <select className={INPUT_CLASS} value={subIncome} onChange={(e) => setSubIncome(e.target.value)}>
-              {INCOMES.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-end gap-3 pt-3">
-          <button onClick={handleCreateSubAccount} disabled={steps.account.state === 'busy'} className={PRIMARY_BTN}>
-            {steps.account.state === 'busy' ? 'Creating…' : 'Register sub-account'}
-          </button>
-          <div className="flex-1 min-w-52">
-            <label className={LABEL_CLASS}>…or paste an existing pending account_id</label>
-            <input
-              className={INPUT_CLASS}
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              placeholder="48560"
+      {/* Progress bar */}
+      {stepIdx >= 0 && (
+        <div className="flex items-center gap-3 pb-4">
+          <div className="flex-1 h-1 rounded-full bg-black/10 overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 transition-all"
+              style={{ width: `${((stepIdx + 1) / STEP_COUNT) * 100}%` }}
             />
           </div>
+          <span className="text-xs text-black/50 tabular-nums">
+            Step {stepIdx + 1} of {STEP_COUNT}
+          </span>
         </div>
-      </SectionCard>
+      )}
 
-      {/* Section 2 — Initiate */}
-      <SectionCard num={2} title="Initiate KYC session" state={steps.initiate}>
-        <button onClick={handleInitiate} disabled={!accountId || steps.initiate.state === 'busy'} className={PRIMARY_BTN}>
-          {steps.initiate.state === 'busy' ? 'Initiating…' : `Initiate KYC on ${accountId || '…'}`}
-        </button>
-        {sessionId && (
-          <p className="text-xs text-black/50 mt-2">
-            Session id: <span className="font-mono text-black">{sessionId}</span>
-          </p>
+      {/* Error banner */}
+      {error && (
+        <div className="rounded-2xl bg-red-50 border border-red-100 p-3 flex gap-2 items-start mb-3">
+          <WarnIcon className="text-red-600 mt-0.5 shrink-0" />
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto pb-32">
+        {page === 'welcome' && (
+          <PageShell icon={<ShieldIcon />} title="Let's verify your identity" subtitle="A one-time check so you can withdraw to your bank. Takes about 3 minutes.">
+            <ul className="space-y-3 pt-4">
+              <BulletItem>Your name & basic details</BulletItem>
+              <BulletItem>PAN card</BulletItem>
+              <BulletItem>Aadhaar (from DigiLocker, or a photo)</BulletItem>
+              <BulletItem>A quick selfie</BulletItem>
+            </ul>
+          </PageShell>
         )}
-      </SectionCard>
 
-      {/* Section 3 — PAN */}
-      <SectionCard num={3} title="PAN — number-based" state={steps.pan}>
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div>
-            <label className={LABEL_CLASS}>PAN number</label>
-            <input
-              className={INPUT_CLASS}
-              value={panNumber}
-              onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
-              placeholder="ABCDE1234F"
-              maxLength={10}
-            />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Name (exactly as on card)</label>
-            <input className={INPUT_CLASS} value={panName} onChange={(e) => setPanName(e.target.value)} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>DOB (dd/mm/yyyy)</label>
-            <input className={INPUT_CLASS} value={panDob} onChange={(e) => setPanDob(e.target.value)} placeholder="18/04/2003" />
-          </div>
-        </div>
-        <button onClick={handleSubmitPan} disabled={!sessionId || steps.pan.state === 'busy'} className={PRIMARY_BTN + ' mt-3'}>
-          {steps.pan.state === 'busy' ? 'Verifying…' : 'Submit PAN'}
-        </button>
-      </SectionCard>
-
-      {/* Section 4 — Aadhaar XML */}
-      <SectionCard num={4} title="Aadhaar — XML file (from DigiLocker)" state={steps.aadhaar}>
-        <p className="text-xs text-black/50 mb-3">
-          Download from DigiLocker → Aadhaar → Share as XML. Upload the ZIP file below. The
-          4-digit share code you set is embedded in the XML for Carret to verify.
-        </p>
-        <input ref={aadhaarFileRef} type="file" accept=".xml,.zip,application/xml,application/zip" className="text-sm text-black" />
-        <div className="mt-3">
-          <button onClick={handleSubmitAadhaar} disabled={!sessionId || steps.aadhaar.state === 'busy'} className={PRIMARY_BTN}>
-            {steps.aadhaar.state === 'busy' ? 'Uploading…' : 'Submit Aadhaar XML'}
-          </button>
-        </div>
-      </SectionCard>
-
-      {/* Section 5 — Selfie */}
-      <SectionCard num={5} title="Selfie — face match" state={steps.selfie}>
-        <p className="text-xs text-black/50 mb-3">
-          Front-facing, well-lit, plain background. Carret runs face-match against the photo
-          inside your Aadhaar XML.
-        </p>
-        <input ref={selfieRef} type="file" accept="image/*" capture="user" className="text-sm text-black" />
-        <div className="mt-3">
-          <button onClick={handleSubmitSelfie} disabled={!sessionId || steps.selfie.state === 'busy'} className={PRIMARY_BTN}>
-            {steps.selfie.state === 'busy' ? 'Uploading…' : 'Submit selfie'}
-          </button>
-        </div>
-      </SectionCard>
-
-      {/* Section 6 — Status */}
-      {(isSelfieDone || status) && (
-        <SectionCard num={6} title="Final KYC status" state={steps.polling}>
-          {status ? (
-            <div className="space-y-2 text-sm">
-              <div>
-                <span className="text-black/50">kyc_status:</span>{' '}
-                <StatusPill label={status.kyc_status} />
-              </div>
-              {status.kyc_session && (
-                <div className="text-xs">
-                  <span className="text-black/50">session:</span>{' '}
-                  <span className="font-mono">{status.kyc_session}</span>
-                </div>
-              )}
-              {status.ovd_documents && status.ovd_documents.length > 0 && (
-                <div>
-                  <div className="text-xs text-black/50 mb-1">Documents:</div>
-                  <ul className="text-xs space-y-1">
-                    {status.ovd_documents.map((d, i) => (
-                      <li key={i} className="font-mono">
-                        {d.document_type} · {d.status ?? 'no-status'}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+        {page === 'name' && (
+          <PageShell icon={<UserIcon />} title="What's your name?" subtitle="Enter your name exactly as it appears on your PAN card.">
+            <div className="space-y-3 pt-4">
+              <BigField label="First name" value={firstName} onChange={setFirstName} />
+              <BigField label="Last name"  value={lastName}  onChange={setLastName} />
             </div>
-          ) : (
-            <p className="text-sm text-black/50">Waiting for first poll…</p>
-          )}
-          {pollError && <p className="text-xs text-red-600 mt-2">Poll error: {pollError}</p>}
-          <div className="pt-3">
-            <button onClick={handleCleanup} className={SECONDARY_BTN}>
-              Cleanup & retry
+          </PageShell>
+        )}
+
+        {page === 'contact' && (
+          <PageShell icon={<MailIcon />} title="How can we reach you?" subtitle="We'll send transaction updates to your email and phone.">
+            <div className="space-y-3 pt-4">
+              <BigField label="Email" type="email" value={email} onChange={setEmail} placeholder="you@gmail.com" />
+              <PhoneField phone={phone} onPhone={(v) => setPhone(v.replace(/\D/g, '').slice(0, 10))} dialCode={dialCode} onDialCode={setDialCode} />
+            </div>
+          </PageShell>
+        )}
+
+        {page === 'bornWhen' && (
+          <PageShell icon={<CalendarIcon />} title="Your date of birth" subtitle="Pick the date exactly as it appears on your PAN card.">
+            <div className="pt-4">
+              <DatePickerField label="Date of birth" iso={dobIso} onIso={setDobIso} />
+            </div>
+          </PageShell>
+        )}
+
+        {page === 'about' && (
+          <PageShell icon={<BadgeIcon />} title="Tell us about yourself" subtitle="A few quick details required by the payments partner.">
+            <div className="space-y-5 pt-4">
+              <LabeledSection label="Gender">
+                <div className="grid grid-cols-3 gap-2">
+                  {(['male', 'female', 'other'] as const).map((g) => (
+                    <GenderChip key={g} label={g[0].toUpperCase() + g.slice(1)} selected={gender === g} onClick={() => setGender(g)} />
+                  ))}
+                </div>
+              </LabeledSection>
+              <LabeledSection label="Occupation">
+                <CardPicker options={[...OCCUPATIONS]} value={occupation} onChange={setOccupation} />
+              </LabeledSection>
+              <LabeledSection label="Annual income">
+                <CardPicker options={[...INCOMES]} value={income} onChange={setIncome} />
+              </LabeledSection>
+              <LabeledSection label="Country">
+                <div className="flex items-center gap-3 rounded-2xl bg-white border-2 border-emerald-500 p-3">
+                  <span className="text-xl">🇮🇳</span>
+                  <span className="text-black">India</span>
+                  <span className="flex-1" />
+                  <CheckCircleIcon className="text-emerald-500" />
+                </div>
+              </LabeledSection>
+            </div>
+          </PageShell>
+        )}
+
+        {page === 'pan' && (
+          <PageShell icon={<CardIcon />} title="Enter your PAN card" subtitle="Copy these exactly as printed on the card — name spelling and DOB must match India's tax records.">
+            <div className="space-y-3 pt-4">
+              <BigField label="PAN number (10 characters)" value={panNumber} onChange={(v) => setPanNumber(v.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} />
+              <BigField label="Name on card" value={panName} onChange={setPanName} placeholder="e.g. RAHUL KUMAR SHARMA" />
+              <DatePickerField label="Date of birth" iso={panDobIso} onIso={setPanDobIso} />
+            </div>
+          </PageShell>
+        )}
+
+        {page === 'aadhaar' && (
+          <PageShell icon={<UploadIcon />} title="Upload your Aadhaar" subtitle="The DigiLocker XML verifies fastest, but a clear photo or PDF of your card also works.">
+            <div className="space-y-3 pt-4">
+              <DropZone
+                icon={aadhaarName ? <CheckCircleIcon /> : <UploadIcon />}
+                title={aadhaarName || 'Choose Aadhaar file'}
+                subtitle={aadhaarName ? 'Ready to upload' : 'XML, ZIP, JPG, PNG, or PDF'}
+                selected={!!aadhaarName}
+                onClick={() => aadhaarFileRef.current?.click()}
+              />
+              <input
+                ref={aadhaarFileRef}
+                type="file"
+                accept=".xml,.zip,.pdf,image/*"
+                className="hidden"
+                onChange={(e) => setAadhaarName(e.target.files?.[0]?.name ?? '')}
+              />
+              <InfoTile>
+                Pro tip: DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP.
+                That's the fastest path to verified.
+              </InfoTile>
+            </div>
+          </PageShell>
+        )}
+
+        {page === 'selfie' && (
+          <PageShell icon={<CameraIcon />} title="Take a selfie" subtitle="Front-facing, well-lit, plain background. We'll match it against your Aadhaar photo.">
+            <div className="space-y-3 pt-4">
+              <DropZone
+                icon={selfieName ? <CheckCircleIcon /> : <CameraIcon />}
+                title={selfieName || 'Choose a selfie'}
+                subtitle={selfieName ? 'Ready to upload' : 'From your camera or files'}
+                selected={!!selfieName}
+                onClick={() => selfieFileRef.current?.click()}
+              />
+              <input
+                ref={selfieFileRef}
+                type="file"
+                accept="image/*"
+                capture="user"
+                className="hidden"
+                onChange={(e) => setSelfieName(e.target.files?.[0]?.name ?? '')}
+              />
+              <InfoTile>
+                For best results: no mask, no sunglasses, face fully lit, blank wall behind you.
+              </InfoTile>
+            </div>
+          </PageShell>
+        )}
+
+        {page === 'checking' && (
+          <div className="flex flex-col items-center gap-5 pt-16">
+            <div className="w-32 h-32 rounded-full bg-emerald-500/20 grid place-items-center">
+              <Spinner className="text-emerald-500 w-14 h-14" />
+            </div>
+            <div className="text-center px-6 space-y-2">
+              <h2 className="text-xl font-medium text-black">Verifying your identity</h2>
+              <p className="text-sm text-black/60">
+                This usually takes a few seconds. We'll show the result here as soon as it's done.
+              </p>
+            </div>
+            {status?.kyc_status === 'manual_review' && (
+              <div className="max-w-sm px-6 pt-2">
+                <InfoTile>
+                  Under manual review by our partner. This can take a few hours — we'll notify you when it's done.
+                </InfoTile>
+              </div>
+            )}
+          </div>
+        )}
+
+        {page === 'verified' && (
+          <OutcomePage
+            iconBg="bg-emerald-500/20" iconFg="text-emerald-500" icon={<CheckCircleIcon size={64} />}
+            title="You're verified"
+            subtitle="All set. You can now withdraw your USDC rewards to your bank."
+            primary="Start using PathPulse"
+            onPrimary={() => { setPage('welcome'); }}
+          />
+        )}
+
+        {page === 'rejected' && (
+          <OutcomePage
+            iconBg="bg-red-50" iconFg="text-red-600" icon={<WarnIcon size={64} />}
+            title="We couldn't verify you"
+            subtitle="Something didn't match. Try again with clearer documents — usually a name spelling mismatch on PAN, or a low-quality Aadhaar upload."
+            primary="Start over"
+            onPrimary={doCleanupAndRetry}
+          />
+        )}
+      </div>
+
+      {/* Sticky CTA */}
+      {action && (
+        <div className="fixed left-0 right-0 bottom-0 border-t border-black/5 bg-[#F3F7F5]">
+          <div className="max-w-2xl mx-auto px-4 py-3">
+            <button
+              type="button"
+              onClick={performAction}
+              disabled={!actionEnabled || submitting}
+              className="w-full h-14 rounded-full bg-black text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-black/40 disabled:cursor-not-allowed transition-colors"
+            >
+              {submitting && <Spinner className="w-4 h-4 text-white" />}
+              {submitting ? action.busy : action.label}
             </button>
           </div>
-        </SectionCard>
+        </div>
       )}
     </div>
   );
 }
 
-const PRIMARY_BTN =
-  'bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed';
-const SECONDARY_BTN =
-  'border border-black/10 text-black text-sm px-4 py-1.5 rounded-full hover:bg-black/5 transition-colors duration-200';
+// ─── Wizard chrome ─────────────────────────────────────────────
 
-function SectionCard({
-  num,
-  title,
-  state,
-  children,
+function previousPage(p: WizardPage): WizardPage | null {
+  switch (p) {
+    case 'welcome':  return null;
+    case 'name':     return 'welcome';
+    case 'contact':  return 'name';
+    case 'bornWhen': return 'contact';
+    case 'about':    return 'bornWhen';
+    case 'pan':      return 'about';
+    case 'aadhaar':  return 'pan';
+    case 'selfie':   return 'aadhaar';
+    default:         return null;
+  }
+}
+
+function navTitle(p: WizardPage): string {
+  switch (p) {
+    case 'welcome': return 'Verification';
+    case 'name': case 'contact': case 'bornWhen': case 'about': return 'About you';
+    case 'pan':     return 'PAN card';
+    case 'aadhaar': return 'Aadhaar';
+    case 'selfie':  return 'Selfie';
+    case 'checking': return 'Verifying';
+    case 'verified': case 'rejected': return 'Verification';
+  }
+}
+
+function actionFor(p: WizardPage): { label: string; busy: string } | null {
+  switch (p) {
+    case 'welcome':  return { label: 'Get started',    busy: 'Get started' };
+    case 'name': case 'contact': case 'bornWhen': return { label: 'Continue', busy: 'Continue' };
+    case 'about':    return { label: 'Continue',       busy: 'Saving…' };
+    case 'pan':      return { label: 'Verify PAN',     busy: 'Checking…' };
+    case 'aadhaar':  return { label: 'Upload Aadhaar', busy: 'Uploading…' };
+    case 'selfie':   return { label: 'Upload photo',   busy: 'Uploading…' };
+    default:         return null;
+  }
+}
+
+// ─── Reusable chunks ───────────────────────────────────────────
+
+function PageShell({ icon, title, subtitle, children }: { icon: React.ReactNode; title: string; subtitle: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-3 pt-6 px-2">
+      <div className="w-24 h-24 rounded-full bg-emerald-500/20 grid place-items-center text-emerald-900">
+        {icon}
+      </div>
+      <h2 className="text-2xl font-medium text-black text-center tracking-tight">{title}</h2>
+      <p className="text-sm text-black/60 text-center max-w-md">{subtitle}</p>
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+}
+
+function BulletItem({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-3">
+      <span className="grid place-items-center w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-900 shrink-0">
+        <CheckIcon size={14} />
+      </span>
+      <span className="text-sm text-black/70">{children}</span>
+    </li>
+  );
+}
+
+function BigField({
+  label, value, onChange, placeholder, type = 'text', maxLength,
 }: {
-  num: number;
-  title: string;
-  state: StepStatus;
-  children: React.ReactNode;
+  label: string; value: string; onChange: (v: string) => void;
+  placeholder?: string; type?: string; maxLength?: number;
 }) {
   return (
-    <div className="rounded-2xl bg-white p-6 space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
-          <span className="text-black/40 mr-2">{num}.</span>
-          {title}
-        </h2>
-        <StepBadge state={state} />
+    <label className="block">
+      <span className="block text-xs text-black/50 mb-1">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        className="h-14 w-full rounded-2xl border border-black/10 bg-white px-4 text-base text-black placeholder:text-black/30 focus:outline-none focus:border-black/30"
+      />
+    </label>
+  );
+}
+
+function PhoneField({
+  phone, onPhone, dialCode, onDialCode,
+}: {
+  phone: string; onPhone: (v: string) => void;
+  dialCode: string; onDialCode: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = DIAL_CODES.find((c) => c.code === dialCode) ?? DIAL_CODES[0];
+  return (
+    <div>
+      <span className="block text-xs text-black/50 mb-1">Phone</span>
+      <div className="flex gap-2">
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="h-14 min-w-[110px] px-3 rounded-2xl border border-black/10 bg-white flex items-center gap-2 text-black hover:bg-black/[.02]"
+          >
+            <span className="text-lg">{current.flag}</span>
+            <span>+{current.code}</span>
+            <ChevronIcon dir="down" size={14} />
+          </button>
+          {open && (
+            <div className="absolute z-10 top-16 left-0 w-56 rounded-xl bg-white shadow-lg border border-black/5 overflow-hidden">
+              {DIAL_CODES.map((c) => (
+                <button
+                  key={`${c.code}-${c.name}`}
+                  type="button"
+                  onClick={() => { onDialCode(c.code); setOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-left hover:bg-black/5"
+                >
+                  <span className="text-lg">{c.flag}</span>
+                  <span className="flex-1">{c.name}</span>
+                  <span className="text-black/50">+{c.code}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <input
+          type="tel"
+          value={phone}
+          onChange={(e) => onPhone(e.target.value)}
+          placeholder="9XXXXXXXXX"
+          inputMode="numeric"
+          className="flex-1 h-14 rounded-2xl border border-black/10 bg-white px-4 text-base text-black placeholder:text-black/30 focus:outline-none focus:border-black/30"
+        />
       </div>
-      {state.message && (
-        <p className={`text-xs ${state.state === 'error' ? 'text-red-600' : 'text-black/60'}`}>
-          {state.message}
-        </p>
-      )}
+    </div>
+  );
+}
+
+function DatePickerField({ label, iso, onIso }: { label: string; iso: string; onIso: (v: string) => void }) {
+  return (
+    <label className="block">
+      <span className="block text-xs text-black/50 mb-1">{label}</span>
+      <input
+        type="date"
+        value={iso}
+        onChange={(e) => onIso(e.target.value)}
+        min={minDobIso()}
+        max={maxDobIso()}
+        className="h-14 w-full rounded-2xl border border-black/10 bg-white px-4 text-base text-black focus:outline-none focus:border-black/30"
+      />
+    </label>
+  );
+}
+
+function LabeledSection({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-black/70">{label}</p>
       {children}
     </div>
   );
 }
 
-function StepBadge({ state }: { state: StepStatus }) {
-  if (state.state === 'idle') return null;
-  const cls =
-    state.state === 'success'
-      ? 'bg-green-100 text-green-700 border-green-300'
-      : state.state === 'busy'
-      ? 'bg-blue-100 text-blue-700 border-blue-300'
-      : 'bg-red-100 text-red-700 border-red-300';
-  const label = state.state === 'success' ? 'Done' : state.state === 'busy' ? 'Running…' : 'Error';
-  return <span className={`text-xs rounded-full border px-2 py-0.5 ${cls}`}>{label}</span>;
+function GenderChip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-20 rounded-2xl flex flex-col items-center justify-center gap-1 border-2 transition-colors ${
+        selected
+          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-900'
+          : 'bg-white border-black/5 text-black hover:bg-black/[.02]'
+      }`}
+    >
+      <UserIcon size={22} />
+      <span className="text-sm font-medium">{label}</span>
+    </button>
+  );
 }
 
-function StatusPill({ label }: { label: string }) {
-  const cls =
-    label === 'verified'
-      ? 'bg-green-100 text-green-700 border-green-300'
-      : label === 'rejected'
-      ? 'bg-red-100 text-red-700 border-red-300'
-      : label === 'manual_review'
-      ? 'bg-amber-100 text-amber-700 border-amber-300'
-      : 'bg-blue-100 text-blue-700 border-blue-300';
-  return <span className={`text-xs rounded-full border px-2 py-0.5 ${cls}`}>{label}</span>;
+function CardPicker({ options, value, onChange }: { options: string[]; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-2">
+      {options.map((opt) => {
+        const selected = value === opt;
+        return (
+          <button
+            type="button"
+            key={opt}
+            onClick={() => onChange(opt)}
+            className={`w-full flex items-center justify-between p-3 rounded-2xl border-2 transition-colors ${
+              selected ? 'bg-emerald-500/20 border-emerald-500' : 'bg-white border-black/5 hover:bg-black/[.02]'
+            }`}
+          >
+            <span className="text-base text-black">{opt}</span>
+            {selected
+              ? <CheckCircleIcon className="text-emerald-500" />
+              : <span className="w-5 h-5 rounded-full border-2 border-black/15" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DropZone({ icon, title, subtitle, selected, onClick }: {
+  icon: React.ReactNode; title: string; subtitle: string; selected: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 p-3 rounded-2xl border-2 text-left transition-colors ${
+        selected ? 'border-emerald-500 bg-white' : 'border-black/5 bg-white hover:bg-black/[.02]'
+      }`}
+    >
+      <div className={`w-14 h-14 rounded-full grid place-items-center shrink-0 ${
+        selected ? 'bg-emerald-500/20 text-emerald-500' : 'bg-black/5 text-black/70'
+      }`}>
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-base text-black truncate">{title}</p>
+        <p className="text-xs text-black/50">{subtitle}</p>
+      </div>
+      <ChevronIcon dir="right" size={14} className="text-black/40" />
+    </button>
+  );
+}
+
+function InfoTile({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 p-3 rounded-2xl bg-emerald-500/10 text-black/70 text-sm">
+      <span className="text-emerald-500 shrink-0"><BulbIcon /></span>
+      <p>{children}</p>
+    </div>
+  );
+}
+
+function OutcomePage({
+  iconBg, iconFg, icon, title, subtitle, primary, onPrimary,
+}: {
+  iconBg: string; iconFg: string; icon: React.ReactNode;
+  title: string; subtitle: string; primary: string; onPrimary: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center pt-16 px-6 gap-5">
+      <div className={`w-32 h-32 rounded-full grid place-items-center ${iconBg} ${iconFg}`}>{icon}</div>
+      <h2 className="text-2xl font-medium text-black text-center">{title}</h2>
+      <p className="text-sm text-black/60 text-center max-w-md">{subtitle}</p>
+      <button
+        type="button"
+        onClick={onPrimary}
+        className="w-full max-w-md h-14 rounded-full bg-black text-white text-sm font-semibold mt-4"
+      >
+        {primary}
+      </button>
+    </div>
+  );
+}
+
+// ─── Icons (inline SVG — matches the app icon vibe) ────────────
+
+function Spinner({ className = '' }: { className?: string }) {
+  return (
+    <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+      <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+function ShieldIcon()   { return <IconSvg size={44} paths={<path d="M12 2 4 5v6c0 5 3.5 9.5 8 11 4.5-1.5 8-6 8-11V5l-8-3Z" fill="currentColor" />} />; }
+function UserIcon({ size = 44 }: { size?: number }) {
+  return <IconSvg size={size} paths={<><circle cx="12" cy="8" r="4" fill="currentColor" /><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8" fill="currentColor" /></>} />;
+}
+function MailIcon()     { return <IconSvg size={44} paths={<><rect x="3" y="5" width="18" height="14" rx="2" fill="currentColor" /><path d="m3 7 9 7 9-7" stroke="white" strokeWidth="2" fill="none" /></>} />; }
+function CalendarIcon() { return <IconSvg size={44} paths={<><rect x="3" y="5" width="18" height="16" rx="2" fill="currentColor" /><path d="M8 3v4M16 3v4M3 10h18" stroke="white" strokeWidth="2" fill="none" /></>} />; }
+function BadgeIcon()    { return <IconSvg size={44} paths={<><rect x="4" y="4" width="16" height="16" rx="4" fill="currentColor" /><circle cx="12" cy="10" r="3" fill="white" /><path d="M6 20c0-3 2.5-5 6-5s6 2 6 5" fill="white" /></>} />; }
+function CardIcon()     { return <IconSvg size={44} paths={<><rect x="2" y="5" width="20" height="14" rx="2" fill="currentColor" /><path d="M2 10h20" stroke="white" strokeWidth="2" /></>} />; }
+function UploadIcon({ size = 44 }: { size?: number }) {
+  return <IconSvg size={size} paths={<><path d="M12 3v12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><path d="m7 8 5-5 5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" /><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" /></>} />;
+}
+function CameraIcon({ size = 44 }: { size?: number }) {
+  return <IconSvg size={size} paths={<><path d="M4 8h4l2-2h4l2 2h4v11H4z" fill="currentColor" /><circle cx="12" cy="14" r="4" fill="white" /></>} />;
+}
+function CheckIcon({ size = 22 }: { size?: number }) {
+  return <IconSvg size={size} paths={<path d="m5 12 5 5 9-11" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none" />} />;
+}
+function CheckCircleIcon({ size = 22, className }: { size?: number; className?: string }) {
+  return <IconSvg size={size} className={className} paths={<><circle cx="12" cy="12" r="10" fill="currentColor" /><path d="m7 12 3 3 7-7" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" /></>} />;
+}
+function WarnIcon({ size = 22, className }: { size?: number; className?: string }) {
+  return <IconSvg size={size} className={className} paths={<><path d="m12 3 10 18H2Z" fill="currentColor" /><path d="M12 10v5M12 18v.5" stroke="white" strokeWidth="2.5" strokeLinecap="round" /></>} />;
+}
+function BulbIcon() {
+  return <IconSvg size={18} paths={<><path d="M9 21h6M10 18h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M12 3a6 6 0 0 0-4 10.5c1 1 1.5 2 1.5 3.5h5c0-1.5.5-2.5 1.5-3.5A6 6 0 0 0 12 3Z" fill="currentColor" /></>} />;
+}
+function ChevronIcon({ dir, size = 20, className }: { dir: 'left' | 'right' | 'down'; size?: number; className?: string }) {
+  const rot = dir === 'left' ? 180 : dir === 'down' ? 90 : 0;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} style={{ transform: `rotate(${rot}deg)` }}>
+      <path d="m9 6 6 6-6 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function IconSvg({ size, className, paths }: { size: number; className?: string; paths: React.ReactNode }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      {paths}
+    </svg>
+  );
 }
