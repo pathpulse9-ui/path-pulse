@@ -32,7 +32,7 @@ struct TreasuryView: View {
         PpCard {
             PpCardHeader(
                 title: "Treasury multisig",
-                subtitle: "Master key at weight 0 disables direct signing; N-of-M signers required."
+                subtitle: "Multiple people must approve any change — no single key can move funds alone."
             )
             if let c = config {
                 VStack(alignment: .leading, spacing: PpSpace.md) {
@@ -85,7 +85,7 @@ struct TreasuryView: View {
         PpCard {
             PpCardHeader(
                 title: "Distribution accounts",
-                subtitle: "Destinations for the 50/30/20 settlement split."
+                subtitle: "The three accounts every reward split flows into."
             )
             if accounts.isEmpty && loading {
                 Text("Loading…")
@@ -163,7 +163,7 @@ struct TreasuryView: View {
             config = cp
             accounts = ap
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserErrors.message(error)
         }
     }
 }

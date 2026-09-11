@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.pathpulse.driver.network.DataRepository
+import com.pathpulse.driver.network.UserErrors
 import com.pathpulse.driver.network.ScoutRoster
 import com.pathpulse.driver.network.ScoutTierInfo
 import com.pathpulse.driver.network.ScoutTierLookup
@@ -84,7 +85,7 @@ fun ScoutScreen(
         PpCard {
             PpCardHeader(
                 title = "Reputation tiers",
-                subtitle = "Classic Assets on Stellar with AUTH_REQUIRED + AUTH_REVOCABLE.",
+                subtitle = "Higher tiers earn a bigger share of each reward.",
             )
             if (roster != null) {
                 Column(
@@ -110,8 +111,8 @@ fun ScoutScreen(
 
         PpCard {
             PpCardHeader(
-                title = "Address lookup",
-                subtitle = "Check whether a driver address holds a SCOUT badge.",
+                title = "Check a driver",
+                subtitle = "Look up any driver's current reputation tier.",
             )
             OutlinedTextField(
                 value = lookupInput,
@@ -141,7 +142,7 @@ fun ScoutScreen(
                         try {
                             lookupResult = dataRepository.scoutLookup(addr)
                         } catch (e: Exception) {
-                            lookupError = e.message ?: e.javaClass.simpleName
+                            lookupError = UserErrors.message(e)
                         } finally {
                             lookingUp = false
                         }

@@ -41,6 +41,7 @@ import com.pathpulse.driver.network.CarretKycDocumentSubmission
 import com.pathpulse.driver.network.CarretKycStatus
 import com.pathpulse.driver.network.CarretSubAccountInput
 import com.pathpulse.driver.network.DataRepository
+import com.pathpulse.driver.network.UserErrors
 import com.pathpulse.driver.ui.components.PpCard
 import com.pathpulse.driver.ui.components.PpPrimaryButton
 import com.pathpulse.driver.ui.components.PpSecondaryButton
@@ -155,18 +156,18 @@ fun KycScreen(
                 pollError = null
                 when (st.kyc_status) {
                     "verified" -> {
-                        setStep(Step.Polling, StepStatus.Success("KYC verified ✔"))
-                        setStep(Step.Done, StepStatus.Success("All done — this sub-account is off-ramp ready."))
+                        setStep(Step.Polling, StepStatus.Success("All set. You're ready to withdraw to your bank."))
+                        setStep(Step.Done, StepStatus.Success("You're all done."))
                         break
                     }
                     "rejected" -> {
-                        setStep(Step.Polling, StepStatus.Error("Rejected. Use Cleanup and retry."))
+                        setStep(Step.Polling, StepStatus.Error("Something didn't match. Tap Start over and try again."))
                         break
                     }
-                    "manual_review" -> setStep(Step.Polling, StepStatus.Busy("Flagged for manual review at Carret — waiting on their team."))
+                    "manual_review" -> setStep(Step.Polling, StepStatus.Busy("Our team is taking a closer look. This can take a few hours."))
                 }
             } catch (e: Exception) {
-                pollError = e.message
+                pollError = UserErrors.message(e)
             }
             delay(3000)
         }
@@ -181,19 +182,18 @@ fun KycScreen(
     ) {
         // Header
         Column(verticalArrangement = Arrangement.spacedBy(PpSpace.xs)) {
-            Text("Driver KYC", style = MaterialTheme.typography.headlineMedium)
+            Text("Verify your identity", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Real Carret Infra pipeline: PAN → Aadhaar XML → Selfie → face match. " +
-                    "Documents verify against NSDL + UIDAI. Not a mock.",
+                "A quick check so you can withdraw to your bank. Have your PAN and Aadhaar handy.",
                 style = MaterialTheme.typography.bodySmall,
                 color = PpBlack50,
             )
         }
 
         // Section 1 — Sub-account
-        Section(1, "Sub-account", steps.value[Step.Account]!!) {
+        Section(1, "Your details", steps.value[Step.Account]!!) {
             Text(
-                "Register a fresh Carret sub-account, or paste an existing pending accountId below.",
+                "A few basics we need on file before we can start verification.",
                 style = MaterialTheme.typography.bodySmall,
                 color = PpBlack50,
                 modifier = Modifier.padding(bottom = PpSpace.sm),
@@ -213,11 +213,11 @@ fun KycScreen(
             DropdownField("Income",     income,     INCOMES)                            { income = it }
 
             PpPrimaryButton(
-                text = if (steps.value[Step.Account] is StepStatus.Busy) "Creating…" else "Register sub-account",
+                text = if (steps.value[Step.Account] is StepStatus.Busy) "Saving…" else "Save details",
                 enabled = steps.value[Step.Account] !is StepStatus.Busy,
                 onClick = {
                     scope.launch {
-                        setStep(Step.Account, StepStatus.Busy("Registering sub-account with Carret…"))
+                        setStep(Step.Account, StepStatus.Busy("Saving your details…"))
                         try {
                             val acc = dataRepository.createCarretSubAccount(
                                 CarretSubAccountInput(
@@ -231,11 +231,9 @@ fun KycScreen(
                                 ),
                             )
                             accountId = acc.id.toString()
-                            setStep(Step.Account, StepStatus.Success(
-                                "Sub-account ${acc.id} · ref ${acc.reference_id} · kyc_status: ${acc.kyc_status}",
-                            ))
+                            setStep(Step.Account, StepStatus.Success("Details saved."))
                         } catch (e: Exception) {
-                            setStep(Step.Account, StepStatus.Error(e.message ?: "Failed"))
+                            setStep(Step.Account, StepStatus.Error(UserErrors.message(e)))
                         }
                     }
                 },
@@ -250,49 +248,45 @@ fun KycScreen(
             )
         }
 
-        // Section 2 — Initiate
-        Section(2, "Initiate KYC session", steps.value[Step.Initiate]!!) {
+        // Section 2 — Start verification
+        Section(2, "Start verification", steps.value[Step.Initiate]!!) {
             PpPrimaryButton(
-                text = if (steps.value[Step.Initiate] is StepStatus.Busy) "Initiating…"
-                       else "Initiate KYC on ${accountId.ifEmpty { "…" }}",
+                text = if (steps.value[Step.Initiate] is StepStatus.Busy) "Starting…" else "Start verification",
                 enabled = accountId.isNotEmpty() && steps.value[Step.Initiate] !is StepStatus.Busy,
                 onClick = {
                     scope.launch {
-                        setStep(Step.Initiate, StepStatus.Busy("Requesting KYC session…"))
+                        setStep(Step.Initiate, StepStatus.Busy("Getting things ready…"))
                         try {
                             val r = dataRepository.initiateCarretKyc(accountId)
                             sessionId = r.session.session_id
-                            setStep(Step.Initiate, StepStatus.Success("Session ${r.session.session_id} · status ${r.session.status}"))
+                            setStep(Step.Initiate, StepStatus.Success("Ready — please submit your documents below."))
                         } catch (e: Exception) {
-                            setStep(Step.Initiate, StepStatus.Error(e.message ?: "Failed"))
+                            setStep(Step.Initiate, StepStatus.Error(UserErrors.message(e)))
                         }
                     }
                 },
             )
-            if (sessionId.isNotEmpty()) {
-                Text(
-                    "Session id: $sessionId",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = PpBlack70,
-                    modifier = Modifier.padding(top = PpSpace.sm),
-                )
-            }
         }
 
         // Section 3 — PAN
-        Section(3, "PAN — number based", steps.value[Step.Pan]!!) {
-            Field("PAN number (10 char)", panNumber, { panNumber = it.uppercase() },
+        Section(3, "PAN card", steps.value[Step.Pan]!!) {
+            Text(
+                "Enter these exactly as printed on your PAN card.",
+                style = MaterialTheme.typography.bodySmall,
+                color = PpBlack50,
+                modifier = Modifier.padding(bottom = PpSpace.sm),
+            )
+            Field("PAN number (10 characters)", panNumber, { panNumber = it.uppercase() },
                   placeholder = "ABCDE1234F",
                   keyboardCapitalization = KeyboardCapitalization.Characters)
-            Field("Name (exactly as on card)", panName, { panName = it })
-            Field("DOB (dd/mm/yyyy)", panDob, { panDob = it }, placeholder = "18/04/2003")
+            Field("Name on card", panName, { panName = it })
+            Field("Date of birth (dd/mm/yyyy)", panDob, { panDob = it }, placeholder = "18/04/2003")
             PpPrimaryButton(
-                text = if (steps.value[Step.Pan] is StepStatus.Busy) "Verifying…" else "Submit PAN",
+                text = if (steps.value[Step.Pan] is StepStatus.Busy) "Checking…" else "Submit PAN",
                 enabled = sessionId.isNotEmpty() && steps.value[Step.Pan] !is StepStatus.Busy,
                 onClick = {
                     scope.launch {
-                        setStep(Step.Pan, StepStatus.Busy("Verifying PAN against NSDL…"))
+                        setStep(Step.Pan, StepStatus.Busy("Checking your PAN…"))
                         try {
                             dataRepository.submitCarretKycDocument(
                                 sessionId,
@@ -302,9 +296,9 @@ fun KycScreen(
                                     name = panName, dob = panDob,
                                 ),
                             )
-                            setStep(Step.Pan, StepStatus.Success("PAN accepted by Carret."))
+                            setStep(Step.Pan, StepStatus.Success("PAN accepted."))
                         } catch (e: Exception) {
-                            setStep(Step.Pan, StepStatus.Error(e.message ?: "Failed"))
+                            setStep(Step.Pan, StepStatus.Error(UserErrors.message(e)))
                         }
                     }
                 },
@@ -313,34 +307,34 @@ fun KycScreen(
         }
 
         // Section 4 — Aadhaar XML
-        Section(4, "Aadhaar — XML from DigiLocker", steps.value[Step.Aadhaar]!!) {
+        Section(4, "Aadhaar file", steps.value[Step.Aadhaar]!!) {
             Text(
-                "DigiLocker → Aadhaar → Share as XML. Upload the .xml/.zip file below.",
+                "Open DigiLocker → Aadhaar → Share as XML. Upload the ZIP file you get here.",
                 style = MaterialTheme.typography.bodySmall,
                 color = PpBlack50,
                 modifier = Modifier.padding(bottom = PpSpace.sm),
             )
             PpSecondaryButton(
-                text = aadhaarUri?.lastPathSegment ?: "Choose Aadhaar XML / ZIP",
+                text = aadhaarUri?.lastPathSegment ?: "Choose Aadhaar file",
                 onClick = { pickAadhaar.launch("*/*") },
             )
             PpPrimaryButton(
-                text = if (steps.value[Step.Aadhaar] is StepStatus.Busy) "Uploading…" else "Submit Aadhaar XML",
+                text = if (steps.value[Step.Aadhaar] is StepStatus.Busy) "Uploading…" else "Upload Aadhaar",
                 enabled = aadhaarUri != null && sessionId.isNotEmpty() && steps.value[Step.Aadhaar] !is StepStatus.Busy,
                 onClick = {
                     scope.launch {
                         val uri = aadhaarUri ?: return@launch
                         val (name, bytes) = readUri(uri) ?: return@launch
-                        setStep(Step.Aadhaar, StepStatus.Busy("Uploading Aadhaar XML to Carret…"))
+                        setStep(Step.Aadhaar, StepStatus.Busy("Uploading Aadhaar…"))
                         try {
                             dataRepository.uploadCarretKycFile(
                                 kycSession = sessionId, docType = "aadhaar",
                                 fileType = "xml", filename = name,
                                 fileBytes = bytes, mimeType = "application/xml",
                             )
-                            setStep(Step.Aadhaar, StepStatus.Success("Aadhaar XML uploaded: $name"))
+                            setStep(Step.Aadhaar, StepStatus.Success("Aadhaar received."))
                         } catch (e: Exception) {
-                            setStep(Step.Aadhaar, StepStatus.Error(e.message ?: "Failed"))
+                            setStep(Step.Aadhaar, StepStatus.Error(UserErrors.message(e)))
                         }
                     }
                 },
@@ -349,9 +343,9 @@ fun KycScreen(
         }
 
         // Section 5 — Selfie
-        Section(5, "Selfie — face match", steps.value[Step.Selfie]!!) {
+        Section(5, "Selfie", steps.value[Step.Selfie]!!) {
             Text(
-                "Front-facing, well-lit, plain background.",
+                "Take a clear, well-lit photo facing the camera. Plain background works best.",
                 style = MaterialTheme.typography.bodySmall,
                 color = PpBlack50,
                 modifier = Modifier.padding(bottom = PpSpace.sm),
@@ -361,23 +355,23 @@ fun KycScreen(
                 onClick = { pickSelfie.launch("image/*") },
             )
             PpPrimaryButton(
-                text = if (steps.value[Step.Selfie] is StepStatus.Busy) "Uploading…" else "Submit selfie",
+                text = if (steps.value[Step.Selfie] is StepStatus.Busy) "Uploading…" else "Upload selfie",
                 enabled = selfieUri != null && sessionId.isNotEmpty() && steps.value[Step.Selfie] !is StepStatus.Busy,
                 onClick = {
                     scope.launch {
                         val uri = selfieUri ?: return@launch
                         val (name, bytes) = readUri(uri) ?: return@launch
-                        setStep(Step.Selfie, StepStatus.Busy("Uploading selfie — face match starts server-side…"))
+                        setStep(Step.Selfie, StepStatus.Busy("Uploading your photo…"))
                         try {
                             dataRepository.uploadCarretKycFile(
                                 kycSession = sessionId, docType = "selfie",
                                 fileType = "image", filename = name,
                                 fileBytes = bytes, mimeType = "image/jpeg",
                             )
-                            setStep(Step.Selfie, StepStatus.Success("Selfie uploaded. Face-match running at Carret."))
-                            setStep(Step.Polling, StepStatus.Busy("Polling KYC status every 3s…"))
+                            setStep(Step.Selfie, StepStatus.Success("Photo received."))
+                            setStep(Step.Polling, StepStatus.Busy("Checking your verification…"))
                         } catch (e: Exception) {
-                            setStep(Step.Selfie, StepStatus.Error(e.message ?: "Failed"))
+                            setStep(Step.Selfie, StepStatus.Error(UserErrors.message(e)))
                         }
                     }
                 },
@@ -387,48 +381,32 @@ fun KycScreen(
 
         // Section 6 — Status
         if (steps.value[Step.Selfie] is StepStatus.Success || kycStatus != null) {
-            Section(6, "Final KYC status", steps.value[Step.Polling]!!) {
+            Section(6, "Verification status", steps.value[Step.Polling]!!) {
                 val s = kycStatus
                 if (s != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("kyc_status:", style = MaterialTheme.typography.bodySmall, color = PpBlack50)
-                        StatusPill(label = s.kyc_status, modifier = Modifier.padding(start = PpSpace.sm))
+                        Text("Status:", style = MaterialTheme.typography.bodySmall, color = PpBlack50)
+                        StatusPill(label = friendlyStatus(s.kyc_status), modifier = Modifier.padding(start = PpSpace.sm))
                     }
-                    if (s.kyc_session != null) {
+                    val explainer = when (s.kyc_status) {
+                        "verified"      -> "All set. You're ready to withdraw to your bank."
+                        "rejected"      -> "Something didn't match. Tap Start over and try again with clearer documents."
+                        "manual_review" -> "Our team is taking a closer look. This can take a few hours."
+                        else            -> null
+                    }
+                    if (explainer != null) {
                         Text(
-                            "session: ${s.kyc_session}",
+                            explainer,
                             style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
                             color = PpBlack70,
-                            modifier = Modifier.padding(top = PpSpace.xs),
+                            modifier = Modifier.padding(top = PpSpace.sm),
                         )
                     }
-                    s.ovd_documents?.let { docs ->
-                        Column(modifier = Modifier.padding(top = PpSpace.sm)) {
-                            Text("Documents", style = MaterialTheme.typography.labelSmall, color = PpBlack50)
-                            docs.forEach {
-                                Text(
-                                    "• ${it.document_type} — ${it.status ?: "no-status"}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = PpBlack70,
-                                )
-                            }
-                        }
-                    }
                 } else {
-                    Text("Waiting for first poll…", style = MaterialTheme.typography.bodySmall, color = PpBlack50)
-                }
-                pollError?.let {
-                    Text(
-                        "Poll error: $it",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = PpRed600,
-                        modifier = Modifier.padding(top = PpSpace.xs),
-                    )
+                    Text("Checking your verification…", style = MaterialTheme.typography.bodySmall, color = PpBlack50)
                 }
                 PpSecondaryButton(
-                    text = "Cleanup & retry",
+                    text = "Start over",
                     onClick = {
                         scope.launch {
                             try {
@@ -438,7 +416,7 @@ fun KycScreen(
                                     setStep(it, StepStatus.Idle)
                                 }
                             } catch (e: Exception) {
-                                pollError = e.message
+                                pollError = UserErrors.message(e)
                             }
                         }
                     },
@@ -447,6 +425,14 @@ fun KycScreen(
             }
         }
     }
+}
+
+private fun friendlyStatus(raw: String): String = when (raw) {
+    "verified"      -> "verified"
+    "pending"       -> "in progress"
+    "manual_review" -> "under review"
+    "rejected"      -> "needs attention"
+    else            -> raw
 }
 
 @Composable

@@ -87,10 +87,10 @@ struct KycView: View {
     @ViewBuilder
     private var intro: some View {
         VStack(alignment: .leading, spacing: PpSpace.xs) {
-            Text("Real Carret Infra pipeline")
+            Text("Verify your identity")
                 .font(PathPulseFont.titleMedium)
                 .foregroundStyle(PathPulseColor.black)
-            Text("PAN → Aadhaar XML → Selfie → face match. Documents verify against NSDL + UIDAI. Not a mock.")
+            Text("A quick check so you can withdraw to your bank. Have your PAN and Aadhaar handy.")
                 .font(PathPulseFont.bodySmall)
                 .foregroundStyle(PathPulseColor.black60)
         }
@@ -101,8 +101,8 @@ struct KycView: View {
 
     @ViewBuilder
     private var accountCard: some View {
-        section(num: 1, title: "Sub-account", step: .account) {
-            Text("Register a fresh Carret sub-account, or paste an existing pending accountId below.")
+        section(num: 1, title: "Your details", step: .account) {
+            Text("A few basics we need on file before we can start verification.")
                 .font(PathPulseFont.bodySmall)
                 .foregroundStyle(PathPulseColor.black50)
                 .padding(.bottom, PpSpace.sm)
@@ -128,7 +128,7 @@ struct KycView: View {
 
             HStack {
                 Button(action: { Task { await createSubAccount() } }) {
-                    Text((steps[.account]?.isBusy ?? false) ? "Creating…" : "Register sub-account")
+                    Text((steps[.account]?.isBusy ?? false) ? "Saving…" : "Save details")
                         .font(PathPulseFont.labelMedium)
                         .foregroundStyle(PathPulseColor.white)
                         .padding(.horizontal, PpSpace.md)
@@ -139,16 +139,6 @@ struct KycView: View {
                 .disabled((steps[.account]?.isBusy ?? false))
             }
             .padding(.top, PpSpace.md)
-
-            VStack(alignment: .leading, spacing: PpSpace.xs) {
-                Text("…or paste an existing pending account id")
-                    .font(PathPulseFont.labelSmall)
-                    .foregroundStyle(PathPulseColor.black50)
-                TextField("48560", text: $accountId)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-            }
-            .padding(.top, PpSpace.md)
         }
     }
 
@@ -156,9 +146,13 @@ struct KycView: View {
 
     @ViewBuilder
     private var initiateCard: some View {
-        section(num: 2, title: "Initiate KYC session", step: .initiate) {
+        section(num: 2, title: "Start verification", step: .initiate) {
+            Text("We'll ask for your PAN card, Aadhaar file, and a selfie next.")
+                .font(PathPulseFont.bodySmall)
+                .foregroundStyle(PathPulseColor.black50)
+                .padding(.bottom, PpSpace.sm)
             Button(action: { Task { await initiate() } }) {
-                Text((steps[.initiate]?.isBusy ?? false) ? "Initiating…" : "Initiate KYC on \(accountId.isEmpty ? "…" : accountId)")
+                Text((steps[.initiate]?.isBusy ?? false) ? "Starting…" : "Start verification")
                     .font(PathPulseFont.labelMedium)
                     .foregroundStyle(PathPulseColor.white)
                     .padding(.horizontal, PpSpace.md)
@@ -167,12 +161,6 @@ struct KycView: View {
                     .clipShape(Capsule())
             }
             .disabled(accountId.isEmpty || (steps[.initiate]?.isBusy ?? false))
-            if !sessionId.isEmpty {
-                Text("Session id: \(sessionId)")
-                    .font(.system(.footnote, design: .monospaced))
-                    .foregroundStyle(PathPulseColor.black70)
-                    .padding(.top, PpSpace.sm)
-            }
         }
     }
 
@@ -180,15 +168,19 @@ struct KycView: View {
 
     @ViewBuilder
     private var panCard: some View {
-        section(num: 3, title: "PAN — number based", step: .pan) {
+        section(num: 3, title: "PAN card", step: .pan) {
+            Text("Enter these exactly as printed on your PAN card.")
+                .font(PathPulseFont.bodySmall)
+                .foregroundStyle(PathPulseColor.black50)
+                .padding(.bottom, PpSpace.sm)
             VStack(spacing: PpSpace.sm) {
-                field("PAN number (10 char)", text: $panNumber, placeholder: "ABCDE1234F")
+                field("PAN number (10 characters)", text: $panNumber, placeholder: "ABCDE1234F")
                     .textInputAutocapitalization(.characters)
-                field("Name (exactly as on card)", text: $panName)
-                field("DOB (dd/mm/yyyy)", text: $panDob, placeholder: "18/04/2003")
+                field("Name on card", text: $panName)
+                field("Date of birth (dd/mm/yyyy)", text: $panDob, placeholder: "18/04/2003")
             }
             Button(action: { Task { await submitPan() } }) {
-                Text((steps[.pan]?.isBusy ?? false) ? "Verifying…" : "Submit PAN")
+                Text((steps[.pan]?.isBusy ?? false) ? "Checking…" : "Submit PAN")
                     .font(PathPulseFont.labelMedium)
                     .foregroundStyle(PathPulseColor.white)
                     .padding(.horizontal, PpSpace.md)
@@ -205,8 +197,8 @@ struct KycView: View {
 
     @ViewBuilder
     private var aadhaarCard: some View {
-        section(num: 4, title: "Aadhaar — XML from DigiLocker", step: .aadhaar) {
-            Text("DigiLocker → Aadhaar → Share as XML. The 4-digit share code you set is embedded in the file.")
+        section(num: 4, title: "Aadhaar file", step: .aadhaar) {
+            Text("Open DigiLocker → Aadhaar → Share as XML. Upload the ZIP file you get here.")
                 .font(PathPulseFont.bodySmall)
                 .foregroundStyle(PathPulseColor.black50)
                 .padding(.bottom, PpSpace.sm)
@@ -214,7 +206,7 @@ struct KycView: View {
             Button(action: { aadhaarPickerShown = true }) {
                 HStack {
                     Image(systemName: "doc.badge.plus")
-                    Text(pickedAadhaarURL?.lastPathComponent ?? "Choose Aadhaar XML / ZIP")
+                    Text(pickedAadhaarURL?.lastPathComponent ?? "Choose Aadhaar file")
                         .lineLimit(1)
                 }
                 .font(PathPulseFont.labelMedium)
@@ -235,7 +227,7 @@ struct KycView: View {
             }
 
             Button(action: { Task { await uploadAadhaar() } }) {
-                Text((steps[.aadhaar]?.isBusy ?? false) ? "Uploading…" : "Submit Aadhaar XML")
+                Text((steps[.aadhaar]?.isBusy ?? false) ? "Uploading…" : "Upload Aadhaar")
                     .font(PathPulseFont.labelMedium)
                     .foregroundStyle(PathPulseColor.white)
                     .padding(.horizontal, PpSpace.md)
@@ -253,8 +245,8 @@ struct KycView: View {
 
     @ViewBuilder
     private var selfieCard: some View {
-        section(num: 5, title: "Selfie — face match", step: .selfie) {
-            Text("Front-facing, well-lit, plain background. Carret runs face-match against the photo inside your Aadhaar XML.")
+        section(num: 5, title: "Selfie", step: .selfie) {
+            Text("Take a clear, well-lit photo facing the camera. Plain background works best.")
                 .font(PathPulseFont.bodySmall)
                 .foregroundStyle(PathPulseColor.black50)
                 .padding(.bottom, PpSpace.sm)
@@ -278,7 +270,7 @@ struct KycView: View {
             }
 
             Button(action: { Task { await uploadSelfie() } }) {
-                Text((steps[.selfie]?.isBusy ?? false) ? "Uploading…" : "Submit selfie")
+                Text((steps[.selfie]?.isBusy ?? false) ? "Uploading…" : "Upload selfie")
                     .font(PathPulseFont.labelMedium)
                     .foregroundStyle(PathPulseColor.white)
                     .padding(.horizontal, PpSpace.md)
@@ -296,44 +288,39 @@ struct KycView: View {
 
     @ViewBuilder
     private var statusCard: some View {
-        section(num: 6, title: "Final KYC status", step: .polling) {
+        section(num: 6, title: "Verification status", step: .polling) {
             if let s = kycStatus {
-                VStack(alignment: .leading, spacing: PpSpace.sm) {
-                    HStack {
-                        Text("kyc_status:")
-                            .font(PathPulseFont.bodySmall)
-                            .foregroundStyle(PathPulseColor.black50)
-                        statusPill(s.kyc_status)
-                    }
-                    if let sid = s.kyc_session {
-                        Text("session: \(sid)")
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(PathPulseColor.black70)
-                    }
-                    if let docs = s.ovd_documents, !docs.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Documents").font(PathPulseFont.labelSmall).foregroundStyle(PathPulseColor.black50)
-                            ForEach(docs) { d in
-                                Text("• \(d.document_type) — \(d.status ?? "no-status")")
-                                    .font(.system(.footnote, design: .monospaced))
-                                    .foregroundStyle(PathPulseColor.black70)
-                            }
-                        }
-                    }
+                HStack {
+                    Text("Status:")
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black50)
+                    statusPill(friendlyStatus(s.kyc_status))
+                }
+                if s.kyc_status == "manual_review" {
+                    Text("Our team is taking a closer look. This can take a few hours — we'll notify you when it's done.")
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black60)
+                        .padding(.top, PpSpace.sm)
+                }
+                if s.kyc_status == "verified" {
+                    Text("All set. You're ready to withdraw to your bank.")
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black60)
+                        .padding(.top, PpSpace.sm)
+                }
+                if s.kyc_status == "rejected" {
+                    Text("Something didn't match. Tap \"Start over\" and try again with clearer documents.")
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black60)
+                        .padding(.top, PpSpace.sm)
                 }
             } else {
-                Text("Waiting for first poll…")
+                Text("Checking your verification…")
                     .font(PathPulseFont.bodySmall)
                     .foregroundStyle(PathPulseColor.black50)
             }
-            if let pollError {
-                Text("Poll error: \(pollError)")
-                    .font(PathPulseFont.bodySmall)
-                    .foregroundStyle(PathPulseColor.red600)
-                    .padding(.top, PpSpace.xs)
-            }
             Button(action: { Task { await cleanupAndRetry() } }) {
-                Text("Cleanup & retry")
+                Text("Start over")
                     .font(PathPulseFont.labelSmall)
                     .foregroundStyle(PathPulseColor.black)
                     .padding(.horizontal, PpSpace.md)
@@ -348,7 +335,7 @@ struct KycView: View {
 
     @MainActor
     private func createSubAccount() async {
-        setStep(.account, .busy, "Registering sub-account with Carret…")
+        setStep(.account, .busy, "Saving your details…")
         do {
             let acc = try await data.createCarretSubAccount(CarretSubAccountInput(
                 email: email,
@@ -360,27 +347,27 @@ struct KycView: View {
                 annual_income: income,
             ))
             accountId = String(acc.id)
-            setStep(.account, .success, "Sub-account \(acc.id) · ref \(acc.reference_id) · kyc_status: \(acc.kyc_status)")
+            setStep(.account, .success, "Details saved.")
         } catch {
-            setStep(.account, .error, error.localizedDescription)
+            setStep(.account, .error, UserErrors.message(error))
         }
     }
 
     @MainActor
     private func initiate() async {
-        setStep(.initiate, .busy, "Requesting KYC session…")
+        setStep(.initiate, .busy, "Getting things ready…")
         do {
             let r = try await data.initiateCarretKyc(accountId: accountId)
             sessionId = r.session.session_id
-            setStep(.initiate, .success, "Session \(r.session.session_id) · status \(r.session.status)")
+            setStep(.initiate, .success, "Ready — please submit the documents below.")
         } catch {
-            setStep(.initiate, .error, error.localizedDescription)
+            setStep(.initiate, .error, UserErrors.message(error))
         }
     }
 
     @MainActor
     private func submitPan() async {
-        setStep(.pan, .busy, "Verifying PAN against NSDL…")
+        setStep(.pan, .busy, "Checking your PAN…")
         do {
             _ = try await data.submitCarretKycDocument(
                 kycSessionId: sessionId,
@@ -390,16 +377,16 @@ struct KycView: View {
                     name: panName, dob: panDob,
                 ),
             )
-            setStep(.pan, .success, "PAN accepted by Carret.")
+            setStep(.pan, .success, "PAN accepted.")
         } catch {
-            setStep(.pan, .error, error.localizedDescription)
+            setStep(.pan, .error, UserErrors.message(error))
         }
     }
 
     @MainActor
     private func uploadAadhaar() async {
         guard let url = pickedAadhaarURL else { return }
-        setStep(.aadhaar, .busy, "Uploading Aadhaar XML to Carret…")
+        setStep(.aadhaar, .busy, "Uploading Aadhaar…")
         do {
             // Get security-scoped access to the picked file.
             let scoped = url.startAccessingSecurityScopedResource()
@@ -407,25 +394,25 @@ struct KycView: View {
             try await data.uploadCarretKycFile(
                 kycSession: sessionId, docType: "aadhaar", fileType: "xml", fileURL: url,
             )
-            setStep(.aadhaar, .success, "Aadhaar XML uploaded: \(url.lastPathComponent).")
+            setStep(.aadhaar, .success, "Aadhaar received.")
         } catch {
-            setStep(.aadhaar, .error, error.localizedDescription)
+            setStep(.aadhaar, .error, UserErrors.message(error))
         }
     }
 
     @MainActor
     private func uploadSelfie() async {
         guard let url = pickedSelfieURL else { return }
-        setStep(.selfie, .busy, "Uploading selfie — face match starts server-side…")
+        setStep(.selfie, .busy, "Uploading your photo…")
         do {
             try await data.uploadCarretKycFile(
                 kycSession: sessionId, docType: "selfie", fileType: "image", fileURL: url,
             )
-            setStep(.selfie, .success, "Selfie uploaded. Face-match running at Carret.")
-            setStep(.polling, .busy, "Polling KYC status every 3s…")
+            setStep(.selfie, .success, "Photo received.")
+            setStep(.polling, .busy, "Checking your verification…")
             startPolling()
         } catch {
-            setStep(.selfie, .error, error.localizedDescription)
+            setStep(.selfie, .error, UserErrors.message(error))
         }
     }
 
@@ -438,7 +425,18 @@ struct KycView: View {
             setStep(.aadhaar, .idle, nil);  setStep(.selfie, .idle, nil)
             setStep(.polling, .idle, nil);  setStep(.done, .idle, nil)
         } catch {
-            pollError = error.localizedDescription
+            pollError = UserErrors.message(error)
+        }
+    }
+
+    /// Maps Carret's raw statuses to something a driver will read.
+    private func friendlyStatus(_ raw: String) -> String {
+        switch raw {
+        case "verified":      return "verified"
+        case "pending":       return "in progress"
+        case "manual_review": return "under review"
+        case "rejected":      return "needs attention"
+        default:              return raw
         }
     }
 
@@ -465,7 +463,7 @@ struct KycView: View {
                         }
                     }
                 } catch {
-                    await MainActor.run { pollError = error.localizedDescription }
+                    await MainActor.run { pollError = UserErrors.message(error) }
                 }
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }

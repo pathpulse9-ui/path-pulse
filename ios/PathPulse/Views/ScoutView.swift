@@ -33,7 +33,7 @@ struct ScoutView: View {
     @ViewBuilder
     private var tiersCard: some View {
         PpCard {
-            PpCardHeader(title: "Reputation tiers", subtitle: "Classic Assets on Stellar with AUTH_REQUIRED + AUTH_REVOCABLE.")
+            PpCardHeader(title: "Reputation tiers", subtitle: "Higher tiers earn a bigger share of each reward.")
             if let roster {
                 VStack(alignment: .leading, spacing: PpSpace.sm) {
                     HStack {
@@ -90,7 +90,7 @@ struct ScoutView: View {
     @ViewBuilder
     private var lookupCard: some View {
         PpCard {
-            PpCardHeader(title: "Address lookup", subtitle: "Check whether a driver address holds a SCOUT badge.")
+            PpCardHeader(title: "Check a driver", subtitle: "Look up any driver's current reputation tier.")
 
             HStack(spacing: PpSpace.sm) {
                 TextField("G…", text: $lookupInput)
@@ -168,7 +168,7 @@ struct ScoutView: View {
         defer { loading = false }
         do { roster = try await data.scoutRoster() }
         catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserErrors.message(error)
         }
     }
 
@@ -183,7 +183,7 @@ struct ScoutView: View {
         do {
             lookupResult = try await data.scoutLookup(address: addr)
         } catch {
-            lookupError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lookupError = UserErrors.message(error)
         }
     }
 

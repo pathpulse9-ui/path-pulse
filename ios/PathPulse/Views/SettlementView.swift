@@ -17,14 +17,14 @@ struct SettlementView: View {
 
                 PpCard {
                     PpCardHeader(
-                        title: "\(batches.count) batch\(batches.count == 1 ? "" : "es")",
-                        subtitle: "Newest first. Tap a row for driver-payout detail + Horizon link."
+                        title: batches.count == 1 ? "1 settlement" : "\(batches.count) settlements",
+                        subtitle: "Newest first. Tap for details."
                     )
 
                     if batches.isEmpty && !loading {
                         PpEmptyState(
-                            title: "No settlement activity yet",
-                            message: "Run a settlement batch and it shows up here."
+                            title: "No settlements yet",
+                            message: "Your reward settlements will appear here."
                         )
                     } else {
                         VStack(spacing: 0) {
@@ -60,7 +60,7 @@ struct SettlementView: View {
         do {
             batches = try await data.settlementBatches(limit: 50).items
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserErrors.message(error)
         }
     }
 }

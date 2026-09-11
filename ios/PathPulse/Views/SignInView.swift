@@ -110,11 +110,11 @@ struct SignInView: View {
 
     private func signInWithGoogle() {
         guard Config.googleIOSConfigured else {
-            error = "Google sign-in isn't configured on this build. Set Config.googleIOSClientID + the URL scheme in project.yml, then rebuild. (Guest sign-in still works.)"
+            error = "Google sign-in isn't available yet. Please continue as guest for now."
             return
         }
         guard let root = topViewController() else {
-            error = "Couldn't find a view controller to present sign-in from."
+            error = "Couldn't open Google sign-in. Please try again."
             return
         }
 
@@ -134,14 +134,14 @@ struct SignInView: View {
             let idToken: String? = result?.user.idToken?.tokenString
             let errMessage: String? = err?.localizedDescription
             Task { @MainActor in
-                if let errMessage {
+                if errMessage != nil {
                     pending = nil
-                    error = errMessage
+                    error = "Couldn't complete Google sign-in. Please try again."
                     return
                 }
                 guard let idToken else {
                     pending = nil
-                    error = "Google didn't return an id-token."
+                    error = "Couldn't complete Google sign-in. Please try again."
                     return
                 }
                 await exchangeIdToken(idToken)
@@ -161,10 +161,10 @@ struct SignInView: View {
                     state.user = user
                     state.showLanding = false
                 } else {
-                    error = "Guest session created but /me returned no user."
+                    error = "Something went wrong signing you in. Please try again."
                 }
             } catch {
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.error = UserErrors.message(error)
             }
             pending = nil
         }
@@ -187,9 +187,14 @@ struct SignInView: View {
                 state.showLanding = false
             }
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.error = UserErrors.message(error)
         }
     }
+
+    /// Fallback shown when Google returns without an id-token. Rare — usually
+    /// a user tapping "cancel" mid-way. We prefer a driver-safe message over
+    /// the raw SDK text.
+    private var _unused_dead_msg: String { "Couldn't complete Google sign-in. Please try again." }
 
     /// Grab the frontmost view controller so `GIDSignIn` has something to present from.
     private func topViewController() -> UIViewController? {

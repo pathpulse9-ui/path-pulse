@@ -82,9 +82,9 @@ fun OffRampScreen(
         PpCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Complete driver KYC", style = MaterialTheme.typography.titleMedium)
+                    Text("Verify your identity", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "PAN → Aadhaar XML → Selfie → verified. Required before you can withdraw INR.",
+                        "A quick one-time check before your first withdrawal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = PpBlack70,
                         modifier = Modifier.padding(top = 2.dp),
@@ -115,7 +115,7 @@ fun OffRampScreen(
                     )
                 }
                 Text(
-                    "of ₹${l.dailyCapInr.toInt()} Carret daily cap",
+                    "of ₹${l.dailyCapInr.toInt()} daily limit",
                     style = MaterialTheme.typography.bodySmall,
                     color = PpBlack40,
                     modifier = Modifier.padding(start = PpSpace.sm),
@@ -125,14 +125,14 @@ fun OffRampScreen(
 
         PpCard {
             PpCardHeader(
-                title = "${sessions.size} session${if (sessions.size == 1) "" else "s"}",
-                subtitle = "Providers: Carret Infra (live, INR corridor) · Ramp (sandbox).",
+                title = if (sessions.size == 1) "1 withdrawal" else "${sessions.size} withdrawals",
+                subtitle = "Convert your USDC rewards to INR in your bank.",
             )
 
             if (sessions.isEmpty() && !loading) {
                 PpEmptyState(
-                    title = "No off-ramp sessions yet",
-                    message = "Trigger an off-ramp from the web console and it lands here.",
+                    title = "No withdrawals yet",
+                    message = "Your withdrawals will appear here.",
                 )
             } else {
                 Column(modifier = Modifier.padding(top = PpSpace.sm)) {

@@ -25,6 +25,7 @@ import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.pathpulse.driver.Config
+import com.pathpulse.driver.network.UserErrors
 import com.pathpulse.driver.ui.components.PpPrimaryButton
 import com.pathpulse.driver.ui.components.PpSecondaryButton
 import com.pathpulse.driver.ui.theme.PathPulseTheme
@@ -107,7 +108,7 @@ fun SignInScreen(
                                 onError("Unexpected credential type")
                             }
                         } catch (e: GetCredentialException) {
-                            onError(e.message ?: "Google sign-in failed")
+                            onError(UserErrors.message(e))
                         }
                     }
                 },

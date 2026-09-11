@@ -83,7 +83,7 @@ fun SettlementScreen(
         PpCard {
             PpCardHeader(
                 title = "${batches.size} batch${if (batches.size == 1) "" else "es"}",
-                subtitle = "Newest first. Tap a row for driver-payout detail + Horizon link.",
+                subtitle = "Newest first. Tap for details.",
             )
 
             if (batches.isEmpty() && !loading) {

@@ -20,10 +20,10 @@ struct OffRampView: View {
                 PpCard {
                     HStack(spacing: PpSpace.md) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Complete driver KYC")
+                            Text("Verify your identity")
                                 .font(PathPulseFont.titleMedium)
                                 .foregroundStyle(PathPulseColor.black)
-                            Text("PAN → Aadhaar XML → Selfie → verified. Required before you can withdraw INR.")
+                            Text("A quick one-time check before your first withdrawal.")
                                 .font(PathPulseFont.bodySmall)
                                 .foregroundStyle(PathPulseColor.black60)
                         }
@@ -49,7 +49,7 @@ struct OffRampView: View {
                             .padding(.vertical, PpSpace.xs)
                             .background(l.remaining.withdraw_inr > 0 ? PathPulseColor.mint26 : PathPulseColor.red100)
                             .clipShape(Capsule())
-                        Text("of ₹\(Int(l.dailyCapInr).formatted()) Carret daily cap")
+                        Text("of ₹\(Int(l.dailyCapInr).formatted()) daily limit")
                             .font(PathPulseFont.bodySmall)
                             .foregroundStyle(PathPulseColor.black40)
                     }
@@ -57,14 +57,14 @@ struct OffRampView: View {
 
                 PpCard {
                     PpCardHeader(
-                        title: "\(sessions.count) session\(sessions.count == 1 ? "" : "s")",
-                        subtitle: "Providers: Carret Infra (live, INR corridor) · Ramp (sandbox)."
+                        title: sessions.count == 1 ? "1 withdrawal" : "\(sessions.count) withdrawals",
+                        subtitle: "Convert your USDC rewards to INR in your bank."
                     )
 
                     if sessions.isEmpty && !loading {
                         PpEmptyState(
-                            title: "No off-ramp sessions yet",
-                            message: "Trigger an off-ramp from the web console and it lands here."
+                            title: "No withdrawals yet",
+                            message: "Your withdrawals will appear here."
                         )
                     } else {
                         VStack(spacing: 0) {
@@ -98,7 +98,7 @@ struct OffRampView: View {
             // Limits call is best-effort — missing sub-account etc. leaves the chip hidden.
             limits = (try? await l)
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserErrors.message(error)
         }
     }
 }

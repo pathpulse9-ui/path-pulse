@@ -55,7 +55,7 @@ struct DashboardView: View {
             batches = bp.items
             sessions = sp.items
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserErrors.message(error)
         }
     }
 
