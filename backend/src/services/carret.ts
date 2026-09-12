@@ -563,13 +563,13 @@ function carretHttpError(status: number, rawText: string, ctx: string): Error {
   e.name = 'CarretUpstreamError';
   e.upstream = `${status} ${ctx}: ${rawText}`;
   const parsed = safeParseJson(rawText);
-  const detail =
-    (parsed && typeof parsed === 'object'
-      ? (parsed as Record<string, unknown>).detail ??
-        (parsed as Record<string, unknown>).message ??
-        (parsed as Record<string, unknown>).error
-      : undefined) ?? rawText;
-  const human = typeof detail === 'string' ? detail.trim() : '';
+  // Carret returns three shapes:
+  //   1. {"detail": "human sentence"}                        — auth/permission errors
+  //   2. {"message": "..."} or {"error": "..."}              — some endpoints
+  //   3. {"field": ["human sentence", ...], "field2": [...]} — DRF field errors
+  // Try known keys first; otherwise treat parsed as case (3) and pull the
+  // first non-empty string from any field's array.
+  const human = extractHumanMessage(parsed) || (typeof parsed === 'string' ? parsed : rawText);
   if (status >= 500) {
     e.status = 503;
     e.message = 'Payments partner is briefly unavailable. Please try again in a few minutes.';
@@ -584,6 +584,27 @@ function carretHttpError(status: number, rawText: string, ctx: string): Error {
 
 function safeParseJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
+}
+
+/**
+ * Extract a single human sentence from a Carret error body. Handles DRF's
+ * three common shapes: `{detail: "..."}`, `{message|error: "..."}`, or
+ * `{field: ["msg", ...]}`. Returns "" when nothing readable is found —
+ * caller falls back to a generic sentence.
+ */
+function extractHumanMessage(parsed: unknown): string {
+  if (!parsed || typeof parsed !== 'object') return '';
+  const obj = parsed as Record<string, unknown>;
+  const direct = obj.detail ?? obj.message ?? obj.error;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  for (const v of Object.values(obj)) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (Array.isArray(v)) {
+      const first = v.find((x) => typeof x === 'string' && x.trim());
+      if (typeof first === 'string') return first.trim();
+    }
+  }
+  return '';
 }
 
 /**
