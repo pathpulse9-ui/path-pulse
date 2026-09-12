@@ -19,7 +19,7 @@ enum Config {
     /// Google OAuth **web** client id — same value the Android app uses. This is passed
     /// to `GIDSignIn` as `serverClientID` so the returned id-token's audience matches
     /// what the backend verifies against.
-    static let googleWebClientID = "195179237561-jce7rmr4ou8jf2lsvt8lthv0q5h52o5a.apps.googleusercontent.com"
+    static let googleWebClientID = "195179797561-jce7rme6ou8jf2lsvt8lthv0q5h52o5a.apps.googleusercontent.com"
 
     /// Google OAuth **iOS** client id. Required by `GIDSignIn` for the native flow.
     /// Create this in Google Cloud Console → APIs & Services → Credentials → "Create
