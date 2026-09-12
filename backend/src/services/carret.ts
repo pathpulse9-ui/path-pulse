@@ -215,8 +215,11 @@ async function carretFetch<T>(
     res = await doFetch();
   }
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Carret ${method} ${path} failed (${res.status}): ${text}`);
+    // Same friendly-wrapper as v2: 4xx passes Carret's `detail` through as
+    // HTTP 422 so the mobile app shows a real reason, 5xx becomes HTTP 503
+    // with our own copy. Full upstream body still goes to server logs via
+    // `err.upstream`.
+    throw carretHttpError(res.status, await res.text().catch(() => ''), `${method} ${path}`);
   }
   return (await res.json()) as T;
 }
