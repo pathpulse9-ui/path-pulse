@@ -1,6 +1,26 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+/**
+ * Same shape as useState<string> but round-trips through localStorage under
+ * `key`. Values survive tab close and force-reload. SSR-safe: seeds with
+ * `initial` and reads localStorage only after mount.
+ */
+function usePersistedString(key: string, initial: string): [string, (v: string) => void] {
+  const [value, setValue] = useState(initial);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(key);
+      if (stored !== null) setValue(stored);
+    } catch { /* private mode etc — fall back to memory */ }
+  }, [key]);
+  const write = useCallback((v: string) => {
+    setValue(v);
+    try { window.localStorage.setItem(key, v); } catch { /* ignore */ }
+  }, [key]);
+  return [value, write];
+}
 import {
   createCarretSubAccount,
   initiateCarretKyc,
@@ -84,29 +104,57 @@ function minDobIso(): string {
 }
 
 export default function KycPage() {
-  const [page, setPage] = useState<WizardPage>('welcome');
+  // Every field the user types is persisted to localStorage under `kyc_*`
+  // so that reloading, dismissing the tab, or a backend error never wipes
+  // their progress. Files (Aadhaar + selfie) are the only exception —
+  // they're re-picked when the user returns.
+  const [pageStr, setPageStr]     = usePersistedString('kyc_page', 'welcome');
+  const page = pageStr as WizardPage;
+  const setPage = (p: WizardPage) => setPageStr(p);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Account / session
-  const [accountId, setAccountId] = useState('');
-  const [sessionId, setSessionId] = useState('');
+  const [accountId, setAccountId] = usePersistedString('kyc_accountId', '');
+  const [sessionId, setSessionId] = usePersistedString('kyc_sessionId', '');
+  const [firstName, setFirstName] = usePersistedString('kyc_firstName', '');
+  const [lastName,  setLastName]  = usePersistedString('kyc_lastName', '');
+  const [email,     setEmail]     = usePersistedString('kyc_email', '');
+  const [phone,     setPhone]     = usePersistedString('kyc_phone', '');
+  const [dialCode,  setDialCode]  = usePersistedString('kyc_dialCode', DIAL_CODES[0].code);
+  const [country,   setCountry]   = usePersistedString('kyc_country', 'IN');
+  const [dobIso,    setDobIso]    = usePersistedString('kyc_dobIso', '');
+  const [genderRaw, setGenderRaw] = usePersistedString('kyc_gender', 'male');
+  const gender = genderRaw as 'male' | 'female' | 'other';
+  const setGender = (g: 'male' | 'female' | 'other') => setGenderRaw(g);
+  const [occupation, setOccupation] = usePersistedString('kyc_occupation', 'Business Owner');
+  const [income,     setIncome]     = usePersistedString('kyc_income', '₹5 Lakhs-₹10 Lakhs');
 
-  // Wizard state
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [dialCode, setDialCode] = useState(DIAL_CODES[0].code);
-  const [dobIso, setDobIso] = useState(''); // YYYY-MM-DD from <input type=date>
-  const [gender, setGender] = useState<'male' | 'female' | 'other'>('male');
-  const [occupation, setOccupation] = useState<string>('Business Owner');
-  const [income, setIncome] = useState<string>('₹5 Lakhs-₹10 Lakhs');
+  const [panNumber, setPanNumber] = usePersistedString('kyc_panNumber', '');
+  const [panName,   setPanName]   = usePersistedString('kyc_panName', '');
+  const [panDobIso, setPanDobIso] = usePersistedString('kyc_panDobIso', '');
 
-  // PAN
-  const [panNumber, setPanNumber] = useState('');
-  const [panName, setPanName] = useState('');
-  const [panDobIso, setPanDobIso] = useState('');
+  function clearDraft() {
+    for (const k of [
+      'kyc_page', 'kyc_accountId', 'kyc_sessionId',
+      'kyc_firstName', 'kyc_lastName', 'kyc_email', 'kyc_phone',
+      'kyc_dialCode', 'kyc_country', 'kyc_dobIso',
+      'kyc_gender', 'kyc_occupation', 'kyc_income',
+      'kyc_panNumber', 'kyc_panName', 'kyc_panDobIso',
+    ]) {
+      try { window.localStorage.removeItem(k); } catch { /* ignore */ }
+    }
+    // Reset in-memory state to defaults so the current tab flips back too.
+    setPageStr('welcome');
+    setAccountId(''); setSessionId('');
+    setFirstName(''); setLastName('');
+    setEmail(''); setPhone('');
+    setDialCode(DIAL_CODES[0].code);
+    setCountry('IN'); setDobIso('');
+    setGenderRaw('male');
+    setOccupation('Business Owner'); setIncome('₹5 Lakhs-₹10 Lakhs');
+    setPanNumber(''); setPanName(''); setPanDobIso('');
+  }
 
   // Files
   const aadhaarFileRef = useRef<HTMLInputElement>(null);
@@ -130,7 +178,7 @@ export default function KycPage() {
         first_name: firstName,
         last_name: lastName,
         dob,
-        country: 'IN',
+        country,
         gender,
         occupation,
         annual_income: income,
@@ -219,7 +267,13 @@ export default function KycPage() {
           if (!panDobIso) setPanDobIso(dobIso);
           break;
         case 'about':
-          if (await doCreateSubAccount() && await doInitiate()) setPage('pan');
+          // Resume-safe: skip re-registering if we already have IDs from
+          // an earlier attempt (e.g. user hit an error at PAN and came back).
+          const created = accountId ? true : await doCreateSubAccount();
+          if (created) {
+            const initiated = sessionId ? true : await doInitiate();
+            if (initiated) setPage('pan');
+          }
           break;
         case 'pan':      if (await doSubmitPan()) setPage('aadhaar'); break;
         case 'aadhaar':  if (await doUploadAadhaar()) setPage('selfie'); break;
@@ -369,12 +423,7 @@ export default function KycPage() {
                 <CardPicker options={[...INCOMES]} value={income} onChange={setIncome} />
               </LabeledSection>
               <LabeledSection label="Country">
-                <div className="flex items-center gap-3 rounded-2xl bg-white border-2 border-emerald-500 p-3">
-                  <span className="text-xl">🇮🇳</span>
-                  <span className="text-black">India</span>
-                  <span className="flex-1" />
-                  <CheckCircleIcon className="text-emerald-500" />
-                </div>
+                <CountrySelect value={country} onChange={setCountry} />
               </LabeledSection>
             </div>
           </PageShell>
@@ -467,7 +516,7 @@ export default function KycPage() {
             title="You're verified"
             subtitle="All set. You can now withdraw your USDC rewards to your bank."
             primary="Start using PathPulse"
-            onPrimary={() => { setPage('welcome'); }}
+            onPrimary={() => { clearDraft(); }}
           />
         )}
 
@@ -813,5 +862,73 @@ function IconSvg({ size, className, paths }: { size: number; className?: string;
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
       {paths}
     </svg>
+  );
+}
+
+// ─── Country picker ───────────────────────────────────────────
+
+/**
+ * ISO-3166-1 alpha-2 list. Uses `Intl.DisplayNames` when available so
+ * the label localises to the browser's language, with a static English
+ * fallback for very old browsers / SSR consistency.
+ */
+const COUNTRY_CODES: readonly string[] = [
+  'AD','AE','AF','AG','AI','AL','AM','AO','AQ','AR','AS','AT','AU','AW','AX','AZ',
+  'BA','BB','BD','BE','BF','BG','BH','BI','BJ','BL','BM','BN','BO','BQ','BR','BS',
+  'BT','BV','BW','BY','BZ','CA','CC','CD','CF','CG','CH','CI','CK','CL','CM','CN',
+  'CO','CR','CU','CV','CW','CX','CY','CZ','DE','DJ','DK','DM','DO','DZ','EC','EE',
+  'EG','EH','ER','ES','ET','FI','FJ','FK','FM','FO','FR','GA','GB','GD','GE','GF',
+  'GG','GH','GI','GL','GM','GN','GP','GQ','GR','GS','GT','GU','GW','GY','HK','HM',
+  'HN','HR','HT','HU','ID','IE','IL','IM','IN','IO','IQ','IR','IS','IT','JE','JM',
+  'JO','JP','KE','KG','KH','KI','KM','KN','KP','KR','KW','KY','KZ','LA','LB','LC',
+  'LI','LK','LR','LS','LT','LU','LV','LY','MA','MC','MD','ME','MF','MG','MH','MK',
+  'ML','MM','MN','MO','MP','MQ','MR','MS','MT','MU','MV','MW','MX','MY','MZ','NA',
+  'NC','NE','NF','NG','NI','NL','NO','NP','NR','NU','NZ','OM','PA','PE','PF','PG',
+  'PH','PK','PL','PM','PN','PR','PS','PT','PW','PY','QA','RE','RO','RS','RU','RW',
+  'SA','SB','SC','SD','SE','SG','SH','SI','SJ','SK','SL','SM','SN','SO','SR','SS',
+  'ST','SV','SX','SY','SZ','TC','TD','TF','TG','TH','TJ','TK','TL','TM','TN','TO',
+  'TR','TT','TV','TW','TZ','UA','UG','UM','US','UY','UZ','VA','VC','VE','VG','VI',
+  'VN','VU','WF','WS','YE','YT','ZA','ZM','ZW',
+];
+
+function isoToFlag(iso: string): string {
+  return iso
+    .toUpperCase()
+    .split('')
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join('');
+}
+
+function CountrySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const display = useMemo(() => {
+    try {
+      const d = new Intl.DisplayNames(['en'], { type: 'region' });
+      return (iso: string) => d.of(iso) ?? iso;
+    } catch { return (iso: string) => iso; }
+  }, []);
+  const countries = useMemo(() => {
+    return COUNTRY_CODES.map((iso) => ({ iso, name: display(iso) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [display]);
+  const selected = countries.find((c) => c.iso === value);
+
+  return (
+    <div className="relative">
+      <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-xl">
+        {selected ? isoToFlag(selected.iso) : '🌐'}
+      </div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-14 w-full rounded-2xl border border-black/10 bg-white pl-12 pr-10 text-base text-black focus:outline-none focus:border-black/30 appearance-none"
+      >
+        {countries.map((c) => (
+          <option key={c.iso} value={c.iso}>{c.name}</option>
+        ))}
+      </select>
+      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-black/40">
+        <ChevronIcon dir="down" size={14} />
+      </div>
+    </div>
   );
 }

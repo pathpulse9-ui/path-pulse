@@ -12,30 +12,71 @@ import UniformTypeIdentifiers
 struct KycView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var page: WizardPage = .welcome
+    // ── Persisted wizard state ─────────────────────────────────────
+    // Everything the user has typed is mirrored to UserDefaults so that
+    // dismissing the sheet, force-quitting the app, or a network failure
+    // never loses their progress. Files (Aadhaar + selfie) are the only
+    // things NOT persisted — they'd bloat storage and can be re-picked
+    // in one tap. Cleared on `.verified` and on `Start over`.
+    @AppStorage("kyc_page_raw") private var pageRaw: Int = 0
+    @AppStorage("kyc_accountId") private var accountId: String = ""
+    @AppStorage("kyc_sessionId") private var sessionId: String = ""
+    @AppStorage("kyc_firstName") private var firstName: String = ""
+    @AppStorage("kyc_lastName") private var lastName: String = ""
+    @AppStorage("kyc_email") private var email: String = ""
+    @AppStorage("kyc_phone") private var phone: String = ""
+    @AppStorage("kyc_dialCode") private var dialCodeRaw: String = DialCode.india.rawValue
+    @AppStorage("kyc_country") private var country: String = "IN"
+    @AppStorage("kyc_gender") private var genderRaw: String = Gender.male.rawValue
+    @AppStorage("kyc_occupation") private var occupation: String = "Business Owner"
+    @AppStorage("kyc_income") private var income: String = "₹5 Lakhs-₹10 Lakhs"
+    @AppStorage("kyc_dobIso") private var dobIso: String = ""       // YYYY-MM-DD
+    @AppStorage("kyc_panNumber") private var panNumber: String = ""
+    @AppStorage("kyc_panName") private var panName: String = ""
+    @AppStorage("kyc_panDobIso") private var panDobIso: String = ""
+
+    // ── Non-persisted (transient / files / network) ────────────────
     @State private var submitting = false
     @State private var error: String? = nil
+    @State private var showDobSheet = false
+    @State private var showPanDobSheet = false
+    @State private var showCountrySheet = false
+    @State private var showDialCodeSheet = false
 
-    // Account / session
-    @State private var accountId = ""
-    @State private var sessionId = ""
+    // Enum-typed views over the persisted raw fields — set-clauses write
+    // through to @AppStorage automatically.
+    private var page: WizardPage {
+        get { WizardPage(rawValue: pageRaw) ?? .welcome }
+        nonmutating set { pageRaw = newValue.rawValue }
+    }
+    private var gender: Gender {
+        get { Gender(rawValue: genderRaw) ?? .male }
+        nonmutating set { genderRaw = newValue.rawValue }
+    }
+    private var dialCode: DialCode {
+        get { DialCode(rawValue: dialCodeRaw) ?? .india }
+        nonmutating set { dialCodeRaw = newValue.rawValue }
+    }
+    private var dobDate: Date? {
+        get { Self.parseIso(dobIso) }
+        nonmutating set { dobIso = newValue.map(Self.toIso) ?? "" }
+    }
+    private var panDobDate: Date? {
+        get { Self.parseIso(panDobIso) }
+        nonmutating set { panDobIso = newValue.map(Self.toIso) ?? "" }
+    }
 
-    // Step 1 — details
-    @State private var firstName = ""
-    @State private var lastName = ""
-    @State private var dobDate: Date? = nil
-    @State private var email = ""
-    @State private var phone = ""             // just the local digits, no country code
-    @State private var dialCode: DialCode = .india
-    @State private var country = "IN"
-    @State private var gender: Gender = .male
-    @State private var occupation = "Business Owner"
-    @State private var income = "₹5 Lakhs-₹10 Lakhs"
+    // Aadhaar + selfie (transient — user re-picks if they left the flow).
+    @State private var aadhaarPickerShown = false
+    @State private var pickedAadhaarURL: URL? = nil
+    @State private var selfieItem: PhotosPickerItem? = nil
+    @State private var pickedSelfieURL: URL? = nil
 
-    // PAN
-    @State private var panNumber = ""
-    @State private var panName = ""
-    @State private var panDobDate: Date? = nil
+    // Verification poll
+    @State private var kycStatus: CarretKycStatus? = nil
+    @State private var pollingTask: Task<Void, Never>? = nil
+
+    private let data = DataRepository()
 
     /// Backend expects dd/mm/yyyy on both PAN + sub-account.
     private var dob: String { dobDate.map(Self.formatDob) ?? "" }
@@ -50,19 +91,32 @@ struct KycView: View {
         f.locale = Locale(identifier: "en_IN")
         return f
     }()
+    private static let isoFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
     private static func formatDob(_ d: Date) -> String { dobFormatter.string(from: d) }
+    private static func toIso(_ d: Date) -> String { isoFormatter.string(from: d) }
+    private static func parseIso(_ s: String) -> Date? { s.isEmpty ? nil : isoFormatter.date(from: s) }
 
-    // Aadhaar + selfie
-    @State private var aadhaarPickerShown = false
-    @State private var pickedAadhaarURL: URL? = nil
-    @State private var selfieItem: PhotosPickerItem? = nil
-    @State private var pickedSelfieURL: URL? = nil
-
-    // Verification poll
-    @State private var kycStatus: CarretKycStatus? = nil
-    @State private var pollingTask: Task<Void, Never>? = nil
-
-    private let data = DataRepository()
+    /// Wipes the persisted draft. Called on verified success + "Start over".
+    private func clearDraft() {
+        pageRaw = 0
+        accountId = ""; sessionId = ""
+        firstName = ""; lastName = ""
+        email = ""; phone = ""
+        dialCodeRaw = DialCode.india.rawValue
+        country = "IN"
+        genderRaw = Gender.male.rawValue
+        occupation = "Business Owner"
+        income = "₹5 Lakhs-₹10 Lakhs"
+        dobIso = ""; panDobIso = ""
+        panNumber = ""; panName = ""
+        pickedAadhaarURL = nil; pickedSelfieURL = nil
+        kycStatus = nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -99,6 +153,9 @@ struct KycView: View {
             }
         }
         .onDisappear { pollingTask?.cancel() }
+        .sheet(isPresented: $showCountrySheet) {
+            CountryPickerSheet(selection: $country, isPresented: $showCountrySheet)
+        }
     }
 
     // MARK: - Chrome
@@ -308,8 +365,9 @@ struct KycView: View {
             subtitle: "Pick the date exactly as it appears on your PAN card.",
         ) {
             datePickerCard(
-                selection: $dobDate,
+                selection: Binding(get: { dobDate }, set: { dobDate = $0 }),
                 label: "Date of birth",
+                isPresented: $showDobSheet,
             )
             .padding(.top, PpSpace.lg)
         }
@@ -339,17 +397,25 @@ struct KycView: View {
                     cardPicker(selection: $income, options: INCOMES)
                 }
                 labeledSection("Country") {
-                    HStack {
-                        Text("🇮🇳").font(.title2)
-                        Text("India").font(PathPulseFont.bodyLarge).foregroundStyle(PathPulseColor.black)
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(PathPulseColor.mint)
+                    Button { showCountrySheet = true } label: {
+                        let selected = Country.byIso[country]
+                        HStack {
+                            Text(selected?.flag ?? "🌐").font(.title2)
+                            Text(selected?.name ?? country)
+                                .font(PathPulseFont.bodyLarge)
+                                .foregroundStyle(PathPulseColor.black)
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(PathPulseColor.black40)
+                        }
+                        .padding(PpSpace.md)
+                        .frame(maxWidth: .infinity)
+                        .background(PathPulseColor.surface)
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PathPulseColor.black15, lineWidth: 1))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    .padding(PpSpace.md)
-                    .frame(maxWidth: .infinity)
-                    .background(PathPulseColor.surface)
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PathPulseColor.mint, lineWidth: 1.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.top, PpSpace.lg)
@@ -393,7 +459,11 @@ struct KycView: View {
                 bigField("PAN number (10 characters)", text: $panNumber, placeholder: "ABCDE1234F")
                     .textInputAutocapitalization(.characters)
                 bigField("Name on card", text: $panName, placeholder: "e.g. RAHUL KUMAR SHARMA")
-                datePickerCard(selection: $panDobDate, label: "Date of birth")
+                datePickerCard(
+                    selection: Binding(get: { panDobDate }, set: { panDobDate = $0 }),
+                    label: "Date of birth",
+                    isPresented: $showPanDobSheet,
+                )
             }
             .padding(.top, PpSpace.lg)
         }
@@ -500,7 +570,11 @@ struct KycView: View {
             title: "You're verified",
             subtitle: "All set. You can now withdraw your USDC rewards to your bank.",
             primary: "Start using PathPulse",
-            primaryAction: { pollingTask?.cancel(); dismiss() },
+            primaryAction: {
+                pollingTask?.cancel()
+                clearDraft() // wizard finished — free up the persisted draft
+                dismiss()
+            },
         )
     }
 
@@ -608,12 +682,67 @@ struct KycView: View {
     }
 
     @ViewBuilder
-    private func datePickerCard(selection: Binding<Date?>, label: String) -> some View {
+    private func datePickerCard(
+        selection: Binding<Date?>,
+        label: String,
+        isPresented: Binding<Bool>,
+    ) -> some View {
         // Reasonable KYC window: 100 years back → 18 years old today.
         let maxDate = Calendar.current.date(byAdding: .year, value: -18, to: Date()) ?? Date()
         let minDate = Calendar.current.date(byAdding: .year, value: -100, to: Date()) ?? Date()
-        VStack(alignment: .leading, spacing: PpSpace.xs) {
+        return VStack(alignment: .leading, spacing: PpSpace.xs) {
             Text(label).font(PathPulseFont.labelSmall).foregroundStyle(PathPulseColor.black50)
+            Button {
+                isPresented.wrappedValue = true
+            } label: {
+                HStack(spacing: PpSpace.md) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(PathPulseColor.mint)
+                    Text(selection.wrappedValue.map(Self.formatDob) ?? "Pick a date")
+                        .font(PathPulseFont.bodyLarge)
+                        .foregroundStyle(selection.wrappedValue == nil ? PathPulseColor.black40 : PathPulseColor.black)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PathPulseColor.black40)
+                }
+                .padding(.horizontal, PpSpace.md)
+                .frame(height: 56)
+                .frame(maxWidth: .infinity)
+                .background(PathPulseColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PathPulseColor.black15, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .sheet(isPresented: isPresented) {
+            datePickerSheet(selection: selection, minDate: minDate, maxDate: maxDate, isPresented: isPresented)
+        }
+    }
+
+    @ViewBuilder
+    private func datePickerSheet(
+        selection: Binding<Date?>,
+        minDate: Date,
+        maxDate: Date,
+        isPresented: Binding<Bool>,
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { isPresented.wrappedValue = false }
+                    .foregroundStyle(PathPulseColor.black60)
+                Spacer()
+                Text("Date of birth")
+                    .font(PathPulseFont.labelLarge)
+                    .foregroundStyle(PathPulseColor.black)
+                Spacer()
+                Button("Done") { isPresented.wrappedValue = false }
+                    .font(PathPulseFont.labelLarge)
+                    .foregroundStyle(PathPulseColor.mint)
+            }
+            .padding(PpSpace.lg)
+            Divider()
             DatePicker(
                 "",
                 selection: Binding(
@@ -623,16 +752,14 @@ struct KycView: View {
                 in: minDate...maxDate,
                 displayedComponents: .date,
             )
-            .datePickerStyle(.compact)
+            .datePickerStyle(.wheel)
             .labelsHidden()
             .tint(PathPulseColor.mint)
-            .padding(.horizontal, PpSpace.md)
-            .frame(height: 56)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PathPulseColor.surface)
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PathPulseColor.black15, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, PpSpace.lg)
+            Spacer(minLength: 0)
         }
+        .presentationDetents([.height(360), .medium])
+        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -780,8 +907,13 @@ struct KycView: View {
             // Autofill PAN DOB with the same value the user entered.
             if panDobDate == nil { panDobDate = dobDate }
         case .about:
-            if await createSubAccount() {
-                if await initiate() { page = .pan }
+            // Resume-safe: skip create if we already provisioned a sub-account
+            // (user pressed back after PAN error and returned here — no need
+            // to re-register with Carret and hit the duplicate-email 422).
+            let created = accountId.isEmpty ? await createSubAccount() : true
+            if created {
+                let initiated = sessionId.isEmpty ? await initiate() : true
+                if initiated { page = .pan }
             }
         case .pan:
             if await submitPan() { page = .aadhaar }
@@ -1029,3 +1161,82 @@ private let INCOMES = [
     "< ₹5 Lakhs", "₹5 Lakhs-₹10 Lakhs", "₹10 Lakhs-₹25 Lakhs",
     "₹25 Lakhs-₹50 Lakhs", "₹50 Lakhs-1 Crore", ">₹1 Crore",
 ]
+
+// MARK: - Country picker
+
+/// ISO-3166-1 alpha-2 country with a rendered flag glyph.
+///
+/// The full 249-entry ISO-3166 list is generated at runtime from
+/// `Locale.Region.isoRegions` so we don't hand-maintain a table.
+struct Country: Identifiable, Hashable {
+    let iso: String  // ISO-2, e.g. "IN"
+    let name: String // Localised English name, e.g. "India"
+    var id: String { iso }
+    var flag: String {
+        // Regional indicator symbols: 'A' → 🇦, etc.
+        iso.uppercased().unicodeScalars
+            .compactMap { Unicode.Scalar(127397 + Int($0.value)) }
+            .reduce("") { $0 + String($1) }
+    }
+
+    static let all: [Country] = {
+        let locale = Locale(identifier: "en_US_POSIX")
+        return Locale.Region.isoRegions
+            .filter { $0.identifier.count == 2 }
+            .compactMap { region -> Country? in
+                let name = locale.localizedString(forRegionCode: region.identifier) ?? region.identifier
+                return Country(iso: region.identifier, name: name)
+            }
+            .sorted { $0.name < $1.name }
+    }()
+
+    static let byIso: [String: Country] = Dictionary(uniqueKeysWithValues: all.map { ($0.iso, $0) })
+}
+
+private struct CountryPickerSheet: View {
+    @Binding var selection: String
+    @Binding var isPresented: Bool
+    @State private var query = ""
+
+    private var results: [Country] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return q.isEmpty
+            ? Country.all
+            : Country.all.filter { $0.name.lowercased().contains(q) || $0.iso.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List(results) { country in
+                Button {
+                    selection = country.iso
+                    isPresented = false
+                } label: {
+                    HStack(spacing: PpSpace.md) {
+                        Text(country.flag).font(.title2)
+                        Text(country.name)
+                            .font(PathPulseFont.bodyLarge)
+                            .foregroundStyle(PathPulseColor.black)
+                        Spacer()
+                        if selection == country.iso {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(PathPulseColor.mint)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(PathPulseColor.surface)
+            }
+            .listStyle(.plain)
+            .searchable(text: $query, prompt: "Search countries")
+            .navigationTitle("Country")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { isPresented = false }
+                }
+            }
+            .background(PathPulseColor.background)
+        }
+    }
+}
