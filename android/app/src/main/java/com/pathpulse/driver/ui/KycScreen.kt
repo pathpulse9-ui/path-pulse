@@ -144,28 +144,40 @@ fun KycScreen(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var page by remember { mutableStateOf(WizardPage.Welcome) }
+    // ── Persisted wizard state ─────────────────────────────────────
+    // Every field the user types round-trips through SharedPreferences so
+    // a back-out, force-quit, or Carret error never wipes their progress.
+    // File pickers stay transient — user re-picks Aadhaar / selfie in one
+    // tap when they resume. Draft is wiped on `.Verified` + Start over.
+    var pageIndex by rememberPersistedInt("kyc_page", 0)
+    val page: WizardPage = WizardPage.entries.firstOrNull { it.ordinal == pageIndex } ?: WizardPage.Welcome
+    val setPage: (WizardPage) -> Unit = { pageIndex = it.ordinal }
+
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    var accountId by remember { mutableStateOf("") }
-    var sessionId by remember { mutableStateOf("") }
+    var accountId by rememberPersistedString("kyc_accountId", "")
+    var sessionId by rememberPersistedString("kyc_sessionId", "")
 
-    var firstName by remember { mutableStateOf("") }
-    var lastName by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }          // digits only, no country code
-    var dialCode by remember { mutableStateOf(DialCode.India) }
+    var firstName by rememberPersistedString("kyc_firstName", "")
+    var lastName by rememberPersistedString("kyc_lastName", "")
+    var email by rememberPersistedString("kyc_email", "")
+    var phone by rememberPersistedString("kyc_phone", "")        // digits only, no country code
+    var dialCodeRaw by rememberPersistedString("kyc_dialCode", DialCode.India.name)
+    val dialCode: DialCode = DialCode.entries.firstOrNull { it.name == dialCodeRaw } ?: DialCode.India
+    val setDialCode: (DialCode) -> Unit = { dialCodeRaw = it.name }
+    var country by rememberPersistedString("kyc_country", "IN")
     // Nullable Long = millis since epoch (UTC). Backend format = dd/MM/yyyy.
-    var dobMillis by remember { mutableStateOf<Long?>(null) }
-    val country = "IN"
-    var gender by remember { mutableStateOf(Gender.male) }
-    var occupation by remember { mutableStateOf("Business Owner") }
-    var income by remember { mutableStateOf("₹5 Lakhs-₹10 Lakhs") }
+    var dobMillis by rememberPersistedLong("kyc_dobMillis", null)
+    var genderRaw by rememberPersistedString("kyc_gender", Gender.male.name)
+    val gender: Gender = Gender.entries.firstOrNull { it.name == genderRaw } ?: Gender.male
+    val setGender: (Gender) -> Unit = { genderRaw = it.name }
+    var occupation by rememberPersistedString("kyc_occupation", "Business Owner")
+    var income by rememberPersistedString("kyc_income", "₹5 Lakhs-₹10 Lakhs")
 
-    var panNumber by remember { mutableStateOf("") }
-    var panName by remember { mutableStateOf("") }
-    var panDobMillis by remember { mutableStateOf<Long?>(null) }
+    var panNumber by rememberPersistedString("kyc_panNumber", "")
+    var panName by rememberPersistedString("kyc_panName", "")
+    var panDobMillis by rememberPersistedLong("kyc_panDobMillis", null)
 
     val dob = dobMillis?.let { formatDob(it) } ?: ""
     val panDob = panDobMillis?.let { formatDob(it) } ?: ""
@@ -202,8 +214,8 @@ fun KycScreen(
                     val s = dataRepository.getCarretKycStatus(accountId)
                     kycStatus = s
                     when (s.kyc_status) {
-                        "verified" -> { page = WizardPage.Verified; break }
-                        "rejected" -> { page = WizardPage.Rejected; break }
+                        "verified" -> { setPage(WizardPage.Verified); break }
+                        "rejected" -> { setPage(WizardPage.Rejected); break }
                     }
                 } catch (_: Exception) { /* keep polling */ }
                 delay(3000)
@@ -274,14 +286,14 @@ fun KycScreen(
         try {
             dataRepository.cleanupCarretKyc(accountId)
             sessionId = ""; kycStatus = null; pollingJob?.cancel()
-            page = WizardPage.Name; error = null
+            setPage(WizardPage.Name); error = null
         } catch (e: Exception) { error = UserErrors.message(e) }
     }
 
     fun onLeft() {
         error = null
         val prev = previousPage(page)
-        if (prev != null) page = prev else { pollingJob?.cancel(); onDismiss() }
+        if (prev != null) setPage(prev) else { pollingJob?.cancel(); onDismiss() }
     }
 
     fun performAction() {
@@ -289,18 +301,28 @@ fun KycScreen(
             submitting = true; error = null
             try {
                 when (page) {
-                    WizardPage.Welcome  -> page = WizardPage.Name
-                    WizardPage.Name     -> page = WizardPage.Contact
-                    WizardPage.Contact  -> page = WizardPage.BornWhen
+                    WizardPage.Welcome  -> setPage(WizardPage.Name)
+                    WizardPage.Name     -> setPage(WizardPage.Contact)
+                    WizardPage.Contact  -> setPage(WizardPage.BornWhen)
                     WizardPage.BornWhen -> {
-                        page = WizardPage.About
+                        setPage(WizardPage.About)
                         if (panDobMillis == null) panDobMillis = dobMillis
                     }
-                    WizardPage.About    -> if (doCreateSubAccount() && doInitiate()) page = WizardPage.Pan
-                    WizardPage.Pan      -> if (doSubmitPan()) page = WizardPage.Aadhaar
-                    WizardPage.Aadhaar  -> if (doUploadAadhaar()) page = WizardPage.Selfie
+                    WizardPage.About    -> {
+                        // Resume-safe: skip re-registering with Carret if we
+                        // already have IDs from an earlier attempt (user came
+                        // back after a PAN error — a re-create would 422 as
+                        // duplicate email).
+                        val created = if (accountId.isNotEmpty()) true else doCreateSubAccount()
+                        if (created) {
+                            val initiated = if (sessionId.isNotEmpty()) true else doInitiate()
+                            if (initiated) setPage(WizardPage.Pan)
+                        }
+                    }
+                    WizardPage.Pan      -> if (doSubmitPan()) setPage(WizardPage.Aadhaar)
+                    WizardPage.Aadhaar  -> if (doUploadAadhaar()) setPage(WizardPage.Selfie)
                     WizardPage.Selfie   -> if (doUploadSelfie()) {
-                        page = WizardPage.Checking
+                        setPage(WizardPage.Checking)
                         startPolling()
                     }
                     else -> Unit
@@ -406,10 +428,15 @@ fun KycScreen(
                     WizardPage.Contact -> ContactPage(
                         email, { email = it },
                         phone, { phone = it.filter { c -> c.isDigit() } },
-                        dialCode, { dialCode = it },
+                        dialCode, { setDialCode(it) },
                     )
                     WizardPage.BornWhen -> DobPage(dobMillis) { dobMillis = it }
-                    WizardPage.About -> AboutPage(gender, { gender = it }, occupation, { occupation = it }, income, { income = it })
+                    WizardPage.About -> AboutPage(
+                        gender = gender, onGender = setGender,
+                        occupation = occupation, onOccupation = { occupation = it },
+                        income = income, onIncome = { income = it },
+                        country = country, onCountry = { country = it },
+                    )
                     WizardPage.Pan -> PanPage(
                         panNumber, { panNumber = it.uppercase() },
                         panName, { panName = it },
@@ -423,7 +450,11 @@ fun KycScreen(
                         title = "You're verified",
                         subtitle = "All set. You can now withdraw your USDC rewards to your bank.",
                         primary = "Start using PathPulse",
-                        primaryAction = { pollingJob?.cancel(); onDismiss() },
+                        primaryAction = {
+                            pollingJob?.cancel()
+                            KycDraft.clear(ctx) // wizard finished — free the persisted draft
+                            onDismiss()
+                        },
                     )
                     WizardPage.Rejected -> OutcomePage(
                         iconBg = PpRed100, iconFg = PpRed600, icon = Icons.Filled.Warning,
@@ -612,6 +643,7 @@ private fun AboutPage(
     gender: Gender, onGender: (Gender) -> Unit,
     occupation: String, onOccupation: (String) -> Unit,
     income: String, onIncome: (String) -> Unit,
+    country: String, onCountry: (String) -> Unit,
 ) {
     PageShell(
         icon = Icons.Filled.Badge,
@@ -636,21 +668,7 @@ private fun AboutPage(
                 CardPicker(selection = income, options = INCOMES, onSelect = onIncome)
             }
             LabeledSection("Country") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(PpSurface)
-                        .border(1.5.dp, PpMint, RoundedCornerShape(14.dp))
-                        .padding(PpSpace.md),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("🇮🇳", fontSize = 22.sp)
-                    Spacer(modifier = Modifier.width(PpSpace.sm))
-                    Text("India", style = MaterialTheme.typography.bodyLarge, color = PpBlack)
-                    Spacer(modifier = Modifier.weight(1f))
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = PpMint, modifier = Modifier.size(20.dp))
-                }
+                CountryPicker(iso = country, onIso = onCountry)
             }
         }
     }
@@ -1132,4 +1150,142 @@ private fun readBytesAndMime(ctx: android.content.Context, uri: Uri): Pair<ByteA
     val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
     val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
     return bytes to mime
+}
+
+// ─── Country picker ───────────────────────────────────────────
+
+/**
+ * All 249 ISO-3166-1 alpha-2 codes. Rendered names come from the
+ * device's own `java.util.Locale` catalogue so labels localise to
+ * the user's language automatically.
+ */
+private val ISO_COUNTRY_CODES: List<String> = listOf(
+    "AD","AE","AF","AG","AI","AL","AM","AO","AQ","AR","AS","AT","AU","AW","AX","AZ",
+    "BA","BB","BD","BE","BF","BG","BH","BI","BJ","BL","BM","BN","BO","BQ","BR","BS",
+    "BT","BV","BW","BY","BZ","CA","CC","CD","CF","CG","CH","CI","CK","CL","CM","CN",
+    "CO","CR","CU","CV","CW","CX","CY","CZ","DE","DJ","DK","DM","DO","DZ","EC","EE",
+    "EG","EH","ER","ES","ET","FI","FJ","FK","FM","FO","FR","GA","GB","GD","GE","GF",
+    "GG","GH","GI","GL","GM","GN","GP","GQ","GR","GS","GT","GU","GW","GY","HK","HM",
+    "HN","HR","HT","HU","ID","IE","IL","IM","IN","IO","IQ","IR","IS","IT","JE","JM",
+    "JO","JP","KE","KG","KH","KI","KM","KN","KP","KR","KW","KY","KZ","LA","LB","LC",
+    "LI","LK","LR","LS","LT","LU","LV","LY","MA","MC","MD","ME","MF","MG","MH","MK",
+    "ML","MM","MN","MO","MP","MQ","MR","MS","MT","MU","MV","MW","MX","MY","MZ","NA",
+    "NC","NE","NF","NG","NI","NL","NO","NP","NR","NU","NZ","OM","PA","PE","PF","PG",
+    "PH","PK","PL","PM","PN","PR","PS","PT","PW","PY","QA","RE","RO","RS","RU","RW",
+    "SA","SB","SC","SD","SE","SG","SH","SI","SJ","SK","SL","SM","SN","SO","SR","SS",
+    "ST","SV","SX","SY","SZ","TC","TD","TF","TG","TH","TJ","TK","TL","TM","TN","TO",
+    "TR","TT","TV","TW","TZ","UA","UG","UM","US","UY","UZ","VA","VC","VE","VG","VI",
+    "VN","VU","WF","WS","YE","YT","ZA","ZM","ZW",
+)
+
+private fun isoToFlagAndroid(iso: String): String =
+    iso.uppercase().map { c -> Character.toChars(0x1F1A5 + c.code).concatToString() }.joinToString("")
+
+private data class NamedCountry(val iso: String, val name: String, val flag: String)
+
+private fun allCountries(): List<NamedCountry> {
+    val locale = java.util.Locale.ENGLISH
+    return ISO_COUNTRY_CODES
+        .map { iso ->
+            NamedCountry(
+                iso = iso,
+                name = java.util.Locale("", iso).getDisplayCountry(locale).ifEmpty { iso },
+                flag = isoToFlagAndroid(iso),
+            )
+        }
+        .sortedBy { it.name }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun CountryPicker(iso: String, onIso: (String) -> Unit) {
+    var showSheet by remember { mutableStateOf(false) }
+    val countries = remember { allCountries() }
+    val selected = countries.firstOrNull { it.iso == iso }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(PpSurface)
+            .border(1.dp, PpBlack15, RoundedCornerShape(14.dp))
+            .clickable { showSheet = true }
+            .padding(horizontal = PpSpace.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(selected?.flag ?: "🌐", fontSize = 20.sp)
+        Spacer(modifier = Modifier.width(PpSpace.sm))
+        Text(
+            selected?.name ?: iso,
+            style = MaterialTheme.typography.bodyLarge,
+            color = PpBlack,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = PpBlack40, modifier = Modifier.size(20.dp))
+    }
+    if (showSheet) {
+        CountrySheet(
+            countries = countries,
+            selected = iso,
+            onSelect = { onIso(it); showSheet = false },
+            onDismiss = { showSheet = false },
+        )
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun CountrySheet(
+    countries: List<NamedCountry>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(query, countries) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) countries
+        else countries.filter { it.name.lowercase().contains(q) || it.iso.lowercase().contains(q) }
+    }
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = PpSize.screenPadding).padding(bottom = PpSpace.xl)) {
+            Text("Choose country", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = PpSpace.md))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text("Search", color = PpBlack40) },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = PpSpace.md),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = PpSurface,
+                    unfocusedContainerColor = PpSurface,
+                    focusedIndicatorColor = PpMint,
+                    unfocusedIndicatorColor = PpBlack15,
+                ),
+            )
+            androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxWidth().height(420.dp)) {
+                items(filtered.size) { idx ->
+                    val c = filtered[idx]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(c.iso) }
+                            .padding(vertical = PpSpace.md),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(c.flag, fontSize = 22.sp)
+                        Spacer(modifier = Modifier.width(PpSpace.md))
+                        Text(c.name, style = MaterialTheme.typography.bodyLarge, color = PpBlack, modifier = Modifier.weight(1f))
+                        if (c.iso == selected) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = PpMint, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
