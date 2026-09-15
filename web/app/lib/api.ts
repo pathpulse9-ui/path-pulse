@@ -25,6 +25,8 @@ import type {
   RoutingQuote,
   RoutingSwapRequest,
   RoutingSwapResult,
+  PartnerLoginResponse,
+  OpsLoginResponse,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -70,6 +72,20 @@ export function verifyWalletChallenge(transaction: string) {
 
 export function continueAsGuest() {
   return apiFetch<GuestSessionResponse>('/v1/auth/guest', { method: 'POST' });
+}
+
+export function partnerLogin(passcode: string) {
+  return apiFetch<PartnerLoginResponse>('/v1/auth/partner/login', {
+    method: 'POST',
+    body: JSON.stringify({ passcode }),
+  });
+}
+
+export function opsLogin(passcode: string) {
+  return apiFetch<OpsLoginResponse>('/v1/auth/ops/login', {
+    method: 'POST',
+    body: JSON.stringify({ passcode }),
+  });
 }
 
 export function getSessionUser() {

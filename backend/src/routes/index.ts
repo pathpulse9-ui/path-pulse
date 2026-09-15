@@ -68,7 +68,7 @@ import { idempotency } from '../services/idempotency.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
 import multer from 'multer';
-import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
+import { assignSampleTier, getOnchainTier, getScoutConfig, revokeTier } from '../stellar/scout.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { listAttempts } from '../services/payoutAttempts.js';
 import { quoteSwap, executeSwap } from '../routing/aggregator.js';
@@ -80,6 +80,7 @@ export const router = Router();
 const VERSION = '0.1.0';
 
 const scoutTierSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+const revokeScoutSchema = z.object({ address: z.string().min(1) });
 const createSettlementSchema = z.object({
   grossAmount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'grossAmount must be a 7-decimal number'),
   asset: assetRefOptional(),
@@ -614,6 +615,15 @@ router.post('/v1/scout/assign', requireRole('ops'), async (req, res, next) => {
   try {
     const { score } = assignScoutSchema.parse(req.body);
     res.json(await assignSampleTier(score));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/scout/revoke', requireRole('ops'), async (req, res, next) => {
+  try {
+    const { address } = revokeScoutSchema.parse(req.body);
+    res.json(await revokeTier(address));
   } catch (e) {
     next(e);
   }

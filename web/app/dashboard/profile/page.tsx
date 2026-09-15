@@ -6,7 +6,7 @@ import { useCallback } from 'react';
 import { useSession } from '../../lib/session';
 import WalletConnect from '../../components/WalletConnect';
 
-const METHOD_LABEL = { google: 'Google', wallet: 'Stellar wallet', guest: 'Guest' } as const;
+const METHOD_LABEL = { google: 'Google', wallet: 'Stellar wallet', guest: 'Guest', partner: 'Partner', ops: 'Operator' } as const;
 
 const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 

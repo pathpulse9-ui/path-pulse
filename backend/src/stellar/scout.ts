@@ -9,7 +9,7 @@ import {
   AuthClawbackEnabledFlag,
   type AuthFlag,
 } from '@stellar/stellar-sdk';
-import { SCOUT_MULTIPLIER, type ScoutTier, type ScoutAssignment } from '@pathpulse/contract';
+import { SCOUT_MULTIPLIER, type ScoutTier, type ScoutAssignment, type ScoutRevocation } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { horizon, fundWithFriendbot, accountExists } from './network.js';
 import { provisionManagedWallet, getManagedSigner } from './managed.js';
@@ -130,6 +130,54 @@ export async function assignSampleTier(score: number): Promise<ScoutAssignment> 
     score,
     issuer,
     assetCode: TIER_CODE[tier],
+    txHash: res.hash,
+    horizonUrl: horizonTxUrl(res.hash),
+  };
+}
+
+/**
+ * Revoke a driver's badge: claw back the asset and de-authorize the trustline,
+ * in one issuer-signed transaction. AUTH_CLAWBACK_ENABLED makes the seizure
+ * possible without the holder's signature; AUTH_REVOCABLE makes the
+ * de-authorization stick, so the driver cannot re-acquire the badge by holding
+ * the trustline open. After this the settlement engine reads no badge and the
+ * driver falls back to the 1.0x multiplier.
+ */
+export async function revokeTier(address: string): Promise<ScoutRevocation> {
+  const issuer = await ensureIssuer();
+  const { tier } = await getOnchainTier(address);
+  if (!tier) throw new Error(`${address} holds no SCOUT badge to revoke`);
+
+  const asset = assetFor(issuer, tier);
+  const driverAcct = await horizon.loadAccount(address);
+  const held = (driverAcct.balances as CreditBalance[]).find(
+    (b) => b.asset_code === TIER_CODE[tier] && b.asset_issuer === issuer,
+  );
+  const amount = held?.balance ?? '0';
+
+  const issuerAcct = await horizon.loadAccount(issuer);
+  const builder = new TransactionBuilder(issuerAcct, {
+    fee: BASE_FEE,
+    networkPassphrase: env.networkPassphrase,
+  });
+  if (Number(amount) > 0) {
+    builder.addOperation(Operation.clawback({ from: address, asset, amount }));
+  }
+  builder.addOperation(
+    Operation.setTrustLineFlags({ trustor: address, asset, flags: { authorized: false } }),
+  );
+  const tx = builder.setTimeout(120).build();
+
+  await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(tx);
+  const res = await horizon.submitTransaction(tx);
+  logger.info({ address, tier, amount }, 'SCOUT tier revoked');
+
+  return {
+    address,
+    revokedTier: tier,
+    assetCode: TIER_CODE[tier],
+    issuer,
+    clawedBackAmount: amount,
     txHash: res.hash,
     horizonUrl: horizonTxUrl(res.hash),
   };

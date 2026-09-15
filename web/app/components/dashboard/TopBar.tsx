@@ -13,7 +13,7 @@ import { T } from './typography';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
-const METHOD_LABEL = { google: 'Google', wallet: 'Wallet', guest: 'Guest' } as const;
+const METHOD_LABEL = { google: 'Google', wallet: 'Wallet', guest: 'Guest', partner: 'Partner', ops: 'Operator' } as const;
 
 export function TopBar() {
   const router = useRouter();

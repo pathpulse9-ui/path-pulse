@@ -42,7 +42,7 @@ export interface ManagedWallet {
 
 export interface SessionUser {
   userId: string;
-  method: 'google' | 'wallet' | 'guest';
+  method: 'google' | 'wallet' | 'guest' | 'partner' | 'ops';
   email?: string;
   address?: string;
 }
@@ -75,6 +75,21 @@ export interface WalletVerifyResponse {
 }
 
 export interface GuestSessionResponse {
+  userId: string;
+}
+
+/** Passcode sign-in for the two privileged roles. */
+export interface PasscodeLoginRequest {
+  passcode: string;
+}
+
+/** Partner access to the Government Settlement Gateway (`GOV_PARTNER_PASSCODE`). */
+export interface PartnerLoginResponse {
+  userId: string;
+}
+
+/** Operator access to every endpoint that moves protocol funds (`OPS_PASSCODE`). */
+export interface OpsLoginResponse {
   userId: string;
 }
 
@@ -179,7 +194,8 @@ export interface SettlementBatch {
   treasuryAddress: string;
   txHash: string;
   horizonUrl: string;
-  payoutBatchId: string;
+  /** Absent means the split settled but the payout fan-out has not completed. */
+  payoutBatchId?: string;
 }
 
 export interface SettlementBatchPage {
@@ -216,6 +232,16 @@ export interface ScoutAssignment {
   score: number;
   issuer: string;
   assetCode: string;
+  txHash: string;
+  horizonUrl: string;
+}
+
+export interface ScoutRevocation {
+  address: string;
+  revokedTier: ScoutTier;
+  assetCode: string;
+  issuer: string;
+  clawedBackAmount: string;
   txHash: string;
   horizonUrl: string;
 }

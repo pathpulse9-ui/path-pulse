@@ -46,3 +46,7 @@ ios/**/xcuserdata/
 ios/**/*.xcworkspace/xcuserdata/
 ios/Pods/
 ios/DerivedData/
+
+# one-shot evidence scripts — run locally, not part of the product
+backend/scripts/demo-scout-revocation.ts
+backend/scripts/route-converted-to-settlement.ts
