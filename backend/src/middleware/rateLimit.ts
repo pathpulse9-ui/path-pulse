@@ -15,7 +15,7 @@ import type { Request } from 'express';
  * Counters are per-process and in-memory. That is sufficient only because
  * App Runner autoscaling is pinned to a single instance; a second instance
  * doubles every effective limit. Moving to a shared store (Redis) is a
- * prerequisite for scaling past one instance — see docs/RUNBOOK.md.
+ * prerequisite for scaling past one instance.
  */
 
 const shared: Partial<Options> = {

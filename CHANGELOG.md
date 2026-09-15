@@ -2,6 +2,52 @@
 
 All notable changes to PathPulse are documented here.
 
+## [0.1.15.0] — 2026-09-16
+
+### Added (D6 — SCOUT issuance and revocation)
+- **SCOUT badges issued on chain for the first time.** The issuer `GBKGCHRV…` had been created and flagged on 2026-08-27 but never used — its entire operation history was one `create_account` and two `set_options`, so no driver held a badge and "test drivers assigned SCOUT tiers visible in Stellar wallets" could not be demonstrated. Three drivers now hold one authorised badge each (`7bc2b08a…`, `cc573390…`, `e9705bd2…`), each also carrying an authorised USDC trustline so they can receive an SDP fan-out.
+- **Tier revocation** (`revokeTier`, `POST /v1/scout/revoke`, ops-gated, plus a control on the SCOUT page). The issuer claws the asset back and de-authorises the trustline in one issuer-signed transaction; the driver falls back to the 1.0x multiplier with no action available to them. Proven end to end: issued SCOUT2 `375e85bc…` → revoked `64f1465e…` (1.0000000 clawed back) → on-chain tier reads `null`, multiplier 1.0x.
+- **`backend/scripts/provision-scout-drivers.ts`** — runs the same on-chain sequence as `assignSampleTier()` but persists every driver seed before the first network call, and aborts if the resolved issuer is not the expected one. `assignSampleTier()` mints its driver with `Keypair.random()` and discards the secret, which is how the original driver pool `GD2J6WSB…` became permanently unusable.
+- **Converted assets routed into the settlement pipeline.** Swap output landed in the AMM routing source and had never reached the settlement source, leaving conversion and distribution adjacent but unlinked. Closed: `bf4f8c62…` (convert) → `23b28191…` (6 USDC transfer) → `a6ba3f88…` (settled 1.5 / 0.9 / 0.6), batch `stl_1789498668104_c014232e`.
+- **Score-feed contract for SCOUT tiers** (`services/pulsegen.ts`, `ValidationScore` in the contract package). PulseGen is an external dependency; the provider shape is now explicit and every score records its `source`, so a synthetic score can never be mistaken for one PulseGen issued. Synthetic is the agreed interim per the plan's risk register.
+
+### Fixed
+- **An unknown settlement batch id crashed the backend.** `services/offramp.ts` called `getSettlementBatch(req.settlementBatchId)` without `await`, so the validation never ran — an unknown id passed and the session was created anyway — and the rejected promise became an unhandled rejection that killed the process. Observed live: the request returned 200, then Node exited. Now awaited: unknown ids return **404** and the service stays up.
+- **Carret's real error never reached the caller.** `extractHumanMessage` read the generic `error` key first and returned `"Validation failed"`, never looking at `details`, where Carret puts the actual sentence — and the two endpoints use different shapes (`details: [...]` on quotes, `details: {errors: [...]}` on orders). Both are handled now, so callers see `"Minimum amount is 10.00"` or `"Insufficient USDC balance. Required: 10.0, Available: 9.0"`.
+- **`scripts/e2e-flow.mjs` could not pass.** It authenticated with `POST /v1/auth/guest` then called `POST /v1/settlement/batches`, which 0.1.14.0 moved behind `requireRole('ops')` — nine checks failed on a 403. It now signs in as an operator (`--ops`/`OPS_PASSCODE`) and additionally asserts that a guest is refused, turning the regression into a positive test of the authorisation boundary.
+- **Errors surfaced as raw JSON.** `apiFetch` stringified the response body into the error message, so the UI showed `Request failed (422): {"error":…,"requestId":64}`. It now throws a typed `ApiError` carrying `status`, `needsAuth` and `needsOperator`, rendered by a new `ErrorNotice` component — a 403 reads "Operator access required" with a pointer to Ops access rather than a red line of JSON.
+- **The KYC tab overlapped the sidebar.** The page was built as a phone wizard and kept `fixed left-0 right-0 bottom-0` on its action bar, which positions against the viewport rather than the content column. Now `sticky` inside a `max-w-3xl` block, matching the other dashboard tabs.
+
+## [0.1.14.0] — 2026-09-11
+
+### Added (Phase 5 — D7 mainnet readiness)
+- **Operator role.** New `ops` session method (`POST /v1/auth/ops/login`, `OPS_PASSCODE`, constant-time compare) and a `requireRole()` middleware. The six endpoints that move protocol funds — settlement batches, group payouts, SDP fan-out, SCOUT issuance, SCOUT revocation, treasury reconfiguration — require it: anonymous → `401`, any valid non-ops session → `403`. This closes the gap left by the previous pass, where `POST /v1/auth/guest` minted an unverified session that satisfied every check. Web: an **Ops access** control in the dashboard top bar.
+- **Mainnet preflight.** The backend refuses to boot on `STELLAR_NETWORK=mainnet` when the config would fail quietly — dev signer backend, `aws-kms` without `KMS_KEY_ID`, missing `DATABASE_URL` (settlements would silently land in the in-memory store), any unset distribution account, missing `SESSION_SECRET`/`OPS_PASSCODE`, or `CARRET_ALLOW_TESTNET=true`. All problems are reported at once rather than one per restart.
+
+### Fixed
+- **A failed payout could lose a settled batch.** `executeSettlementBatch` submitted the 50/30/20 split on-chain, then called the payout provider, then persisted the record — so a provider failure in between left funds moved with no indexer row. The batch is now written the moment the on-chain split confirms (`saveBatch` precedes `createPayoutBatch`); a provider failure returns `502 PayoutProviderUnavailable` naming the batch id and tx hash, retryable via `POST /v1/ops/payouts/batches`.
+- `SettlementBatch.payoutBatchId` is now optional in the contract — absent means the split settled but the fan-out has not completed, which is a real and recoverable state.
+
+## [0.1.13.0] — 2026-09-11
+
+### Security (Phase 5 — D7 security review)
+- **Anonymous callers could move money.** `POST /v1/settlement/batches`, `/v1/settlement/group-payouts`, `/v1/ops/payouts/batches`, `/v1/scout/assign` and `/v1/treasury/multisig/build` had no session check of any kind — the group-payout endpoint accepted arbitrary destination addresses and amounts, 100 per call, from the public internet. All now behind `middleware/requireSession.ts`; anonymous requests get `401` before validation or business logic. Regression tests assert the 401 for each.
+- **Off-ramp sessions leaked across drivers.** `GET /v1/offramp/sessions` returned every user's withdrawals (amounts, fiat estimates, anchor accounts, provider order ids) to an unauthenticated caller, and `:id` had no ownership check. Sessions are now scoped by `ppUserId`; a session owned by someone else reports 404 rather than 403, so the endpoint does not confirm the id exists. `POST` no longer falls back to a shared `sandbox-user` identity.
+- **Carret KYC/PII endpoints were an unauthenticated IDOR.** `GET /v1/carret/kyc/status/:accountId` returned a KYC-verified account's status and `kyc_session` to anyone; `kyc/document` and `kyc/cleanup` took the account id straight from the request. Anonymous access closed. Ownership binding — resolving the account from the caller's own mapping — remains open.
+- **Rate limiting** (`middleware/rateLimit.ts`): 20 per 15 min on credential routes — `GOV_PARTNER_PASSCODE` was previously open to unlimited guessing — and 60/min on other writes. GETs and the signature-verified provider webhook are exempt. Counters are in-memory and therefore only correct while the service runs a single instance.
+- **Security headers** via `helmet`, and `trust proxy` set to 1 so limits key on the real client IP.
+
+### Fixed
+- **USDC settlement was impossible and silently so.** The driver pool `GD2J6WSB…` was provisioned by a script that printed its seed to stdout only, so it could never sign a `changeTrust`, could never hold USDC, and since a settlement is one atomic transaction its operation failing took the whole settlement with it. Every prior D6 proof used XLM, which masked it. Replaced with `GAUI7XIA…` (funded, USDC trustline, secret persisted) via `backend/scripts/provision-driver-pool-v2.ts`. Proven: tx `4d123cc4…`, ledger 4618964, 3 USDC split 1.5 / 0.9 / 0.6.
+
+## [0.1.12.0] — 2026-09-11
+
+### Added (Phase 6 — Gov Gateway access control, QA scripts)
+- **Partner access control on `/gov/*`.** New session method `partner` (`POST /v1/auth/partner/login`, checked against `GOV_PARTNER_PASSCODE` with a constant-time compare); `web/app/gov/PartnerGate.tsx` blocks the Government Settlement Gateway behind a passcode form until a `partner` session exists, `PartnerSignOut.tsx` clears it. The gate is page-level — the underlying `/v1/settlement/*`, `/v1/treasury/config` and `/v1/accounts/distribution` endpoints stay public reads because the driver-facing `/dashboard/*` pages share them.
+- **QA scripts:** `scripts/e2e-flow.mjs` (onboarding → funded driver → 50/30/20 settlement → indexer/export/receipt → linked off-ramp withdrawal, against real testnet Horizon) and `scripts/load-test-settlement.mjs` (concurrency load on the indexer read path; `--with-writes` adds a concurrent settlement-submit burst).
+- **`scripts/mainnet-smoke-check.mjs`** + `make mainnet-smoke` — read-only implementation of the manual smoke step for the mainnet cutover.
+- `docs/API_ARCHITECTURE.md` endpoint catalog and the `SessionUser.method` union brought back in sync with what is actually live (Carret not Mercuryo, the Aquarius/StellarBroker aggregator, gov endpoints as page-gated reuse rather than a separate `/v1/gov/*` namespace, `guest`/`partner` session methods).
+
 ## [0.1.11.0] — 2026-08-27
 
 ### Added (custody — persistence + AWS KMS signer)
@@ -26,8 +72,8 @@ All notable changes to PathPulse are documented here.
 - 18/18 unit tests pass; `tsc` clean across contract, backend and web.
 
 ### Known limitations
-- The key-encryption key is an environment variable, not KMS-held — this protects a leaked database, not a compromised process. Losing it makes every stored seed unrecoverable.
-- App Runner must stay pinned to one instance: settlement batches, group payouts, payout batches, off-ramp sessions and wallet-auth users remain in process memory.
+- The key-encryption key is an environment variable, not KMS-held — this protects a leaked database, not a compromised process. *(Superseded — the KEK is now wrapped by AWS KMS (`alias/pathpulse-kek`) and unwrapped at startup, so KMS is the root of trust for every user key.)*
+- App Runner must stay pinned to one instance: settlement batches, group payouts, payout batches, off-ramp sessions and wallet-auth users remain in process memory. *(Superseded — settlement batches and payout attempts are Postgres-backed as of 0.1.14.0; the single-instance requirement now stems from in-memory rate-limit counters, see 0.1.13.0.)*
 
 ## [0.1.10.0] — 2026-08-25
 
@@ -50,9 +96,9 @@ All notable changes to PathPulse are documented here.
 - `README.md` multisig claim corrected: the ≥ 2-of-3 description applies to the replacement treasury. The original `GADPEI5O…` shipped as **2-of-4** with the master key retained at weight 1 and its three signer secrets unrecoverable — it is permanently frozen and cannot authorize even a `set_options` to repair itself.
 
 ### Known limitations (unchanged, now documented)
-- Managed keys remain in process memory with no persistence: any redeploy orphans every managed account created before it, permanently. App Runner stays pinned to one instance for this reason.
+- Managed keys remain in process memory with no persistence: any redeploy orphans every managed account created before it, permanently. *(Superseded by 0.1.11.0 — driver seeds are sealed with AES-256-GCM and persisted in Postgres; a redeploy no longer orphans a wallet.)*
 - `secrets/treasury-v2.json` is not in a managed secret store. It is a single point of failure.
-- The demo's distribution env vars still point at the original, frozen treasury; migration is outstanding.
+- The demo's distribution env vars still point at the original, frozen treasury; migration is outstanding. *(Superseded — the deployed service uses the replacement treasury `GBRXUTNC…`, partner revenue `GCGKQ2BL…` and driver pool `GAUI7XIA…`; see 0.1.13.0.)*
 
 ## [0.1.9.0] — 2026-08-13
 

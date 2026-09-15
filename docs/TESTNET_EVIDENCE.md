@@ -2,7 +2,8 @@
 
 Every claim on this page maps to a public artifact — a Stellar testnet transaction on Horizon, a running service, or code in this repo — so a reviewer can verify without running anything.
 
-> **Scope:** Deliverables D2–D6 (contract Tranche 2, Testnet). Tranche 1 (D1) was formally approved 2026-08-27 and its evidence lives in [`README.md`](../README.md#deployed-on-testnet) and [`docs/KMS_VERIFICATION.md`](KMS_VERIFICATION.md).
+> **Scope:** Deliverables **D4, D5, D6** — the contract's Tranche 2 (Testnet). D1–D3 belong to Tranche 1;
+> D1 was formally approved 2026-08-27 and its evidence lives in [`README.md`](../README.md#deployed-on-testnet) and [`docs/KMS_VERIFICATION.md`](KMS_VERIFICATION.md).
 
 **Demo:** <https://demo.pathpulse.ai> · **Network:** Stellar **testnet** for everything below.
 
@@ -74,7 +75,7 @@ We run our own SDP instance on Railway with a tenant provisioned for PathPulse.
 
 | Measure | Evidence |
 |---|---|
-| Testnet payout batches executed through SDP | ✅ payout batch `pob_1788062833060_0e8d9f26` — `provider: sdp`, `status: completed` |
+| Testnet payout batches executed through SDP | ✅ SDP disbursement `b6a183ed-7d15-4d46-9efd-2b75b785f6c7` — **COMPLETED**, 0.06 USDC to three receivers, each with its own payment hash |
 | Stablecoin rewards distributed to contributor accounts | ✅ 0.9 XLM to receiver [`GD2J6WSB…XGGU`](https://stellar.expert/explorer/testnet/account/GD2J6WSBGITCNDH4AA3FMMQVUMHWIL2KL4DHQGXKENAJAR3TNDJXXGGU), receipt `status: success` |
 | Payout reconciliation logs verified | Batch JSON is the reconciliation record — every receipt carries a per-user `status`. Full per-attempt log via `GET /v1/ops/payouts/batches/:id/attempts` (persisted by `payoutAttempts.ts`) |
 | End-to-end payout flow demonstrated | ✅ Settlement tx [`d3330aab…`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) split 3 XLM → 50/30/20; driver 30% share routed through SDP and confirmed delivered |
@@ -84,20 +85,25 @@ We run our own SDP instance on Railway with a tenant provisioned for PathPulse.
 Fetch the full batch:
 
 ```
-GET https://demo-api.pathpulse.ai/v1/ops/payouts/batches/pob_1788062833060_0e8d9f26
-GET https://demo-api.pathpulse.ai/v1/settlement/batches/stl_1788062833060_7cce9334
+GET https://demo-api.pathpulse.ai/v1/settlement/batches/stl_1789491082569_c75c7b27
+GET https://demo-api.pathpulse.ai/v1/ops/payouts/batches/pob_1789491649634_51b54fab
 ```
 
 | Field | Value |
 |---|---|
-| Settlement batch id | `stl_1788062833060_7cce9334` |
+| Settlement batch id | `stl_1788062833060_7cce9334` *(pre-durability; lost on a redeploy — see note below)* |
 | Gross | 3 XLM |
 | Split | 1.5 XLM Authorities · 0.9 XLM Driver Rewards · 0.6 XLM Treasury |
 | Settlement source (KMS-signed) | [`GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC`](https://stellar.expert/explorer/testnet/account/GBQOGCRXI2MG5MDXP7QKROOR7X6PWNUOT3R2YSXNLFHPAO3YMBXWZJPC) |
 | Settlement tx (Authorities + Treasury paid inline) | [`d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) — ledger 4407849, 2 payment ops |
-| SDP payout batch id | `pob_1788062833060_0e8d9f26` |
+| SDP payout batch id | `pob_1788062833060_0e8d9f26` *(pre-durability; lost on a redeploy)* |
 | SDP receipt | userId `db-health-probe`, address `GD2J6WSB…XGGU`, tier 1, amount 0.9 XLM, `status: success` |
 | Batch status | `completed`, `updatedAt: 2026-08-30T04:46:03Z` (settled ~39 min after creation) |
+
+> **On the two batch ids above.** Both predate the settlement-durability fix and were lost when
+> the service was redeployed, so they no longer resolve from the API. The Horizon transaction
+> `d3330aab…` is permanent and remains the record. For a batch that is retrievable today, use
+> `stl_1789491082569_c75c7b27`.
 
 **Interpretation of the split flow.** The 50% Authorities and 20% Treasury shares are paid inline by the settlement source in tx `d3330aab…` (verifiable on Horizon: two `payment` ops → `GA3XFACID…` and `GBRXUTNC…`). The 30% Driver Rewards share is delegated to SDP via `createPayoutBatch()` in [`backend/src/services/payouts.ts`](../backend/src/services/payouts.ts). SDP orchestrates the per-receiver disbursement, records status on the payout batch, and reconciliation attempts are persisted via [`payoutAttempts.ts`](../backend/src/services/payoutAttempts.ts). The `status: success` receipt is SDP's ack that the receiver has been paid.
 
@@ -133,7 +139,7 @@ Rate ≈ 97.9 INR / USDC, Carret fee 0.59%, TDS 1%.
 | Concern | File |
 |---|---|
 | Carret client (v1 off-ramp + banking + deposit addresses) | [`backend/src/services/carret.ts`](../backend/src/services/carret.ts) |
-| Carret KYC (v2.0) client + web flow | on side branch [`upstream/carret-kyc`](https://github.com/pathpulse9-ui/path-pulse/tree/carret-kyc): `web/app/dashboard/kyc/page.tsx` + `backend/src/routes/index.ts` `/v1/carret/kyc/*` |
+| Carret KYC (v2.0) client + flows | on `main`: [`web/app/dashboard/kyc/page.tsx`](../web/app/dashboard/kyc/page.tsx), `android/…/ui/KycScreen.kt`, `ios/…/Views/KycView.swift`, and `/v1/carret/kyc/*` in [`backend/src/routes/index.ts`](../backend/src/routes/index.ts) |
 | Testnet-vs-mainnet safety guard (Carret is mainnet-only) | `carretLiveProvider.start` in `backend/src/services/offramp.ts` |
 | Web off-ramp UI | [`web/app/dashboard/offramp/page.tsx`](../web/app/dashboard/offramp/page.tsx) |
 
@@ -144,7 +150,7 @@ Rate ≈ 97.9 INR / USDC, Carret fee 0.59%, TDS 1%.
 | Off-ramp orchestration behind a provider interface | ✅ `services/offramp.ts` — `OffRampProvider` |
 | Testnet withdrawal completes via provider sandbox | ✅ 3 orders filled on Carret dev, listed above |
 | Off-ramp events linked to settlement batches | ✅ `settlementBatchId` optional on off-ramp session, validated 404 if unknown |
-| Mobile SEP-24 hosted webview | ⏳ tracked separately (mobile critical path) |
+| Mobile SEP-24 hosted webview | Not a D4 completion criterion — the deliverable names no delivery surface. Tracked on the mobile roadmap. |
 
 ---
 
@@ -163,7 +169,7 @@ Rate ≈ 97.9 INR / USDC, Carret fee 0.59%, TDS 1%.
 | Concern | File |
 |---|---|
 | Aquarius API client (path find, quote) | [`backend/src/routing/aquarius.ts`](../backend/src/routing/aquarius.ts) |
-| Swap orchestration (auto-trustline + Soroban router call) | [`backend/src/routing/swap.ts`](../backend/src/routing/swap.ts) |
+| Swap orchestration (multi-source aggregator, auto-trustline, Soroban router call) | [`backend/src/routing/aggregator.ts`](../backend/src/routing/aggregator.ts) · [`aquarius-provider.ts`](../backend/src/routing/aquarius-provider.ts) · [`stellarbroker-provider.ts`](../backend/src/routing/stellarbroker-provider.ts) |
 | Asset registry (XLM/USDC/EURC contract ids) | [`backend/src/routing/assets.ts`](../backend/src/routing/assets.ts) |
 | Soroban simulate + submit | [`backend/src/stellar/soroban.ts`](../backend/src/stellar/soroban.ts) |
 
@@ -191,7 +197,7 @@ Executed via `POST https://demo-api.pathpulse.ai/v1/routing/swap` (auth cookie f
 | tx hash | [`28a14d057b5425ba332bd1bdbaac3643aa70efd3559448fb58cb3f8e94797ec0`](https://stellar.expert/explorer/testnet/tx/28a14d057b5425ba332bd1bdbaac3643aa70efd3559448fb58cb3f8e94797ec0) |
 | ledger + result | successful |
 
-The tx envelope is a Soroban `InvokeHostFunction` calling the Aquarius router contract's `swap_chained` entry point; the `Signer` is the KMS-derived signer on the AMM routing source account (`GAKYXUFDWZ6Q…TLSS`), so the ed25519 signature was produced inside AWS KMS's HSM. Trustline for the destination USDC asset was auto-provisioned by `ensureTrustline` in `routing/swap.ts` on first use.
+The tx envelope is a Soroban `InvokeHostFunction` calling the Aquarius router contract's `swap_chained` entry point; the `Signer` is the KMS-derived signer on the AMM routing source account (`GAKYXUFDWZ6Q…TLSS`), so the ed25519 signature was produced inside AWS KMS's HSM. Trustline for the destination USDC asset is auto-provisioned on first use by the Aquarius provider in `routing/aquarius-provider.ts`.
 
 ---
 
@@ -222,7 +228,7 @@ The tx envelope is a Soroban `InvokeHostFunction` calling the Aquarius router co
 | Treasury multisig is live on-chain | ✅ `GET https://demo-api.pathpulse.ai/v1/treasury/config` — treasury `GBRXUTNC…` shows master weight 0, three signers (`GB3REMIR…`, `GD674BNV…`, `GDPFOIWS…`) each weight 1 → 2-of-3 |
 | Test drivers hold SCOUT tiers visible in Stellar wallets on testnet | ✅ badges are Classic Assets under issuer `GBKGCHRV…SF4` — visible in any Stellar wallet inspecting the driver address |
 | Multipliers applied correctly in settlement batches | ✅ verified: submitting all drivers as `tier:1` still paid 1.0/1.2/1.5× because engine reads the on-chain badge, not the request |
-| Settlement validated end-to-end | ✅ tx [`d3330aab…`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) on Horizon; batch id `stl_1788062833060_7cce9334` retrievable via `GET /v1/settlement/batches` |
+| Settlement validated end-to-end | ✅ tx [`d3330aab…`](https://stellar.expert/explorer/testnet/tx/d3330aab4752810f04e6fc627b9d2fc16f1363f90e9af389c30d5e0aafe427e8) on Horizon; batch `stl_1789491082569_c75c7b27` retrievable via `GET /v1/settlement/batches` |
 
 ---
 

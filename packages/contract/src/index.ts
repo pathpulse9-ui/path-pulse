@@ -219,6 +219,24 @@ export interface ScoutConfig {
   tiers: ScoutTierInfo[];
 }
 
+/**
+ * Score-feed contract for SCOUT tier assignment.
+ *
+ * PulseGen produces a validation score per driver; the tier a driver holds is
+ * derived from it (>= 0.8 → SCOUT3, >= 0.5 → SCOUT2, else SCOUT1). The live
+ * feed is an external dependency, so `source` records which feed produced a
+ * score — `synthetic` is the agreed interim per the plan's risk register.
+ */
+export type ScoreSource = 'pulsegen' | 'synthetic';
+
+export interface ValidationScore {
+  driverId: string;
+  /** 0..1 inclusive. */
+  score: number;
+  scoredAt: string;
+  source: ScoreSource;
+}
+
 /** Assign a tier from a PulseGen validation score (0..1). */
 export interface AssignScoutTierRequest {
   score: number;

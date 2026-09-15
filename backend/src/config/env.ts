@@ -110,6 +110,13 @@ export const env = {
     },
   },
 
+  // PulseGen validation-score feed (D6). Unset until the live feed lands; the
+  // synthetic provider is the agreed interim per the plan's risk register.
+  pulseGen: {
+    baseUrl: process.env.PULSEGEN_BASE_URL ?? '',
+    apiKey: process.env.PULSEGEN_API_KEY ?? '',
+  },
+
   webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',
 
   session: {

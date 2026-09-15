@@ -8,7 +8,7 @@ export const horizon = new Horizon.Server(env.horizonUrl, {
 
 /** Fund a testnet account via Friendbot. Refuses on mainnet — Friendbot
  *  doesn't exist there and mainnet accounts must be funded manually as
- *  part of the treasury key ceremony (see docs/MAINNET_CUTOVER.md). */
+ *  part of the treasury key ceremony. */
 export async function fundWithFriendbot(publicKey: string): Promise<void> {
   if (env.network !== 'testnet') {
     throw new Error('Friendbot funding is testnet-only');
