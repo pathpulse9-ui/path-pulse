@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ScoutConfig, ScoutAssignment, ScoutTierLookup } from '@pathpulse/contract';
-import { getScoutConfig, assignScoutTier, getScoutTier } from '../../lib/api';
+import type { ScoutConfig, ScoutAssignment, ScoutTierLookup, ScoutRevocation } from '@pathpulse/contract';
+import { getScoutConfig, assignScoutTier, getScoutTier, revokeScoutTier } from '../../lib/api';
+import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
@@ -19,15 +20,35 @@ export default function ScoutPage() {
   const [score, setScore] = useState('0.9');
   const [assigning, setAssigning] = useState(false);
   const [assignments, setAssignments] = useState<ScoutAssignment[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const [lookupAddr, setLookupAddr] = useState('');
   const [lookup, setLookup] = useState<ScoutTierLookup | null>(null);
+
+  const [revokeAddr, setRevokeAddr] = useState('');
+  const [revoking, setRevoking] = useState(false);
+  const [revocation, setRevocation] = useState<ScoutRevocation | null>(null);
+  const [revokeError, setRevokeError] = useState<unknown>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     getScoutConfig().then(setConfig).catch(() => setError('Failed to reach Backend Core'));
   }, []);
+
+  const revoke = useCallback(async () => {
+    setRevoking(true);
+    setRevokeError(null);
+    setRevocation(null);
+    try {
+      const r = await revokeScoutTier(revokeAddr.trim());
+      setRevocation(r);
+      if (lookup?.address === r.address) setLookup({ address: r.address, tier: null, multiplier: 1 });
+    } catch (e) {
+      setRevokeError(e ?? 'Revoke failed');
+    } finally {
+      setRevoking(false);
+    }
+  }, [revokeAddr, lookup]);
 
   const assign = useCallback(async () => {
     setAssigning(true);
@@ -36,7 +57,7 @@ export default function ScoutPage() {
       const a = await assignScoutTier(Number(score));
       setAssignments((prev) => [a, ...prev]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Assign failed');
+      setError(e ?? 'Assign failed');
     } finally {
       setAssigning(false);
     }
@@ -48,7 +69,7 @@ export default function ScoutPage() {
     try {
       setLookup(await getScoutTier(lookupAddr.trim()));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lookup failed');
+      setError(e ?? 'Lookup failed');
     }
   }, [lookupAddr]);
 
@@ -97,7 +118,7 @@ export default function ScoutPage() {
             {assigning ? 'Issuing badge…' : 'Assign & issue'}
           </button>
         </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error != null && <ErrorNotice error={error} />}
 
         {assignments.length > 0 && (
           <table className="w-full text-sm mt-2">
@@ -132,6 +153,45 @@ export default function ScoutPage() {
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+
+      <div className="rounded-2xl bg-white p-6 space-y-3">
+        <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
+          Revoke a driver&apos;s badge
+        </h2>
+        <p className="text-sm text-black/50">
+          The issuer claws the asset back and de-authorises the trustline in one transaction. The
+          driver falls back to the 1.0× multiplier immediately. Requires an operator session.
+        </p>
+        <div className="flex flex-wrap gap-3 items-end">
+          <input
+            id="scout-revoke-address"
+            value={revokeAddr}
+            onChange={(e) => setRevokeAddr(e.target.value)}
+            placeholder="G… driver address"
+            className="rounded-xl border border-black/10 px-3 py-2 text-sm flex-1 min-w-64 font-mono focus:outline-none focus:border-black/30"
+          />
+          <button
+            onClick={revoke}
+            disabled={revoking || !revokeAddr.trim()}
+            className="rounded-full border border-red-300 text-red-700 px-5 py-2 text-sm hover:bg-red-50 transition-colors duration-200 disabled:opacity-50"
+          >
+            {revoking ? 'Revoking…' : 'Revoke badge'}
+          </button>
+        </div>
+        {revokeError != null && <ErrorNotice error={revokeError} />}
+        {revocation && (
+          <p className="text-sm">
+            Revoked <span className="font-mono">{revocation.assetCode}</span> from{' '}
+            <a href={explorerAcct(revocation.address)} target="_blank" rel="noreferrer" className="underline">
+              {short(revocation.address)}
+            </a>{' '}
+            — clawed back {revocation.clawedBackAmount}, now multiplier 1.0×{' '}
+            <a href={explorerTx(revocation.txHash)} target="_blank" rel="noreferrer" className="underline">
+              {short(revocation.txHash)}
+            </a>
+          </p>
         )}
       </div>
 

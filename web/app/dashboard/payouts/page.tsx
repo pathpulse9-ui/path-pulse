@@ -11,6 +11,7 @@ import {
 } from '../../lib/api';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
+import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
@@ -33,7 +34,7 @@ export default function PayoutsPage() {
   const [settlements, setSettlements] = useState<SettlementBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [attempts, setAttempts] = useState<Record<string, PayoutAttempt[]>>({});
 
   const load = useCallback(async () => {
@@ -54,7 +55,7 @@ export default function PayoutsPage() {
       );
       setAttempts(Object.fromEntries(rows));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to reach Backend Core');
+      setError(e ?? 'Failed to reach Backend Core');
     } finally {
       setLoading(false);
     }
@@ -84,7 +85,7 @@ export default function PayoutsPage() {
         await createPayoutBatch(settlementBatchId);
         await load();
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Disbursement failed');
+        setError(e ?? 'Disbursement failed');
       } finally {
         setCreating(false);
       }
@@ -98,11 +99,7 @@ export default function PayoutsPage() {
 
   return (
     <div className={T.sectionStack}>
-      {error && (
-        <div className={T.card}>
-          <p className="text-sm text-red-600">{error}</p>
-        </div>
-      )}
+      {error != null && <ErrorNotice error={error} />}
 
       <div className={`${T.card} space-y-4`}>
         <div>

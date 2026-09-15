@@ -10,6 +10,7 @@ import {
   createOffRampWithdrawal,
   getOffRampQuote,
 } from '../../lib/api';
+import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -32,11 +33,11 @@ export default function OffRampPage() {
   const [selected, setSelected] = useState<OffRampSession | null>(null);
   const [amount, setAmount] = useState('10');
   const [batchId, setBatchId] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [quote, setQuote] = useState<OffRampQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState<unknown>(null);
   // PAT-80: Carret daily limit for this driver's sub-account.
   const [limits, setLimits] = useState<CarretLimits | null>(null);
   useEffect(() => {
@@ -49,7 +50,7 @@ export default function OffRampPage() {
       setSessions(page.items);
       setSelected((cur) => (cur ? page.items.find((s) => s.id === cur.id) ?? cur : page.items[0] ?? null));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to reach Backend Core');
+      setError(e ?? 'Failed to reach Backend Core');
     }
   }, []);
 
@@ -92,7 +93,7 @@ export default function OffRampPage() {
       } catch (e) {
         if (!cancelled) {
           setQuote(null);
-          setQuoteError(e instanceof Error ? e.message : 'Quote failed');
+          setQuoteError(e ?? 'Quote failed');
         }
       } finally {
         if (!cancelled) setQuoting(false);
@@ -115,7 +116,7 @@ export default function OffRampPage() {
       setSelected(session);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start withdrawal');
+      setError(e ?? 'Failed to start withdrawal');
     } finally {
       setBusy(false);
     }
@@ -153,9 +154,9 @@ export default function OffRampPage() {
             {busy ? 'Starting…' : 'Sell to fiat'}
           </button>
         </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error != null && <ErrorNotice error={error} />}
 
-        {quoteError && <p className="text-sm text-red-600">{quoteError}</p>}
+        {quoteError != null && <ErrorNotice error={quoteError} />}
 
         {limits && (
           <div className="flex items-center gap-2 text-xs">

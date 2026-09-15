@@ -592,9 +592,31 @@ function safeParseJson(text: string): unknown {
  * `{field: ["msg", ...]}`. Returns "" when nothing readable is found —
  * caller falls back to a generic sentence.
  */
+function firstString(v: unknown): string {
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const s = firstString(x);
+      if (s) return s;
+    }
+    return '';
+  }
+  if (v && typeof v === 'object') {
+    for (const x of Object.values(v as Record<string, unknown>)) {
+      const s = firstString(x);
+      if (s) return s;
+    }
+  }
+  return '';
+}
+
 function extractHumanMessage(parsed: unknown): string {
   if (!parsed || typeof parsed !== 'object') return '';
   const obj = parsed as Record<string, unknown>;
+
+  const specific = firstString(obj.details ?? obj.errors ?? obj.non_field_errors);
+  if (specific) return specific;
+
   const direct = obj.detail ?? obj.message ?? obj.error;
   if (typeof direct === 'string' && direct.trim()) return direct.trim();
   for (const v of Object.values(obj)) {

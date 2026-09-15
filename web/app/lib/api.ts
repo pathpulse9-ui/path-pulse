@@ -21,6 +21,7 @@ import type {
   CreateOffRampWithdrawalRequest,
   ScoutConfig,
   ScoutAssignment,
+  ScoutRevocation,
   ScoutTierLookup,
   RoutingQuote,
   RoutingSwapRequest,
@@ -39,9 +40,46 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Request failed (${res.status}): ${text}`);
+    throw toApiError(res.status, text);
   }
   return res.json();
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly needsAuth: boolean;
+  readonly needsOperator: boolean;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.needsAuth = status === 401;
+    this.needsOperator = status === 403;
+  }
+}
+
+function toApiError(status: number, rawText: string): ApiError {
+  let upstream = '';
+  try {
+    const parsed = JSON.parse(rawText) as { message?: string };
+    if (typeof parsed.message === 'string') upstream = parsed.message.trim();
+  } catch {
+    upstream = rawText.trim();
+  }
+
+  if (status === 401) {
+    return new ApiError(status, 'Sign in to continue.');
+  }
+  if (status === 403) {
+    return new ApiError(status, 'This action needs an operator session — use Ops access in the top bar.');
+  }
+  if (status === 404) {
+    return new ApiError(status, upstream || 'Not found.');
+  }
+  if (status >= 500) {
+    return new ApiError(status, upstream || 'The service is briefly unavailable. Please try again.');
+  }
+  return new ApiError(status, upstream || 'That request could not be completed.');
 }
 
 export function getHealth() {
@@ -220,6 +258,13 @@ export function assignScoutTier(score: number) {
   return apiFetch<ScoutAssignment>('/v1/scout/assign', {
     method: 'POST',
     body: JSON.stringify({ score }),
+  });
+}
+
+export function revokeScoutTier(address: string) {
+  return apiFetch<ScoutRevocation>('/v1/scout/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ address }),
   });
 }
 

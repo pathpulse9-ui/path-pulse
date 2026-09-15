@@ -14,6 +14,7 @@ import type { SettlementBatch, GroupPayoutBatch } from '@pathpulse/contract';
 import { FRIENDBOT_URL } from '../../lib/stellar';
 import { listSettlementBatches, createSettlementBatch, createGroupPayout } from '../../lib/api';
 import { parseRecipientsFile, type ParsedRecipient } from '../../lib/parseRecipients';
+import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
@@ -50,7 +51,7 @@ const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 export default function SettlementPage() {
   const [batches, setBatches] = useState<SettlementBatch[]>([]);
   const [selected, setSelected] = useState<SettlementBatch | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export default function SettlementPage() {
   const [recipients, setRecipients] = useState<ParsedRecipient[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [payingGroup, setPayingGroup] = useState(false);
-  const [groupError, setGroupError] = useState<string | null>(null);
+  const [groupError, setGroupError] = useState<unknown>(null);
   const [groupResult, setGroupResult] = useState<GroupPayoutBatch | null>(null);
   const [memo, setMemo] = useState('');
   const [payoutAsset, setPayoutAsset] = useState<'XLM' | 'USDC'>('XLM');
@@ -73,7 +74,7 @@ export default function SettlementPage() {
       setBatches(page.items);
       setSelected((cur) => cur ?? page.items[0] ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to reach Backend Core');
+      setError(e ?? 'Failed to reach Backend Core');
     } finally {
       setLoading(false);
     }
@@ -108,7 +109,7 @@ export default function SettlementPage() {
       await load();
       setStatus(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Sample settlement failed');
+      setError(e ?? 'Sample settlement failed');
       setStatus(null);
     } finally {
       setRunning(false);
@@ -204,7 +205,7 @@ export default function SettlementPage() {
           />
         </div>
 
-        {parseError && <p className="text-sm text-red-600">{parseError}</p>}
+        {parseError != null && <ErrorNotice error={parseError} />}
 
         {recipients.length > 0 && (
           <>
@@ -308,7 +309,7 @@ export default function SettlementPage() {
                 : `Pay ${validRecipients.length} recipient${validRecipients.length === 1 ? '' : 's'} (${totalAmount.toFixed(2)} ${payoutAsset})`}
             </button>
 
-            {groupError && <p className="text-sm text-red-600">{groupError}</p>}
+            {groupError != null && <ErrorNotice error={groupError} />}
 
             {groupResult && (
               <div className="rounded-xl border border-green-300 bg-green-50 p-4 text-sm space-y-1">
@@ -382,7 +383,7 @@ export default function SettlementPage() {
         </div>
 
         {status && <p className="text-sm text-black/50">{status}</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error != null && <ErrorNotice error={error} />}
 
         {!error && batches.length === 0 && !loading && !running && (
           <div className="rounded-xl border border-dashed border-black/15 p-8 text-center">

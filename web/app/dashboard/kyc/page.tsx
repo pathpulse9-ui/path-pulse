@@ -322,7 +322,7 @@ export default function KycPage() {
   const stepIdx = STEP_INDEX[page];
 
   return (
-    <div className="min-h-[calc(100vh-6rem)] flex flex-col">
+    <div className="max-w-3xl">
       {/* Toolbar */}
       <div className="flex items-center gap-2 pb-2">
         <button
@@ -368,7 +368,7 @@ export default function KycPage() {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-auto pb-32">
+      <div>
         {page === 'welcome' && (
           <PageShell icon={<ShieldIcon />} title="Let's verify your identity" subtitle="A one-time check so you can withdraw to your bank. Takes about 3 minutes.">
             <ul className="space-y-3 pt-4">
@@ -531,10 +531,10 @@ export default function KycPage() {
         )}
       </div>
 
-      {/* Sticky CTA */}
+      {/* Primary action */}
       {action && (
-        <div className="fixed left-0 right-0 bottom-0 border-t border-black/5 bg-[#F3F7F5]">
-          <div className="max-w-2xl mx-auto px-4 py-3">
+        <div className="sticky bottom-0 mt-6 border-t border-black/5 bg-[#F3F7F5]">
+          <div className="py-3">
             <button
               type="button"
               onClick={performAction}

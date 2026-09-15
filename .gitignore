@@ -50,3 +50,8 @@ ios/DerivedData/
 # one-shot evidence scripts — run locally, not part of the product
 backend/scripts/demo-scout-revocation.ts
 backend/scripts/route-converted-to-settlement.ts
+
+# internal operational docs — not part of the reviewer deliverable
+docs/RUNBOOK.md
+docs/MAINNET_CUTOVER.md
+docs/AWS_COST_AND_KEY_STORAGE.md

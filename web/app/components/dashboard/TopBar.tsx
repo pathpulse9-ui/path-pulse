@@ -9,6 +9,7 @@ import { getHealth } from '../../lib/api';
 import { useSession } from '../../lib/session';
 import { sectionFor } from './sections';
 import { usePageActionsSlot } from './PageActions';
+import { OpsSignIn } from './OpsSignIn';
 import { T } from './typography';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
@@ -72,6 +73,7 @@ export function TopBar() {
             Backend unreachable
           </span>
         )}
+        <OpsSignIn />
 
       <div className="relative" ref={menuRef}>
         {loading ? (

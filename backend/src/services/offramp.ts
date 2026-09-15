@@ -260,7 +260,7 @@ export async function createWithdrawal(
   if (!/^\d+(\.\d{1,7})?$/.test(req.amount) || Number(req.amount) <= 0) {
     throw httpError('amount must be a positive 7-decimal number', 400, 'ValidationError');
   }
-  if (req.settlementBatchId) getSettlementBatch(req.settlementBatchId); // 404 if unknown
+  if (req.settlementBatchId) await getSettlementBatch(req.settlementBatchId); // 404 if unknown
 
   const now = new Date().toISOString();
   const fiatFallback = provider.name === 'carret' ? env.carret.fiat : env.ramp.fiat;

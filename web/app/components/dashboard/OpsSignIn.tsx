@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { opsLogin } from '../../lib/api';
+import { opsLogin, logout } from '../../lib/api';
 import { useSession } from '../../lib/session';
 
 /**
@@ -19,10 +19,21 @@ export function OpsSignIn() {
 
   if (user?.method === 'ops') {
     return (
-      <span className="inline-flex items-center gap-2 rounded-full bg-[#03C394]/15 border border-[#03C394]/30 px-4 h-10 text-sm font-medium text-[#04624A]">
-        <span className="w-1.5 h-1.5 rounded-full bg-[#03C394]" />
-        Operator
-      </span>
+      <button
+        onClick={async () => {
+          setSubmitting(true);
+          await logout();
+          await refresh();
+          setSubmitting(false);
+        }}
+        disabled={submitting}
+        title="End the operator session"
+        className="group inline-flex items-center gap-2 rounded-full bg-[#03C394]/15 border border-[#03C394]/30 px-4 h-10 text-sm font-medium text-[#04624A] hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors duration-200 disabled:opacity-50"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-[#03C394] group-hover:bg-red-500" />
+        <span className="group-hover:hidden">{submitting ? 'Exiting…' : 'Operator'}</span>
+        <span className="hidden group-hover:inline">Exit operator</span>
+      </button>
     );
   }
 
