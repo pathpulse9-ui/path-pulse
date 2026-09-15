@@ -70,6 +70,24 @@ export async function saveBatch(batch: SettlementBatch): Promise<void> {
   );
 }
 
+/**
+ * Link an already-persisted settlement to the payout batch that fans out its
+ * driver-rewards slice. Separate from `saveBatch` because the settlement row is
+ * written the moment the on-chain split confirms — before the payout provider
+ * is called — so the record can never be lost to a downstream provider failure.
+ */
+export async function attachPayoutBatch(batchId: string, payoutBatchId: string): Promise<void> {
+  if (!hasDb()) {
+    const row = inMemory.find((b) => b.id === batchId);
+    if (row) row.payoutBatchId = payoutBatchId;
+    return;
+  }
+  await db().query('update settlement_batches set payout_batch_id = $2 where id = $1', [
+    batchId,
+    payoutBatchId,
+  ]);
+}
+
 export async function listBatches(query: BatchQuery = {}): Promise<SettlementBatchPage> {
   const size = Math.min(Math.max(1, query.limit ?? 50), 100);
 

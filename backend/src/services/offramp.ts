@@ -294,14 +294,26 @@ async function refresh(session: OffRampSession): Promise<OffRampSession> {
   return session;
 }
 
-export async function getWithdrawal(id: string): Promise<OffRampSession> {
+/**
+ * Sessions are per-driver: a caller may only read their own. An id owned by
+ * someone else is reported as 404 rather than 403 so the endpoint doesn't
+ * confirm that the id exists.
+ */
+export async function getWithdrawal(id: string, userId: string): Promise<OffRampSession> {
   const s = sessions.get(id);
-  if (!s) throw httpError(`Off-ramp session ${id} not found`, 404, 'NotFound');
+  if (!s || (s as SessionInternal).ppUserId !== userId) {
+    throw httpError(`Off-ramp session ${id} not found`, 404, 'NotFound');
+  }
   return refresh(s);
 }
 
-export async function listWithdrawals(cursor?: string, limit = 50): Promise<OffRampSessionPage> {
-  const all = await Promise.all([...sessions.values()].map(refresh));
+export async function listWithdrawals(
+  userId: string,
+  cursor?: string,
+  limit = 50,
+): Promise<OffRampSessionPage> {
+  const owned = [...sessions.values()].filter((s) => (s as SessionInternal).ppUserId === userId);
+  const all = await Promise.all(owned.map(refresh));
   all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
   const size = Math.min(Math.max(1, limit), 100);

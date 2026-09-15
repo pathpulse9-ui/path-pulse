@@ -14,8 +14,9 @@ import { horizon } from './network.js';
 import { provisionManagedWallet, getManagedSigner } from './managed.js';
 import { getOnchainTier } from './scout.js';
 import { createPayoutBatch } from '../services/payouts.js';
-import { saveBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
+import { saveBatch, attachPayoutBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
 import { assertMainnetAllowed } from './networkGuard.js';
+import { logger } from '../config/logger.js';
 
 /**
  * Deterministic 50 / 30 / 20 settlement engine (D6).
@@ -164,7 +165,6 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
   }));
 
   const batchId = `stl_${Date.now()}_${randomBytes(4).toString('hex')}`;
-  const payoutBatch = await createPayoutBatch(driverPayouts, ref, { settlementBatchId: batchId });
 
   const batch: SettlementBatch = {
     id: batchId,
@@ -184,9 +184,32 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     treasuryAddress,
     txHash: res.hash,
     horizonUrl: horizonTxUrl(res.hash),
-    payoutBatchId: payoutBatch.id,
   };
+
+  // Persist BEFORE handing the driver slice to the payout provider. The split is
+  // already irreversible on-chain at this point, so if the provider call fails
+  // (or the process dies) the batch must still be in the indexer to reconcile
+  // against — otherwise funds have moved with no record that they did.
   await saveBatch(batch);
+
+  try {
+    const payoutBatch = await createPayoutBatch(driverPayouts, ref, { settlementBatchId: batchId });
+    batch.payoutBatchId = payoutBatch.id;
+    await attachPayoutBatch(batchId, payoutBatch.id);
+  } catch (e) {
+    logger.error(
+      { err: e, batchId, txHash: res.hash },
+      'settlement settled on-chain but payout batch creation failed — batch persisted, driver fan-out needs reconciliation',
+    );
+    throw httpError(
+      `Settlement ${batchId} settled on-chain (tx ${res.hash}) but the driver payout batch failed: ` +
+        `${(e as Error).message}. The settlement is recorded — retry the fan-out with ` +
+        `POST /v1/ops/payouts/batches {"settlementBatchId":"${batchId}"}.`,
+      502,
+      'PayoutProviderUnavailable',
+    );
+  }
+
   return batch;
 }
 

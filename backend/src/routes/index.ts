@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type {
   HealthResponse,
@@ -9,6 +9,8 @@ import type {
   WalletVerifyRequest,
   WalletVerifyResponse,
   GuestSessionResponse,
+  PartnerLoginResponse,
+  OpsLoginResponse,
   AuthMeResponse,
   BuildTransactionRequest,
   SettlementBatch,
@@ -63,6 +65,7 @@ import {
 import { carretLive } from '../config/env.js';
 import { getMapping, upsertMapping, markWalletWhitelisted } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
+import { requireSession, requireRole } from '../middleware/requireSession.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
 import multer from 'multer';
 import { assignSampleTier, getOnchainTier, getScoutConfig } from '../stellar/scout.js';
@@ -146,7 +149,7 @@ router.get('/v1/treasury/config', async (_req, res, next) => {
  * Stellar Laboratory and signs it out-of-band. The backend never auto-signs
  * treasury reconfiguration.
  */
-router.post('/v1/treasury/multisig/build', async (_req, res, next) => {
+router.post('/v1/treasury/multisig/build', requireRole('ops'), async (_req, res, next) => {
   try {
     res.json(await buildTreasuryMultisigTx());
   } catch (e) {
@@ -223,6 +226,51 @@ router.post('/v1/auth/guest', (_req, res) => {
   res.json(body);
 });
 
+/** Constant-time passcode compare — avoids leaking match length via timing. */
+function passcodeMatches(supplied: string, expected: string): boolean {
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Gov Settlement Gateway (D8): partner access gate. Shared passcode issued
+// out-of-band to government/partner reviewers — not a per-user identity,
+// just a wall between the public internet and the transparency dashboard.
+router.post('/v1/auth/partner/login', (req, res) => {
+  const { passcode } = req.body as { passcode?: string };
+  if (!env.govPartnerPasscode) {
+    res.status(500).json({ error: 'ConfigError', message: 'GOV_PARTNER_PASSCODE not configured' });
+    return;
+  }
+  if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.govPartnerPasscode)) {
+    res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
+    return;
+  }
+  const userId = `partner_${randomUUID()}`;
+  setSessionCookie(res, { userId, method: 'partner' });
+  const body: PartnerLoginResponse = { userId };
+  res.json(body);
+});
+
+// Operator gate. Everything that moves protocol funds (settlement, group
+// payout, SDP fan-out, SCOUT issuance, treasury reconfiguration) requires this
+// session method — a driver's ordinary session is deliberately not enough.
+router.post('/v1/auth/ops/login', (req, res) => {
+  const { passcode } = req.body as { passcode?: string };
+  if (!env.opsPasscode) {
+    res.status(500).json({ error: 'ConfigError', message: 'OPS_PASSCODE not configured' });
+    return;
+  }
+  if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.opsPasscode)) {
+    res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
+    return;
+  }
+  const userId = `ops_${randomUUID()}`;
+  setSessionCookie(res, { userId, method: 'ops' });
+  const body: OpsLoginResponse = { userId };
+  res.json(body);
+});
+
 router.get('/v1/auth/me', (req, res) => {
   const session = getSessionFromRequest(req);
   const body: AuthMeResponse = {
@@ -264,7 +312,7 @@ router.post('/v1/tx/submit', async (req, res, next) => {
 });
 
 // Settlement engine (D6): execute a 50/30/20 batch, list + drill down.
-router.post('/v1/settlement/batches', idempotency(), async (req, res, next) => {
+router.post('/v1/settlement/batches', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createSettlementSchema.parse(req.body);
     res.json(await executeSettlementBatch(parsed));
@@ -374,7 +422,7 @@ const createGroupPayoutSchema = z.object({
 });
 
 
-router.post('/v1/settlement/group-payouts', idempotency(), async (req, res, next) => {
+router.post('/v1/settlement/group-payouts', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createGroupPayoutSchema.parse(req.body);
     res.json(await executeGroupPayout(parsed));
@@ -403,7 +451,7 @@ router.get('/v1/settlement/group-payouts/:id', async (req, res, next) => {
 
 const createPayoutBatchSchema = z.object({ settlementBatchId: z.string().min(1) });
 
-router.post('/v1/ops/payouts/batches', idempotency(), async (req, res, next) => {
+router.post('/v1/ops/payouts/batches', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
     const settlementBatch = await getSettlementBatch(settlementBatchId);
@@ -465,17 +513,16 @@ router.get('/v1/offramp/quotes', async (req, res, next) => {
   }
 });
 
-router.post('/v1/offramp/sessions', idempotency(), async (req, res, next) => {
+router.post('/v1/offramp/sessions', requireSession(), idempotency(), async (req, res, next) => {
   try {
     const parsed = createWithdrawalSchema.parse(req.body);
-    const session = getSessionFromRequest(req);
-    const userId = session?.userId ?? 'sandbox-user';
+    const session = getSessionFromRequest(req)!;
     const userIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined;
     res.json(
-      await createWithdrawal(userId, parsed, {
-        email: session?.email,
+      await createWithdrawal(session.userId, parsed, {
+        email: session.email,
         userIp,
-        userAddress: session?.address,
+        userAddress: session.address,
       }),
     );
   } catch (e) {
@@ -483,19 +530,19 @@ router.post('/v1/offramp/sessions', idempotency(), async (req, res, next) => {
   }
 });
 
-router.get('/v1/offramp/sessions', async (req, res, next) => {
+router.get('/v1/offramp/sessions', requireSession(), async (req, res, next) => {
   try {
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    res.json(await listWithdrawals(cursor, limit));
+    res.json(await listWithdrawals(getSessionFromRequest(req)!.userId, cursor, limit));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/offramp/sessions/:id', async (req, res, next) => {
+router.get('/v1/offramp/sessions/:id', requireSession(), async (req, res, next) => {
   try {
-    res.json(await getWithdrawal(req.params.id));
+    res.json(await getWithdrawal(req.params.id, getSessionFromRequest(req)!.userId));
   } catch (e) {
     next(e);
   }
@@ -563,7 +610,7 @@ router.get('/v1/scout', async (_req, res, next) => {
   }
 });
 
-router.post('/v1/scout/assign', async (req, res, next) => {
+router.post('/v1/scout/assign', requireRole('ops'), async (req, res, next) => {
   try {
     const { score } = assignScoutSchema.parse(req.body);
     res.json(await assignSampleTier(score));
@@ -721,7 +768,7 @@ router.get('/v1/carret/limits', async (req, res, next) => {
   }
 });
 
-router.post('/v1/carret/subaccount', async (req, res, next) => {
+router.post('/v1/carret/subaccount', requireSession(), async (req, res, next) => {
   try {
     const parsed = createSubAccountSchema.parse(req.body);
     const clientIp =
@@ -751,7 +798,7 @@ router.post('/v1/carret/subaccount', async (req, res, next) => {
 
 const initiateKycSchema = z.object({ account_id: z.union([z.number(), z.string()]) });
 
-router.post('/v1/carret/kyc/initiate', async (req, res, next) => {
+router.post('/v1/carret/kyc/initiate', requireSession(), async (req, res, next) => {
   try {
     const { account_id } = initiateKycSchema.parse(req.body);
     res.json(await initiateKyc(account_id));
@@ -773,7 +820,7 @@ const submitDocSchema = z.object({
   }),
 });
 
-router.post('/v1/carret/kyc/document', async (req, res, next) => {
+router.post('/v1/carret/kyc/document', requireSession(), async (req, res, next) => {
   try {
     const { kyc_session_id, document } = submitDocSchema.parse(req.body);
     res.json(await submitKycDocument({ kycSessionId: kyc_session_id, document }));
@@ -786,6 +833,7 @@ router.post('/v1/carret/kyc/document', async (req, res, next) => {
 // alongside the JSON-ish fields (kyc_session, doc_type, file_type).
 router.post(
   '/v1/carret/kyc/file',
+  requireSession(),
   kycUpload.fields([
     { name: 'doc_front', maxCount: 1 },
     { name: 'doc_back', maxCount: 1 },
@@ -833,7 +881,7 @@ router.post(
   },
 );
 
-router.get('/v1/carret/kyc/status/:accountId', async (req, res, next) => {
+router.get('/v1/carret/kyc/status/:accountId', requireSession(), async (req, res, next) => {
   try {
     res.json(await getKycStatus(req.params.accountId));
   } catch (e) {
@@ -841,7 +889,7 @@ router.get('/v1/carret/kyc/status/:accountId', async (req, res, next) => {
   }
 });
 
-router.post('/v1/carret/kyc/cleanup', async (req, res, next) => {
+router.post('/v1/carret/kyc/cleanup', requireSession(), async (req, res, next) => {
   try {
     const { account_id } = initiateKycSchema.parse(req.body);
     res.json(await cleanupKyc(account_id));

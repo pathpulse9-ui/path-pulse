@@ -118,6 +118,10 @@ export const env = {
     maxAgeSeconds: 7 * 24 * 60 * 60,
   },
 
+  govPartnerPasscode: process.env.GOV_PARTNER_PASSCODE ?? '',
+
+  opsPasscode: process.env.OPS_PASSCODE ?? '',
+
   sep10: {
     signingSecret: process.env.SEP10_SIGNING_SECRET ?? '',
     homeDomain: process.env.SEP10_HOME_DOMAIN ?? 'localhost:8080',
@@ -206,10 +210,56 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be set in production');
 }
 
+if (process.env.NODE_ENV === 'production' && !process.env.GOV_PARTNER_PASSCODE) {
+  throw new Error('GOV_PARTNER_PASSCODE must be set in production');
+}
+
+if (process.env.NODE_ENV === 'production' && !process.env.OPS_PASSCODE) {
+  throw new Error('OPS_PASSCODE must be set in production');
+}
+
 export const isMainnet = env.network === 'mainnet';
 
-if (isMainnet && env.signerBackend === 'dev') {
-  throw new Error('SIGNER_BACKEND=dev is prohibited on mainnet — set SIGNER_BACKEND=aws-kms');
+/**
+ * Mainnet preflight (D7). Every one of these is a way the cutover can go wrong
+ * quietly — an in-memory settlement store that loses batches on the next
+ * deploy, an unset distribution account that sends a real 50% share nowhere, a
+ * KMS backend with no key id. Failing at boot is the whole point: a mainnet
+ * deploy that starts is a mainnet deploy someone will send funds through.
+ */
+if (isMainnet) {
+  const problems: string[] = [];
+
+  if (env.signerBackend === 'dev') {
+    problems.push('SIGNER_BACKEND=dev is prohibited on mainnet — set SIGNER_BACKEND=aws-kms');
+  }
+  if (env.signerBackend === 'aws-kms' && !env.kms.keyId) {
+    problems.push('SIGNER_BACKEND=aws-kms requires KMS_KEY_ID');
+  }
+  if (!env.databaseUrl) {
+    problems.push(
+      'DATABASE_URL is required on mainnet — without it settlement batches fall back to an ' +
+        'in-memory store and are lost on restart',
+    );
+  }
+  for (const [name, value] of [
+    ['PARTNER_REVENUE_PUBLIC', env.distribution.partnerRevenue],
+    ['DRIVER_POOL_PUBLIC', env.distribution.driverPool],
+    ['TREASURY_PUBLIC', env.distribution.treasury],
+  ] as const) {
+    if (!value) problems.push(`${name} must be set on mainnet`);
+  }
+  if (!process.env.SESSION_SECRET) problems.push('SESSION_SECRET must be set on mainnet');
+  if (!env.opsPasscode) problems.push('OPS_PASSCODE must be set on mainnet');
+  if (env.carret.allowTestnet) {
+    problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');
+  }
+
+  if (problems.length) {
+    throw new Error(
+      `Refusing to start on mainnet — ${problems.length} configuration problem(s):\n  - ${problems.join('\n  - ')}`,
+    );
+  }
 }
 export const horizonTxUrl = (hash: string) =>
   `https://stellar.expert/explorer/${env.network === 'testnet' ? 'testnet' : 'public'}/tx/${hash}`;
