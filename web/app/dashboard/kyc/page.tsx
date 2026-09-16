@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 /**
  * Same shape as useState<string> but round-trips through localStorage under
@@ -105,6 +106,7 @@ function minDobIso(): string {
 }
 
 export default function KycPage() {
+  const router = useRouter();
   // Every field the user types is persisted to localStorage under `kyc_*`
   // so that reloading, dismissing the tab, or a backend error never wipes
   // their progress. Files (Aadhaar + selfie) are the only exception —
@@ -638,7 +640,13 @@ export default function KycPage() {
             title="You're verified"
             subtitle="All set. You can now withdraw your USDC rewards to your bank."
             primary="Start using PathPulse"
-            onPrimary={() => { clearDraft(); }}
+            onPrimary={() => {
+              // Wizard's done — clear the local draft so a future revisit
+              // doesn't reopen on the Verified page, then land the driver
+              // where verified drivers actually go: the withdrawal tab.
+              clearDraft();
+              router.push('/dashboard/offramp');
+            }}
           />
         )}
 
