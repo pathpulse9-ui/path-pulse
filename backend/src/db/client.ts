@@ -125,7 +125,9 @@ create table if not exists carret_subaccounts (
 -- (existing rows stay NULL until they see an update). Indexed for the
 -- lower(email) lookup in getMappingByEmail.
 alter table carret_subaccounts add column if not exists email text;
+alter table carret_subaccounts add column if not exists phone text;
 create index if not exists carret_subaccounts_email_lower_idx on carret_subaccounts (lower(email));
+create index if not exists carret_subaccounts_phone_idx on carret_subaccounts (phone);
 -- Drop the accidental UNIQUE on carret_account_id — many userIds can
 -- legitimately point at the same Carret account (that's the whole
 -- point of cross-session resume: same driver, new install / cookie,

@@ -63,7 +63,10 @@ import {
   whitelistWallet,
 } from '../services/carret.js';
 import { carretLive } from '../config/env.js';
-import { getMapping, getMappingByEmail, upsertMapping, markWalletWhitelisted } from '../services/carretSubAccountStore.js';
+import {
+  getMapping, getMappingByEmail, getMappingByPhone,
+  upsertMapping, markWalletWhitelisted,
+} from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
@@ -751,16 +754,22 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
 
     const parsed = createSubAccountSchema.parse(req.body);
 
-    // Step 2 — different session but same email → adopt.
-    const byEmail = await getMappingByEmail(parsed.email);
-    if (byEmail) {
+    // Step 2 — different session but same email OR same phone → adopt.
+    // Carret rejects duplicates on both (`user with this email already
+    // exists` and `A user with that username already exists` — where
+    // "username" is derived from phone), so we look up on either.
+    const adoptedRow =
+      (await getMappingByEmail(parsed.email)) ??
+      (await getMappingByPhone(parsed.phone_number));
+    if (adoptedRow) {
       const adopted = await upsertMapping({
         userId: session.userId,
-        carretAccountId: byEmail.carretAccountId,
-        referenceId: byEmail.referenceId,
-        kycStatus: byEmail.kycStatus,
-        walletWhitelistedAt: byEmail.walletWhitelistedAt,
+        carretAccountId: adoptedRow.carretAccountId,
+        referenceId: adoptedRow.referenceId,
+        kycStatus: adoptedRow.kycStatus,
+        walletWhitelistedAt: adoptedRow.walletWhitelistedAt,
         email: parsed.email,
+        phone: parsed.phone_number,
       });
       res.json({
         carretAccountId: adopted.carretAccountId,
@@ -770,7 +779,7 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
       return;
     }
 
-    // Step 3 — genuinely new user + email → create.
+    // Step 3 — genuinely new user + email + phone → create.
     const clientIp =
       (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
       req.socket.remoteAddress ||
@@ -785,6 +794,7 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
       referenceId: account.reference_id,
       kycStatus: account.kyc_status,
       email: parsed.email,
+      phone: parsed.phone_number,
     });
     res.json({
       carretAccountId: mapping.carretAccountId,

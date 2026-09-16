@@ -28,6 +28,13 @@ export interface CarretMapping {
    * but the driver returns with the same email).
    */
   email?: string;
+  /**
+   * Phone the sub-account was registered with on Carret. Same purpose
+   * as `email` above — Carret rejects duplicates on BOTH fields (the
+   * phone becomes their `username`), so we need to be able to resume
+   * on either.
+   */
+  phone?: string;
 }
 
 const memoryStore = new Map<string, CarretMapping>();
@@ -44,13 +51,14 @@ function rowToMapping(r: Record<string, unknown>): CarretMapping {
     kycStatus: r.kyc_status as CarretMapping['kycStatus'],
     walletWhitelistedAt: (r.wallet_whitelisted_at as Date | null)?.toISOString(),
     email: (r.email as string | null) ?? undefined,
+    phone: (r.phone as string | null) ?? undefined,
   };
 }
 
 export async function getMapping(userId: string): Promise<CarretMapping | null> {
   if (!hasDb()) return memoryStore.get(userId) ?? null;
   const res = await db().query(
-    'select user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email from carret_subaccounts where user_id = $1',
+    'select user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email, phone from carret_subaccounts where user_id = $1',
     [userId],
   );
   const r = res.rows[0];
@@ -74,7 +82,30 @@ export async function getMappingByEmail(email: string): Promise<CarretMapping | 
     return null;
   }
   const res = await db().query(
-    'select user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email from carret_subaccounts where lower(email) = $1 limit 1',
+    'select user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email, phone from carret_subaccounts where lower(email) = $1 limit 1',
+    [needle],
+  );
+  const r = res.rows[0];
+  return r ? rowToMapping(r) : null;
+}
+
+/**
+ * Look up by phone number (bare 10 digits). Carret rejects duplicate
+ * phones with a `username already exists` error just as it does for
+ * email, so we need this second index to complete the cross-session
+ * adopt path.
+ */
+export async function getMappingByPhone(phone: string): Promise<CarretMapping | null> {
+  const needle = phone.replace(/\D/g, '');
+  if (!needle) return null;
+  if (!hasDb()) {
+    for (const m of memoryStore.values()) {
+      if (m.phone && m.phone.replace(/\D/g, '') === needle) return m;
+    }
+    return null;
+  }
+  const res = await db().query(
+    'select user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email, phone from carret_subaccounts where phone = $1 limit 1',
     [needle],
   );
   const r = res.rows[0];
@@ -89,18 +120,21 @@ export async function upsertMapping(m: CarretMapping): Promise<CarretMapping> {
   }
   await db().query(
     `insert into carret_subaccounts
-       (user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email, updated_at)
-     values ($1, $2, $3, $4, $5, $6, now())
+       (user_id, carret_account_id, reference_id, kyc_status, wallet_whitelisted_at, email, phone, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, now())
      on conflict (user_id) do update set
        carret_account_id     = excluded.carret_account_id,
        reference_id          = excluded.reference_id,
        kyc_status            = excluded.kyc_status,
        wallet_whitelisted_at = coalesce(carret_subaccounts.wallet_whitelisted_at, excluded.wallet_whitelisted_at),
        email                 = coalesce(excluded.email, carret_subaccounts.email),
+       phone                 = coalesce(excluded.phone, carret_subaccounts.phone),
        updated_at            = now()`,
     [
       m.userId, m.carretAccountId, m.referenceId ?? null, m.kycStatus,
-      m.walletWhitelistedAt ?? null, m.email?.trim().toLowerCase() ?? null,
+      m.walletWhitelistedAt ?? null,
+      m.email?.trim().toLowerCase() ?? null,
+      m.phone?.replace(/\D/g, '') || null,
     ],
   );
   return m;
