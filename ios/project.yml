@@ -57,10 +57,11 @@ targets:
           - UIInterfaceOrientationPortrait
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
-        # Google Sign-In URL scheme — replace with your reversed client id once wired.
-        # CFBundleURLTypes:
-        #   - CFBundleURLSchemes:
-        #       - com.googleusercontent.apps.195179237561-jce7rmr4ou8jf2lsvt8lthv0q5h52o5a
+        # Google Sign-In URL scheme — reversed iOS OAuth client id
+        # (see ios/PathPulse/Config.swift → googleIOSClientID).
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - com.googleusercontent.apps.151282836945-allp3gs1fkm8n37a9dlf2doctn7tlssr
         # Allow http://localhost:8080 for local backend dev (production traffic is HTTPS).
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

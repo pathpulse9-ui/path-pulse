@@ -31,7 +31,7 @@ enum Config {
     ///
     /// While this is the placeholder value below, the Google button in `SignInView`
     /// stays disabled with a helpful message. Guest sign-in still works.
-    static let googleIOSClientID = "REPLACE_WITH_IOS_OAUTH_CLIENT_ID.apps.googleusercontent.com"
+    static let googleIOSClientID = "151282836945-allp3gs1fkm8n37a9dlf2doctn7tlssr.apps.googleusercontent.com"
 
     /// True once the iOS client id has been filled in — used by `SignInView` to gate
     /// the Google button without crashing.
