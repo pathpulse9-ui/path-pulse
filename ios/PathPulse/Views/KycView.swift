@@ -202,20 +202,40 @@ struct KycView: View {
     @MainActor private func attemptResume() async {
         // Session cookie may be seeded lazily on first request; give it a
         // beat before we call. Cheap; no user-visible delay.
-        guard let resumed = try? await data.resumeCarretKyc() else { return }
+        let resumed = try? await data.resumeCarretKyc()
+
+        // The wizard's page is persisted to @AppStorage. Terminal pages
+        // (.checking / .verified / .rejected) survive an app relaunch even
+        // when the backend has no mapping any more — a stale .checking
+        // leaves the driver watching a spinner that will never turn.
+        // If we can't back the terminal page with an authoritative status
+        // from the backend, snap to .welcome so the wizard is usable again.
+        let isTerminal = page == .checking || page == .verified || page == .rejected
+        guard let resumed else {
+            if isTerminal { page = .welcome; error = nil }
+            return
+        }
+
         if accountId.isEmpty { accountId = resumed.carretAccountId }
         if email.isEmpty, let e = resumed.email { email = e }
         switch resumed.kycStatus {
-        case "verified": page = .verified
-        case "rejected": page = .rejected
+        case "verified":
+            page = .verified
+        case "rejected", "re_kyc":
+            // Carret's post-cleanup / post-failure state — driver has to
+            // restart the KYC session from scratch. Route to the Rejected
+            // outcome so they see the Start over CTA rather than a stuck
+            // spinner or a mid-flow page.
+            page = .rejected
         case "manual_review":
-            // Polling the status page will pick this up and route accordingly.
             page = .checking
             startPolling()
         default:
             // pending — leave the wizard where the driver last was so they
-            // pick up mid-flow.
-            break
+            // pick up mid-flow. Exception: if the persisted page is
+            // .checking, kick off polling so the spinner actually resolves.
+            if page == .checking { startPolling() }
+            else if isTerminal { page = .welcome }  // .verified/.rejected leftover
         }
     }
 
