@@ -135,6 +135,19 @@ export default function KycPage() {
   const [panName,   setPanName]   = usePersistedString('kyc_panName', '');
   const [panDobIso, setPanDobIso] = usePersistedString('kyc_panDobIso', '');
 
+  // Secondary ID (Aadhaar / Voter ID / Passport / Driving License) — mirror
+  // of the iOS wizard's Secondary state. Aadhaar is XML/file, the rest are
+  // number-based via /kyc/document/submit/.
+  const [secondaryTypeRaw, setSecondaryTypeRaw] = usePersistedString('kyc_secondaryType', 'aadhaar');
+  const secondaryType = secondaryTypeRaw as SecondaryDocType;
+  const setSecondaryType = (t: SecondaryDocType) => setSecondaryTypeRaw(t);
+  const [secondaryNumber,        setSecondaryNumber]        = usePersistedString('kyc_secondaryNumber', '');
+  const [secondaryName,          setSecondaryName]          = usePersistedString('kyc_secondaryName', '');
+  const [secondaryDobIso,        setSecondaryDobIso]        = usePersistedString('kyc_secondaryDobIso', '');
+  const [secondarySurname,       setSecondarySurname]       = usePersistedString('kyc_secondarySurname', '');
+  const [secondaryFileNumber,    setSecondaryFileNumber]    = usePersistedString('kyc_secondaryFileNumber', '');
+  const [secondaryDateOfIssueIso, setSecondaryDateOfIssueIso] = usePersistedString('kyc_secondaryIssueIso', '');
+
   function clearDraft() {
     for (const k of [
       'kyc_page', 'kyc_accountId', 'kyc_sessionId',
@@ -142,6 +155,9 @@ export default function KycPage() {
       'kyc_dialCode', 'kyc_country', 'kyc_dobIso',
       'kyc_gender', 'kyc_occupation', 'kyc_income',
       'kyc_panNumber', 'kyc_panName', 'kyc_panDobIso',
+      'kyc_secondaryType', 'kyc_secondaryNumber', 'kyc_secondaryName',
+      'kyc_secondaryDobIso', 'kyc_secondarySurname',
+      'kyc_secondaryFileNumber', 'kyc_secondaryIssueIso',
     ]) {
       try { window.localStorage.removeItem(k); } catch { /* ignore */ }
     }
@@ -155,12 +171,17 @@ export default function KycPage() {
     setGenderRaw('male');
     setOccupation('Business Owner'); setIncome('₹5 Lakhs-₹10 Lakhs');
     setPanNumber(''); setPanName(''); setPanDobIso('');
+    setSecondaryTypeRaw('aadhaar');
+    setSecondaryNumber(''); setSecondaryName(''); setSecondaryDobIso('');
+    setSecondarySurname(''); setSecondaryFileNumber(''); setSecondaryDateOfIssueIso('');
   }
 
   // Files
+  const panFileRef     = useRef<HTMLInputElement>(null);
   const aadhaarFileRef = useRef<HTMLInputElement>(null);
-  const selfieFileRef = useRef<HTMLInputElement>(null);
-  const [aadhaarName, setAadhaarName] = useState<string>('');
+  const selfieFileRef  = useRef<HTMLInputElement>(null);
+  const [panFileName,   setPanFileName]   = useState<string>('');
+  const [aadhaarName,   setAadhaarName]   = useState<string>('');
   const [selfieName, setSelfieName] = useState<string>('');
 
   // Poll
@@ -211,31 +232,61 @@ export default function KycPage() {
     }
   }
 
-  async function doSubmitPan(): Promise<boolean> {
+  /** Carret's idempotent-"already-added" reply — treat as success. */
+  function isAlreadyAdded(e: unknown): boolean {
+    const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+    return m.includes('already added') || m.includes('already exists in pending');
+  }
+
+  async function doUploadPan(): Promise<boolean> {
+    const file = panFileRef.current?.files?.[0];
+    if (!file) { setError('Choose a PAN photo first.'); return false; }
     try {
-      await submitCarretKycDocument(sessionId, {
-        document_type: 'pan',
-        document_number: panNumber.toUpperCase(),
-        name: panName,
-        dob: panDob,
-      });
+      await uploadCarretKycFile({ kycSession: sessionId, docType: 'pan', fileType: 'image', file });
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'PAN submission failed');
+      if (isAlreadyAdded(e)) return true;
+      setError(e instanceof Error ? e.message : 'PAN upload failed');
       return false;
     }
   }
 
-  async function doUploadAadhaar(): Promise<boolean> {
-    const file = aadhaarFileRef.current?.files?.[0];
-    if (!file) { setError('Choose an Aadhaar file first.'); return false; }
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-    const fileType = ext === 'xml' || ext === 'zip' ? 'xml' : 'image';
+  async function doSubmitSecondary(): Promise<boolean> {
     try {
-      await uploadCarretKycFile({ kycSession: sessionId, docType: 'aadhaar', fileType, file });
+      if (secondaryType === 'aadhaar') {
+        const file = aadhaarFileRef.current?.files?.[0];
+        if (!file) { setError('Choose an Aadhaar file first.'); return false; }
+        const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+        const fileType = ext === 'xml' || ext === 'zip' ? 'xml' : 'image';
+        await uploadCarretKycFile({ kycSession: sessionId, docType: 'aadhaar', fileType, file });
+      } else if (secondaryType === 'voter_id') {
+        await submitCarretKycDocument(sessionId, {
+          document_type: 'voter_id',
+          document_number: secondaryNumber.toUpperCase(),
+          name: secondaryName,
+        });
+      } else if (secondaryType === 'driving_license') {
+        await submitCarretKycDocument(sessionId, {
+          document_type: 'driving_license',
+          document_number: secondaryNumber.toUpperCase(),
+          name: secondaryName,
+          dob: formatDob(secondaryDobIso),
+        });
+      } else if (secondaryType === 'passport') {
+        await submitCarretKycDocument(sessionId, {
+          document_type: 'passport',
+          document_number: secondaryNumber.toUpperCase(),
+          name: secondaryName,
+          dob: formatDob(secondaryDobIso),
+          surname_from_passport: secondarySurname,
+          file_number: secondaryFileNumber,
+          date_of_issue: formatDob(secondaryDateOfIssueIso),
+        });
+      }
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Aadhaar upload failed');
+      if (isAlreadyAdded(e)) return true;
+      setError(e instanceof Error ? e.message : 'Secondary ID submission failed');
       return false;
     }
   }
@@ -247,6 +298,7 @@ export default function KycPage() {
       await uploadCarretKycFile({ kycSession: sessionId, docType: 'selfie', fileType: 'image', file });
       return true;
     } catch (e) {
+      if (isAlreadyAdded(e)) return true;
       setError(e instanceof Error ? e.message : 'Selfie upload failed');
       return false;
     }
@@ -283,8 +335,8 @@ export default function KycPage() {
             if (initiated) setPage('pan');
           }
           break;
-        case 'pan':      if (await doSubmitPan()) setPage('aadhaar'); break;
-        case 'aadhaar':  if (await doUploadAadhaar()) setPage('selfie'); break;
+        case 'pan':      if (await doUploadPan()) setPage('aadhaar'); break;
+        case 'aadhaar':  if (await doSubmitSecondary()) setPage('selfie'); break;
         case 'selfie':
           if (await doUploadSelfie()) setPage('checking');
           break;
@@ -306,7 +358,7 @@ export default function KycPage() {
         if (!accountId) setAccountId(r.carretAccountId);
         if (!email && r.email) setEmail(r.email);
         if (r.kycStatus === 'verified') setPage('verified');
-        else if (r.kycStatus === 'rejected') setPage('rejected');
+        else if (r.kycStatus === 'rejected' || (r.kycStatus as string) === 're_kyc') setPage('rejected');
         else if (r.kycStatus === 'manual_review') setPage('checking');
       } catch { /* silent — driver just starts fresh */ }
     })();
@@ -340,8 +392,17 @@ export default function KycPage() {
       case 'contact':  return email.includes('@') && phone.length === 10;
       case 'bornWhen': return !!dobIso;
       case 'about':    return true;
-      case 'pan':      return panNumber.length >= 10 && !!panName && !!panDobIso;
-      case 'aadhaar':  return !!aadhaarName;
+      case 'pan':      return !!panFileName;
+      case 'aadhaar':
+        switch (secondaryType) {
+          case 'aadhaar':         return !!aadhaarName;
+          case 'voter_id':        return !!secondaryNumber && !!secondaryName;
+          case 'driving_license': return !!secondaryNumber && !!secondaryName && !!secondaryDobIso;
+          case 'passport':
+            return !!secondaryNumber && !!secondaryName && !!secondarySurname
+                && !!secondaryFileNumber && !!secondaryDobIso && !!secondaryDateOfIssueIso;
+        }
+        return false;
       case 'selfie':   return !!selfieName;
       default:         return false;
     }
@@ -403,8 +464,8 @@ export default function KycPage() {
           <PageShell icon={<ShieldIcon />} title="Let's verify your identity" subtitle="A one-time check so you can withdraw to your bank. Takes about 3 minutes.">
             <ul className="space-y-3 pt-4">
               <BulletItem>Your name & basic details</BulletItem>
-              <BulletItem>PAN card</BulletItem>
-              <BulletItem>Aadhaar (from DigiLocker, or a photo)</BulletItem>
+              <BulletItem>A photo of your PAN card</BulletItem>
+              <BulletItem>One more ID: Aadhaar, Voter ID, Passport, or DL</BulletItem>
               <BulletItem>A quick selfie</BulletItem>
             </ul>
           </PageShell>
@@ -460,38 +521,52 @@ export default function KycPage() {
         )}
 
         {page === 'pan' && (
-          <PageShell icon={<CardIcon />} title="Enter your PAN card" subtitle="Copy these exactly as printed on the card — name spelling and DOB must match India's tax records.">
+          <PageShell icon={<CardIcon />} title="Upload your PAN card" subtitle="Snap a clear photo of the front of your PAN card — Carret extracts the number, name, and DOB from the image.">
             <div className="space-y-3 pt-4">
-              <BigField label="PAN number (10 characters)" value={panNumber} onChange={(v) => setPanNumber(v.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} />
-              <BigField label="Name on card" value={panName} onChange={setPanName} placeholder="e.g. RAHUL KUMAR SHARMA" />
-              <DatePickerField label="Date of birth" iso={panDobIso} onIso={setPanDobIso} />
+              <DropZone
+                icon={panFileName ? <CheckCircleIcon /> : <CameraIcon />}
+                title={panFileName || 'Choose PAN photo'}
+                subtitle={panFileName ? 'Ready to upload' : 'JPG, PNG, or PDF — front of the card'}
+                selected={!!panFileName}
+                onClick={() => panFileRef.current?.click()}
+              />
+              <input
+                ref={panFileRef}
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={(e) => setPanFileName(e.target.files?.[0]?.name ?? '')}
+              />
+              <InfoTile>
+                Good light, all four corners visible, no glare on the name or number strip.
+              </InfoTile>
             </div>
           </PageShell>
         )}
 
         {page === 'aadhaar' && (
-          <PageShell icon={<UploadIcon />} title="Upload your Aadhaar" subtitle="The DigiLocker XML verifies fastest, but a clear photo or PDF of your card also works.">
-            <div className="space-y-3 pt-4">
-              <DropZone
-                icon={aadhaarName ? <CheckCircleIcon /> : <UploadIcon />}
-                title={aadhaarName || 'Choose Aadhaar file'}
-                subtitle={aadhaarName ? 'Ready to upload' : 'XML, ZIP, JPG, PNG, or PDF'}
-                selected={!!aadhaarName}
-                onClick={() => aadhaarFileRef.current?.click()}
-              />
-              <input
-                ref={aadhaarFileRef}
-                type="file"
-                accept=".xml,.zip,.pdf,image/*"
-                className="hidden"
-                onChange={(e) => setAadhaarName(e.target.files?.[0]?.name ?? '')}
-              />
-              <InfoTile>
-                Pro tip: DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP.
-                That's the fastest path to verified.
-              </InfoTile>
-            </div>
-          </PageShell>
+          <SecondaryIdPage
+            secondaryType={secondaryType}
+            onSecondaryType={setSecondaryType}
+            secondaryNumber={secondaryNumber}
+            onSecondaryNumber={setSecondaryNumber}
+            secondaryName={secondaryName}
+            onSecondaryName={setSecondaryName}
+            secondaryDobIso={secondaryDobIso}
+            onSecondaryDobIso={setSecondaryDobIso}
+            secondarySurname={secondarySurname}
+            onSecondarySurname={setSecondarySurname}
+            secondaryFileNumber={secondaryFileNumber}
+            onSecondaryFileNumber={setSecondaryFileNumber}
+            secondaryDateOfIssueIso={secondaryDateOfIssueIso}
+            onSecondaryDateOfIssueIso={setSecondaryDateOfIssueIso}
+            aadhaarName={aadhaarName}
+            onAadhaarPick={(name) => setAadhaarName(name)}
+            aadhaarFileRef={aadhaarFileRef}
+            firstName={firstName}
+            lastName={lastName}
+            dobIso={dobIso}
+          />
         )}
 
         {page === 'selfie' && (
@@ -602,7 +677,7 @@ function navTitle(p: WizardPage): string {
     case 'welcome': return 'Verification';
     case 'name': case 'contact': case 'bornWhen': case 'about': return 'About you';
     case 'pan':     return 'PAN card';
-    case 'aadhaar': return 'Aadhaar';
+    case 'aadhaar': return 'Secondary ID';
     case 'selfie':  return 'Selfie';
     case 'checking': return 'Verifying';
     case 'verified': case 'rejected': return 'Verification';
@@ -614,14 +689,161 @@ function actionFor(p: WizardPage): { label: string; busy: string } | null {
     case 'welcome':  return { label: 'Get started',    busy: 'Get started' };
     case 'name': case 'contact': case 'bornWhen': return { label: 'Continue', busy: 'Continue' };
     case 'about':    return { label: 'Continue',       busy: 'Saving…' };
-    case 'pan':      return { label: 'Verify PAN',     busy: 'Checking…' };
-    case 'aadhaar':  return { label: 'Upload Aadhaar', busy: 'Uploading…' };
+    case 'pan':      return { label: 'Upload PAN',    busy: 'Uploading…' };
+    case 'aadhaar':  return { label: 'Submit ID',     busy: 'Submitting…' };
     case 'selfie':   return { label: 'Upload photo',   busy: 'Uploading…' };
     default:         return null;
   }
 }
 
 // ─── Reusable chunks ───────────────────────────────────────────
+
+// ─── Secondary ID picker + fields ─────────────────────────────
+
+type SecondaryDocType = 'aadhaar' | 'voter_id' | 'passport' | 'driving_license';
+
+const SECONDARY_OPTIONS: { value: SecondaryDocType; label: string }[] = [
+  { value: 'aadhaar',         label: 'Aadhaar (XML from DigiLocker)' },
+  { value: 'voter_id',        label: 'Voter ID' },
+  { value: 'passport',        label: 'Passport' },
+  { value: 'driving_license', label: 'Driving License' },
+];
+
+function SecondaryIdPage(props: {
+  secondaryType: SecondaryDocType;
+  onSecondaryType: (t: SecondaryDocType) => void;
+  secondaryNumber: string; onSecondaryNumber: (v: string) => void;
+  secondaryName: string;   onSecondaryName: (v: string) => void;
+  secondaryDobIso: string; onSecondaryDobIso: (v: string) => void;
+  secondarySurname: string; onSecondarySurname: (v: string) => void;
+  secondaryFileNumber: string; onSecondaryFileNumber: (v: string) => void;
+  secondaryDateOfIssueIso: string; onSecondaryDateOfIssueIso: (v: string) => void;
+  aadhaarName: string; onAadhaarPick: (n: string) => void;
+  aadhaarFileRef: React.RefObject<HTMLInputElement | null>;
+  firstName: string; lastName: string; dobIso: string;
+}) {
+  const {
+    secondaryType, onSecondaryType,
+    secondaryNumber, onSecondaryNumber, secondaryName, onSecondaryName,
+    secondaryDobIso, onSecondaryDobIso, secondarySurname, onSecondarySurname,
+    secondaryFileNumber, onSecondaryFileNumber,
+    secondaryDateOfIssueIso, onSecondaryDateOfIssueIso,
+    aadhaarName, onAadhaarPick, aadhaarFileRef,
+    firstName, lastName, dobIso,
+  } = props;
+
+  // Prefill name + DOB from earlier steps — only when the target field is
+  // empty. Manual edits are never overwritten. Runs on mount + when the
+  // type changes so switching from Aadhaar → Voter ID re-seeds if needed.
+  useEffect(() => {
+    if (!secondaryName && (firstName || lastName)) {
+      const full = [firstName, lastName].map((s) => s.trim()).filter(Boolean).join(' ');
+      if (full) onSecondaryName(full);
+    }
+    if (!secondarySurname && lastName) onSecondarySurname(lastName.trim());
+    if (!secondaryDobIso && dobIso) onSecondaryDobIso(dobIso);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secondaryType]);
+
+  const numberLabel = {
+    voter_id:        'Voter ID number (EPIC)',
+    passport:        'Passport number',
+    driving_license: 'Driving licence number',
+    aadhaar:         '',
+  }[secondaryType];
+  const numberPlaceholder = {
+    voter_id:        'e.g. KA14201XXXXXX',
+    passport:        'e.g. Z1234567',
+    driving_license: 'e.g. KA14 20211234567',
+    aadhaar:         '',
+  }[secondaryType];
+
+  return (
+    <PageShell
+      icon={<BadgeIcon />}
+      title="Add a second ID"
+      subtitle="Carret needs one more identity document alongside your PAN. Pick the one you have handy."
+    >
+      <div className="space-y-3 pt-4">
+        <label className="block">
+          <span className="block text-xs text-black/50 mb-1">Secondary ID</span>
+          <select
+            value={secondaryType}
+            onChange={(e) => onSecondaryType(e.target.value as SecondaryDocType)}
+            className="h-14 w-full rounded-2xl border border-black/10 bg-white px-4 text-base text-black focus:outline-none focus:border-black/30"
+          >
+            {SECONDARY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+
+        {secondaryType === 'aadhaar' && (
+          <>
+            <DropZone
+              icon={aadhaarName ? <CheckCircleIcon /> : <UploadIcon />}
+              title={aadhaarName || 'Choose Aadhaar file'}
+              subtitle={aadhaarName ? 'Ready to upload' : 'XML from DigiLocker, or a JPG/PNG/PDF'}
+              selected={!!aadhaarName}
+              onClick={() => aadhaarFileRef.current?.click()}
+            />
+            <input
+              ref={aadhaarFileRef}
+              type="file"
+              accept=".xml,.zip,.pdf,image/*"
+              className="hidden"
+              onChange={(e) => onAadhaarPick(e.target.files?.[0]?.name ?? '')}
+            />
+            <InfoTile>
+              DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP. Fastest path to verified.
+            </InfoTile>
+          </>
+        )}
+
+        {secondaryType !== 'aadhaar' && (
+          <>
+            <BigField
+              label={numberLabel}
+              value={secondaryNumber}
+              onChange={(v) => onSecondaryNumber(v.toUpperCase())}
+              placeholder={numberPlaceholder}
+            />
+            <BigField
+              label="Full name (as on document)"
+              value={secondaryName}
+              onChange={onSecondaryName}
+              placeholder="e.g. RAHUL KUMAR SHARMA"
+            />
+            {secondaryType === 'passport' && (
+              <>
+                <BigField
+                  label="Surname (as printed on passport)"
+                  value={secondarySurname}
+                  onChange={onSecondarySurname}
+                  placeholder="SHARMA"
+                />
+                <BigField
+                  label="File number"
+                  value={secondaryFileNumber}
+                  onChange={onSecondaryFileNumber}
+                  placeholder="e.g. XXX0612316XXXX"
+                />
+                <DatePickerField label="Date of issue" iso={secondaryDateOfIssueIso} onIso={onSecondaryDateOfIssueIso} kind="issue" />
+                <DatePickerField label="Date of birth" iso={secondaryDobIso} onIso={onSecondaryDobIso} />
+              </>
+            )}
+            {secondaryType === 'driving_license' && (
+              <DatePickerField label="Date of birth" iso={secondaryDobIso} onIso={onSecondaryDobIso} />
+            )}
+            <InfoTile>
+              Enter your document number exactly as printed. Spaces and case matter for some.
+            </InfoTile>
+          </>
+        )}
+      </div>
+    </PageShell>
+  );
+}
 
 function PageShell({ icon, title, subtitle, children }: { icon: React.ReactNode; title: string; subtitle: string; children?: React.ReactNode }) {
   return (
@@ -720,7 +942,17 @@ function PhoneField({
   );
 }
 
-function DatePickerField({ label, iso, onIso }: { label: string; iso: string; onIso: (v: string) => void }) {
+function DatePickerField({
+  label, iso, onIso,
+  kind = 'dob',
+}: {
+  label: string; iso: string; onIso: (v: string) => void;
+  kind?: 'dob' | 'issue';
+}) {
+  // Passport / DL issue dates sit in the recent past — the 18-100 born-date
+  // window would silently reject any valid choice. Widen the range per kind.
+  const min = kind === 'issue' ? isoYearsAgo(30) : minDobIso();
+  const max = kind === 'issue' ? new Date().toISOString().slice(0, 10) : maxDobIso();
   return (
     <label className="block">
       <span className="block text-xs text-black/50 mb-1">{label}</span>
@@ -728,12 +960,18 @@ function DatePickerField({ label, iso, onIso }: { label: string; iso: string; on
         type="date"
         value={iso}
         onChange={(e) => onIso(e.target.value)}
-        min={minDobIso()}
-        max={maxDobIso()}
+        min={min}
+        max={max}
         className="h-14 w-full rounded-2xl border border-black/10 bg-white px-4 text-base text-black focus:outline-none focus:border-black/30"
       />
     </label>
   );
+}
+
+function isoYearsAgo(years: number): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - years);
+  return d.toISOString().slice(0, 10);
 }
 
 function LabeledSection({ label, children }: { label: string; children: React.ReactNode }) {
