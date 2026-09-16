@@ -236,6 +236,14 @@ struct CarretKycStatus: Codable {
     var ovd_documents: [CarretKycDocumentEntry]?
 }
 
+/// Response from POST /v1/carret/kyc/document — driver-facing surface
+/// only needs `success` and `message`; the nested `document` payload
+/// varies wildly per doc type so we don't decode it here.
+struct CarretKycDocumentSubmitResponse: Codable {
+    let success: Bool
+    var message: String?
+}
+
 // MARK: - Carret daily limits (PAT-80)
 
 struct CarretLimitsRemaining: Codable, Equatable, Hashable {

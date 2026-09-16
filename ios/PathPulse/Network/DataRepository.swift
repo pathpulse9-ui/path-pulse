@@ -66,20 +66,24 @@ struct DataRepository: Sendable {
         return try await client.post("v1/carret/kyc/initiate", body: Body(account_id: accountId))
     }
 
+    /// POST /v1/carret/kyc/document. Backend proxies Carret's
+    /// `{success, message, document:{…}}` — we only need to know it succeeded;
+    /// the driver-facing UI shows Carret's message on error, nothing else.
+    /// Older code decoded this into `CarretKycStatus`, which never matched the
+    /// actual shape → every 200 threw a .decoding error and surfaced as
+    /// "We couldn't read the reply." on the phone.
     func submitCarretKycDocument(
         kycSessionId: String,
         document: CarretKycDocumentSubmission,
-    ) async throws -> Data {
+    ) async throws {
         struct Body: Codable {
             let kyc_session_id: String
             let document: CarretKycDocumentSubmission
         }
-        // POST returns Carret's raw JSON — we don't type it, callers only care about HTTP success
-        _ = try await client.post(
+        let _: CarretKycDocumentSubmitResponse = try await client.post(
             "v1/carret/kyc/document",
             body: Body(kyc_session_id: kycSessionId, document: document),
-        ) as CarretKycStatus
-        return Data()
+        )
     }
 
     func uploadCarretKycFile(

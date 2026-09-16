@@ -1185,7 +1185,7 @@ struct KycView: View {
                     fileURL: url,
                 )
             case .voter_id:
-                _ = try await data.submitCarretKycDocument(
+                try await data.submitCarretKycDocument(
                     kycSessionId: sessionId,
                     document: CarretKycDocumentSubmission(
                         document_type: "voter_id",
@@ -1194,7 +1194,7 @@ struct KycView: View {
                     ),
                 )
             case .driving_license:
-                _ = try await data.submitCarretKycDocument(
+                try await data.submitCarretKycDocument(
                     kycSessionId: sessionId,
                     document: CarretKycDocumentSubmission(
                         document_type: "driving_license",
@@ -1204,7 +1204,7 @@ struct KycView: View {
                     ),
                 )
             case .passport:
-                _ = try await data.submitCarretKycDocument(
+                try await data.submitCarretKycDocument(
                     kycSessionId: sessionId,
                     document: CarretKycDocumentSubmission(
                         document_type: "passport",
