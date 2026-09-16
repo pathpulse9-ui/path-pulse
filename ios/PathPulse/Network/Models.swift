@@ -111,6 +111,32 @@ struct OffRampSessionPage: Codable {
     var nextCursor: String?
 }
 
+/// One line item on a quote — e.g. Carret's spread, GST, network fee.
+struct OffRampQuoteFee: Codable, Equatable, Hashable, Identifiable {
+    let label: String
+    let amount: String
+    let currency: String
+    var id: String { label }
+}
+
+/// GET /v1/offramp/quotes — shape mirrors @pathpulse/contract's OffRampQuote.
+struct OffRampQuote: Codable, Equatable {
+    let provider: String
+    let live: Bool
+    var quoteId: String?
+    let asset: String
+    let fiatCurrency: String
+    /// USDC amount the driver is withdrawing.
+    let amount: String
+    /// INR before fees.
+    let grossFiatAmount: String
+    /// INR the driver actually receives.
+    let fiatAmount: String
+    /// Effective rate, INR per unit of asset.
+    let rate: String
+    var fees: [OffRampQuoteFee] = []
+}
+
 // MARK: - SCOUT (reputation)
 
 struct ScoutTierInfo: Codable, Equatable, Hashable, Identifiable {

@@ -18,6 +18,20 @@ struct DataRepository: Sendable {
         try await client.get("v1/offramp/sessions", query: ["limit": String(limit)])
     }
 
+    /// GET /v1/offramp/quotes?amount=<USDC> — indicative + live quote in one shot.
+    func offRampQuote(amount: String) async throws -> OffRampQuote {
+        try await client.get("v1/offramp/quotes", query: ["amount": amount])
+    }
+
+    /// POST /v1/offramp/sessions — books the actual withdrawal. Body carries
+    /// the amount (7-decimal string) and, optionally, an asset override. On
+    /// success the returned OffRampSession id is what the receipt / status
+    /// polling calls key on.
+    func createOffRampSession(amount: String) async throws -> OffRampSession {
+        struct Body: Codable { let amount: String }
+        return try await client.post("v1/offramp/sessions", body: Body(amount: amount))
+    }
+
     // MARK: - SCOUT
 
     func scoutRoster() async throws -> ScoutRoster {
