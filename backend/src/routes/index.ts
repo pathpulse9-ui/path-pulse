@@ -66,7 +66,7 @@ import {
 import { carretLive } from '../config/env.js';
 import {
   getMapping, getMappingByEmail, getMappingByPhone,
-  upsertMapping, deleteMapping, markWalletWhitelisted,
+  upsertMapping, deleteMapping, updateKycStatus, markWalletWhitelisted,
 } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
@@ -825,9 +825,32 @@ router.get('/v1/carret/resume', async (req, res, next) => {
       res.status(204).end();
       return;
     }
+
+    // Authoritative status. The kyc_status column on our mapping is
+    // only what we last wrote — it may be stale if Carret transitioned
+    // pending → verified / rejected / manual_review via a webhook we
+    // missed. Refresh from Carret so a driver who successfully KYC-d
+    // (in the sandbox, in their dashboard, or via manual review)
+    // always sees Verified on the next mount instead of being asked
+    // to re-walk the wizard. Persist the fresh value back so downstream
+    // reads without a fresh Carret hit stay accurate too.
+    let effectiveStatus = mapping.kycStatus;
+    try {
+      const status_ = await getKycStatus(mapping.carretAccountId);
+      const info =
+        (status_ as unknown as { kyc_info?: CarretKycStatusResponse }).kyc_info ?? status_;
+      if (info?.kyc_status && info.kyc_status !== mapping.kycStatus) {
+        effectiveStatus = info.kyc_status as typeof mapping.kycStatus;
+        // Best-effort persist; a DB miss doesn't block the response.
+        await updateKycStatus(session.userId, effectiveStatus).catch(() => {});
+      }
+    } catch {
+      // Carret unreachable / rate-limited — fall back to the stored value.
+    }
+
     res.json({
       carretAccountId: mapping.carretAccountId,
-      kycStatus: mapping.kycStatus,
+      kycStatus: effectiveStatus,
       email: mapping.email,
       referenceId: mapping.referenceId,
     });
