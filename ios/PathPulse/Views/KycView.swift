@@ -1167,7 +1167,10 @@ struct KycView: View {
                 fileURL: url,
             )
             return true
-        } catch { self.error = UserErrors.message(error); return false }
+        } catch {
+            if isAlreadyAddedError(error) { return true }
+            self.error = UserErrors.message(error); return false
+        }
     }
 
     /// Secondary ID — Aadhaar via file upload (XML/photo), everything else
@@ -1218,7 +1221,13 @@ struct KycView: View {
                 )
             }
             return true
-        } catch { self.error = UserErrors.message(error); return false }
+        } catch {
+            // Idempotent success: if this doc was already attached to the
+            // session (previous submit succeeded server-side but the client
+            // never advanced), treat as done and move on.
+            if isAlreadyAddedError(error) { return true }
+            self.error = UserErrors.message(error); return false
+        }
     }
 
     @MainActor private func uploadSelfie() async -> Bool {
@@ -1228,7 +1237,21 @@ struct KycView: View {
                 kycSession: sessionId, docType: "selfie", fileType: "image", fileURL: url,
             )
             return true
-        } catch { self.error = UserErrors.message(error); return false }
+        } catch {
+            if isAlreadyAddedError(error) { return true }
+            self.error = UserErrors.message(error); return false
+        }
+    }
+
+    /// Detects Carret's idempotent-already-here messages so the wizard can
+    /// treat them as success. Covers:
+    ///   • "A pan document is already added for this KYC session"
+    ///   • "A voter_id document is already added for this KYC session"
+    ///   • …etc for aadhaar / passport / driving_license / selfie
+    private func isAlreadyAddedError(_ error: Error) -> Bool {
+        guard case APIError.http(_, let payload) = (error as? APIError) ?? .invalidResponse,
+              let msg = payload?.message.lowercased() else { return false }
+        return msg.contains("already added") || msg.contains("already exists in pending")
     }
 
     @MainActor private func cleanupAndRetry() async {
