@@ -776,3 +776,16 @@ export async function createSubAccount(input: SubAccountInput): Promise<CarretSu
   const body = { ...input, phone_number: Number(phoneDigits) };
   return carretFetch<CarretSubAccount>('POST', '/register/', { body });
 }
+
+/**
+ * GET /account/{account_id}/ — account-level details, including the
+ * driver-facing `kyc_status` field that Carret's dashboard uses.
+ *
+ * Distinct from `getKycStatus` (which hits /kyc/{account_id}/ under v2 and
+ * returns the STATE OF THE CURRENT KYC SESSION — stays "pending" for
+ * verified accounts whose session was archived). For resume-on-mount and
+ * off-ramp gating, we want the account-level truth, i.e. this endpoint.
+ */
+export async function getSubAccount(accountId: number | string): Promise<CarretSubAccount> {
+  return carretFetch<CarretSubAccount>('GET', `/account/${accountId}/`);
+}
