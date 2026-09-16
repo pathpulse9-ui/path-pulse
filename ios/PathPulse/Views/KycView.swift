@@ -269,6 +269,21 @@ struct KycView: View {
                 bullet("A quick selfie")
             }
             .padding(.top, PpSpace.lg)
+            // If a previous attempt left anything behind (persisted account /
+            // session id or any typed field), show a subtle escape hatch that
+            // wipes the draft and lets the driver start clean.
+            if !accountId.isEmpty || !firstName.isEmpty || !email.isEmpty || !dobIso.isEmpty {
+                Button {
+                    clearDraft()
+                    error = nil
+                } label: {
+                    Text("Start fresh — clear saved details")
+                        .font(PathPulseFont.labelMedium)
+                        .foregroundStyle(PathPulseColor.black60)
+                        .underline()
+                }
+                .padding(.top, PpSpace.md)
+            }
         }
     }
 

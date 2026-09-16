@@ -9,6 +9,10 @@ public struct UserErrors {
         if let api = error as? APIError {
             switch api {
             case .http(let status, let payload):
+                // Log the raw payload so we can trace exactly what the backend
+                // returned when debugging via Xcode / Console.app. The user-
+                // facing message returned below never leaks it.
+                print("[UserErrors] HTTP \(status) payload=\(payload as Any)")
                 return httpMessage(status: status, payload: payload)
             case .transport:
                 return "Please check your internet connection and try again."
