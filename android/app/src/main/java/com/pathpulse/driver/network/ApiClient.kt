@@ -193,6 +193,22 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
             setBody(AccountIdBody(accountId))
         }.ensureSuccess()
     }
+
+    // ── Carret banks (real payouts) ────────────────────────────────────
+
+    suspend fun listCarretBanks(): List<CarretBank> =
+        client.get("$baseUrl/v1/carret/banks").ensureSuccess().body<CarretBanksResponse>().items
+
+    suspend fun registerCarretBank(input: CarretBankRegistrationInput): CarretBank =
+        client.post("$baseUrl/v1/carret/banks") {
+            contentType(ContentType.Application.Json)
+            setBody(input)
+        }.ensureSuccess().body()
+
+    // ── Trading wallet balance chip ────────────────────────────────────
+
+    suspend fun carretWallets(): List<CarretWalletBalance> =
+        client.get("$baseUrl/v1/carret/wallets").ensureSuccess().body<CarretWalletsResponse>().items
 }
 
 class ApiException(val apiError: ApiError) : Exception(apiError.message)

@@ -305,6 +305,89 @@ struct CarretLimits: Codable, Equatable, Hashable {
     let remaining: CarretLimitsRemaining
 }
 
+// MARK: - Carret bank + wallet (production off-ramp)
+
+/// A driver-registered bank as returned by GET /v1/carret/banks (list) or
+/// POST /v1/carret/banks (single). Carret runs a ₹1 penny-drop on new
+/// registrations; status flips `pending` → `verified` (or `failed`).
+struct CarretBank: Codable, Equatable, Hashable, Identifiable {
+    let id: Int
+    let account_id: Int
+    let status: String                 // "verified" | "pending" | "failed"
+    let bank_account_no: String
+    let bank_ifsc: String
+    let bank_account_name: String
+    let bank_name: String
+
+    var last4: String {
+        let d = bank_account_no.filter { $0.isNumber }
+        return String(d.suffix(4))
+    }
+}
+
+struct CarretBanksResponse: Codable {
+    let items: [CarretBank]
+}
+
+struct CarretBankRegistrationInput: Codable {
+    let bank_account_no: String
+    let bank_ifsc: String
+    let bank_account_name: String
+    let bank_name: String
+}
+
+/// Balance for one asset on the driver's Carret trading wallet.
+/// Powers the "9.00 USDC available" chip on the off-ramp tab.
+struct CarretWalletBalance: Codable, Equatable, Hashable, Identifiable {
+    let asset: String                  // "USDC"
+    let chain: String?                 // "stellar"
+    let balance: String                // decimal string
+    let available: String?             // decimal string, sometimes same as balance
+
+    var id: String { "\(asset)-\(chain ?? "")" }
+}
+
+struct CarretWalletsResponse: Codable {
+    let items: [CarretWalletBalance]
+}
+
+// MARK: - On-ramp (INR → USDC)
+
+struct OnRampQuoteFee: Codable, Hashable, Identifiable {
+    let label: String
+    let amount: String
+    let currency: String
+    var id: String { label }
+}
+
+struct OnRampQuote: Codable, Equatable, Hashable {
+    let amount: String           // INR input
+    let cryptoAmount: String     // USDC output (indicative or live)
+    let rate: String
+    let asset: String
+    let fiat: String
+    let provider: String
+    let live: Bool
+    let fees: [OnRampQuoteFee]
+    var expiresAt: String?
+}
+
+struct OnRampSession: Codable, Equatable, Hashable, Identifiable {
+    let id: String
+    let amount: String
+    var cryptoAmount: String?
+    let asset: String
+    let fiat: String
+    let status: String
+    let provider: String
+    let createdAt: String
+    var bankLast4: String?
+}
+
+struct OnRampSessionPage: Codable {
+    let items: [OnRampSession]
+}
+
 struct DistributionAccount: Codable, Equatable, Hashable, Identifiable {
     let role: String        // "partner_revenue" | "driver_pool" | "treasury"
     let publicKey: String

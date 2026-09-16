@@ -571,3 +571,61 @@ export function registerCarretBank(bank: {
     body: JSON.stringify(bank),
   });
 }
+
+// ── Trading wallet balances (off-ramp balance chip) ─────────────────────
+
+export interface CarretWalletBalance {
+  asset: string;
+  chain?: string;
+  balance: string;
+  available?: string;
+}
+
+export function listCarretWallets() {
+  return apiFetch<{ items: CarretWalletBalance[] }>('/v1/carret/wallets');
+}
+
+// ── On-ramp (INR → USDC) ────────────────────────────────────────────────
+
+export interface OnRampQuote {
+  amount: string;
+  cryptoAmount: string;
+  rate: string;
+  asset: string;
+  fiat: string;
+  provider: string;
+  live: boolean;
+  fees: { label: string; amount: string; currency: string }[];
+  expiresAt?: string;
+}
+
+export interface OnRampSession {
+  id: string;
+  amount: string;
+  cryptoAmount?: string;
+  asset: string;
+  fiat: string;
+  status: string;
+  provider: string;
+  createdAt: string;
+  bankLast4?: string;
+}
+
+export function onrampQuote(amount: string) {
+  return apiFetch<OnRampQuote>(`/v1/onramp/quotes?amount=${encodeURIComponent(amount)}`);
+}
+
+export function createOnrampSession(amount: string) {
+  return apiFetch<OnRampSession>('/v1/onramp/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ amount }),
+  });
+}
+
+export function listOnrampSessions(limit = 50) {
+  return apiFetch<{ items: OnRampSession[] }>(`/v1/onramp/sessions?limit=${limit}`);
+}
+
+export function getOnrampSession(id: string) {
+  return apiFetch<OnRampSession>(`/v1/onramp/sessions/${id}`);
+}

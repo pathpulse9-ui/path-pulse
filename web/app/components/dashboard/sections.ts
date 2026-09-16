@@ -7,6 +7,7 @@ import {
   Send,
   ShieldCheck,
   User,
+  Wallet,
 } from 'lucide-react';
 
 export const SECTIONS = [
@@ -50,6 +51,13 @@ export const SECTIONS = [
     icon: Banknote,
     description:
       'Carret Infra off-ramp (sell USDC on Stellar → INR to a registered bank). Server-driven, no widget.',
+  },
+  {
+    label: 'On-ramp',
+    href: '/dashboard/onramp',
+    icon: Wallet,
+    description:
+      'Top up your Carret trading wallet with INR from your registered bank — quote, place order, watch it fill.',
   },
   {
     label: 'Treasury',

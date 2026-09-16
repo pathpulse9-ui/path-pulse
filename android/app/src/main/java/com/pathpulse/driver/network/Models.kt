@@ -292,3 +292,40 @@ data class DistributionAccount(
     val multisig: Boolean,
     val network: String,
 )
+
+// ── Carret banks + wallet (production off-ramp) ────────────────────────
+
+@Serializable
+data class CarretBank(
+    val id: Int,
+    val account_id: Int,
+    val status: String,                // "verified" | "pending" | "failed"
+    val bank_account_no: String,
+    val bank_ifsc: String,
+    val bank_account_name: String,
+    val bank_name: String,
+) {
+    val last4: String get() = bank_account_no.takeLast(4)
+}
+
+@Serializable
+data class CarretBanksResponse(val items: List<CarretBank> = emptyList())
+
+@Serializable
+data class CarretBankRegistrationInput(
+    val bank_account_no: String,
+    val bank_ifsc: String,
+    val bank_account_name: String,
+    val bank_name: String,
+)
+
+@Serializable
+data class CarretWalletBalance(
+    val asset: String,
+    val chain: String? = null,
+    val balance: String,
+    val available: String? = null,
+)
+
+@Serializable
+data class CarretWalletsResponse(val items: List<CarretWalletBalance> = emptyList())

@@ -51,6 +51,12 @@ import {
   activeProvider,
   quoteWithdrawal,
 } from '../services/offramp.js';
+import {
+  getQuote as onrampGetQuote,
+  createDeposit as onrampCreateDeposit,
+  listSessions as onrampListSessions,
+  getSession as onrampGetSession,
+} from '../services/onramp.js';
 import { verifyRampWebhook } from '../services/ramp.js';
 import {
   verifyCarretWebhook,
@@ -64,6 +70,7 @@ import {
   whitelistWallet,
   registerBank,
   listBanks,
+  listWalletBalances,
   type CarretKycStatusResponse,
 } from '../services/carret.js';
 import { carretLive } from '../config/env.js';
@@ -554,6 +561,43 @@ router.get('/v1/offramp/sessions/:id', requireSession(), async (req, res, next) 
   } catch (e) {
     next(e);
   }
+});
+
+// Fiat on-ramp (INR → USDC on Carret): mirrors the off-ramp trio.
+const createDepositSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/, 'amount must be a rupee amount (up to 2 decimals)'),
+});
+
+router.get('/v1/onramp/quotes', requireSession(), async (req, res, next) => {
+  try {
+    const amount = typeof req.query.amount === 'string' ? req.query.amount : '';
+    if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+      const e = new Error('amount must be a positive rupee amount') as Error & { status: number };
+      e.name = 'ValidationError'; e.status = 400; throw e;
+    }
+    res.json(await onrampGetQuote(amount));
+  } catch (e) { next(e); }
+});
+
+router.post('/v1/onramp/sessions', requireSession(), idempotency(), async (req, res, next) => {
+  try {
+    const parsed = createDepositSchema.parse(req.body);
+    const session = getSessionFromRequest(req)!;
+    res.json(await onrampCreateDeposit(session.userId, parsed));
+  } catch (e) { next(e); }
+});
+
+router.get('/v1/onramp/sessions', requireSession(), async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(onrampListSessions(getSessionFromRequest(req)!.userId, limit));
+  } catch (e) { next(e); }
+});
+
+router.get('/v1/onramp/sessions/:id', requireSession(), async (req, res, next) => {
+  try {
+    res.json(await onrampGetSession(req.params.id, getSessionFromRequest(req)!.userId));
+  } catch (e) { next(e); }
 });
 
 // Cross-asset routing (D5): quote across active routers, then execute the best route.
@@ -1100,6 +1144,16 @@ router.get('/v1/carret/banks', requireSession(), async (req, res, next) => {
     if (!mapping) { res.json({ items: [] }); return; }
     const banks = await listBanks(mapping.carretAccountId);
     res.json({ items: banks });
+  } catch (e) { next(e); }
+});
+
+router.get('/v1/carret/wallets', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const mapping = await getMapping(session.userId);
+    if (!mapping) { res.json({ items: [] }); return; }
+    const items = await listWalletBalances(mapping.carretAccountId);
+    res.json({ items });
   } catch (e) { next(e); }
 });
 

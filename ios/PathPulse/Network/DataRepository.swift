@@ -140,6 +140,49 @@ struct DataRepository: Sendable {
         return envelope.kyc_info
     }
 
+    // MARK: - Carret banks (real payouts)
+
+    /// GET /v1/carret/banks — banks the driver has registered against their
+    /// Carret sub-account. Empty on brand-new drivers.
+    func listCarretBanks() async throws -> [CarretBank] {
+        let res: CarretBanksResponse = try await client.get("v1/carret/banks")
+        return res.items
+    }
+
+    /// POST /v1/carret/banks — start Carret's ₹1 penny-drop verification.
+    /// Poll `listCarretBanks` afterwards to watch pending → verified.
+    func registerCarretBank(_ input: CarretBankRegistrationInput) async throws -> CarretBank {
+        try await client.post("v1/carret/banks", body: input)
+    }
+
+    // MARK: - On-ramp (INR → USDC)
+
+    func onRampQuote(amount: String) async throws -> OnRampQuote {
+        try await client.get("v1/onramp/quotes", query: ["amount": amount])
+    }
+
+    func createOnRampSession(amount: String) async throws -> OnRampSession {
+        struct Body: Codable { let amount: String }
+        return try await client.post("v1/onramp/sessions", body: Body(amount: amount))
+    }
+
+    func onRampSessions(limit: Int = 50) async throws -> OnRampSessionPage {
+        try await client.get("v1/onramp/sessions", query: ["limit": String(limit)])
+    }
+
+    func onRampSession(id: String) async throws -> OnRampSession {
+        try await client.get("v1/onramp/sessions/\(id)")
+    }
+
+    // MARK: - Trading wallet balances
+
+    /// GET /v1/carret/wallets — spendable balance chip on the off-ramp tab
+    /// so the driver sees "9.00 USDC available" before typing an amount.
+    func carretWallets() async throws -> [CarretWalletBalance] {
+        let res: CarretWalletsResponse = try await client.get("v1/carret/wallets")
+        return res.items
+    }
+
     func cleanupCarretKyc(accountId: String) async throws {
         struct Body: Codable { let account_id: String }
         _ = try await client.postDiscardingBody("v1/carret/kyc/cleanup", body: Body(account_id: accountId))

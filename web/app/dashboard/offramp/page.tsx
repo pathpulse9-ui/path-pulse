@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { CarretLimits, CarretResumeResponse, CarretBank } from '../../lib/api';
-import { getCarretLimits, resumeCarretKyc, listCarretBanks, registerCarretBank } from '../../lib/api';
+import type { CarretLimits, CarretResumeResponse, CarretBank, CarretWalletBalance } from '../../lib/api';
+import { getCarretLimits, resumeCarretKyc, listCarretBanks, registerCarretBank, listCarretWallets } from '../../lib/api';
 import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
 import {
   listOffRampSessions,
@@ -70,6 +70,18 @@ export default function OffRampPage() {
   }, [kycVerified]);
   const hasVerifiedBank = (banks ?? []).some((b) => b.status === 'verified');
   const hasAnyBank      = (banks ?? []).length > 0;
+
+  // Trading wallet balance chip — surfaces "9.00 USDC available" so the
+  // driver sees the ceiling before typing an amount they can't withdraw.
+  const [wallets, setWallets] = useState<CarretWalletBalance[] | null>(null);
+  useEffect(() => {
+    if (!kycVerified) return;
+    listCarretWallets()
+      .then((r) => setWallets(r.items ?? []))
+      .catch(() => setWallets([]));
+  }, [kycVerified]);
+  const usdc = (wallets ?? []).find((w) => w.asset?.toUpperCase() === 'USDC');
+  const usdcAvailable = usdc ? Number(usdc.available ?? usdc.balance) : null;
 
   const load = useCallback(async () => {
     try {
@@ -222,12 +234,31 @@ export default function OffRampPage() {
       )}
 
       <div className={`rounded-2xl bg-white p-6 space-y-4 ${!kycVerified || !hasVerifiedBank ? 'opacity-50 pointer-events-none' : ''}`}>
-        <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
-          Start a withdrawal
-        </h2>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
+            Start a withdrawal
+          </h2>
+          {usdcAvailable != null && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-medium px-3 py-1 border border-emerald-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {usdcAvailable.toFixed(2)} USDC available
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap gap-4 items-end">
           <label className="text-sm">
-            <span className="block text-black/50 mb-1">Amount (USDC)</span>
+            <span className="block text-black/50 mb-1 flex items-center gap-2">
+              <span>Amount (USDC)</span>
+              {usdcAvailable != null && usdcAvailable > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setAmount(usdcAvailable.toFixed(2))}
+                  className="text-[10px] font-semibold text-emerald-700 hover:text-emerald-900"
+                >
+                  Max
+                </button>
+              )}
+            </span>
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}

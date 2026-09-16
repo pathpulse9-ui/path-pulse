@@ -324,6 +324,75 @@ export async function getOfframpOrder(orderId: number | string): Promise<CarretO
   return match;
 }
 
+// ── On-ramp (INR → crypto) ───────────────────────────────────────────
+//
+// Mirror of the off-ramp trio. Carret's on-ramp routes let the driver top
+// up their trading wallet with INR from a registered bank. Same {quote →
+// place_order → poll} shape as off-ramp, just direction-reversed: INR is
+// `from_asset`, USDC (or whatever chain we target) is `to_asset`.
+
+export async function resolveOnrampRouteId(): Promise<number | string> {
+  const routes = await getSupportedRoutes();
+  const to = env.carret.crypto.toUpperCase();
+  const chain = env.carret.chain.toLowerCase();
+  const from = env.carret.fiat.toUpperCase();
+  const match = routes.find(
+    (r) =>
+      r.is_active &&
+      r.from_asset.toUpperCase() === from &&
+      r.to_asset.toUpperCase() === to &&
+      (!r.from_chain || r.from_chain.toLowerCase() === chain),
+  );
+  if (!match) {
+    throw new Error(
+      `Carret: no active on-ramp route for ${from} → ${to} (${env.carret.chain}). ` +
+        `Available: ${routes.map((r) => `${r.from_asset}→${r.to_asset}`).join(', ') || '(none)'}`,
+    );
+  }
+  return match.id;
+}
+
+/** POST /onramp/quote/ — locks an INR-buy rate; returns quote_id + validity. */
+export async function createOnrampQuote(params: {
+  routeId: number | string;
+  amount: string;  // INR
+}): Promise<CarretQuote> {
+  return carretFetch<CarretQuote>('POST', '/onramp/quote/', {
+    body: {
+      account_id: env.carret.accountId,
+      route_id: params.routeId,
+      amount: params.amount,
+    },
+  });
+}
+
+/** POST /onramp/place_order/ — commits the quote; INR debits the bank_id. */
+export async function placeOnrampOrder(params: {
+  quoteId: number | string;
+  bankId: number | string;
+}): Promise<CarretOrder> {
+  return carretFetch<CarretOrder>('POST', '/onramp/place_order/', {
+    body: {
+      account_id: env.carret.accountId,
+      quote_id: params.quoteId,
+      bank_id: params.bankId,
+      payment_method: 'bank_transfer',
+    },
+  });
+}
+
+export async function getOnrampOrder(orderId: number | string): Promise<CarretOrder> {
+  if (!env.carret.accountId) {
+    throw new Error('CARRET_ACCOUNT_ID required to fetch order status');
+  }
+  const page = await carretFetch<CarretPage<CarretOrder>>('GET', '/onramp/orders/', {
+    query: { account_id: env.carret.accountId },
+  });
+  const match = (page.results ?? []).find((o) => String(o.id) === String(orderId));
+  if (!match) throw new Error(`Carret on-ramp order ${orderId} not found`);
+  return match;
+}
+
 /** POST /bank/ — register a bank on the given account; returns the new bank id. */
 export async function registerBank(params: {
   accountId: number | string;
@@ -341,6 +410,55 @@ export async function registerBank(params: {
       bank_name: params.bankName,
     },
   });
+}
+
+/**
+ * GET /wallet/?account_id=<id> — driver's trading-wallet balances across
+ * every asset Carret custodies for us. Powers the "9.00 USDC available"
+ * chip on the off-ramp tab, so the driver sees why an amount is refused
+ * before they type it.
+ *
+ * Carret's exact wire shape varies a touch between account_id sub-accounts
+ * (we've seen `balance`, `available_balance`, and nested `balances[]`), so
+ * this normalizer accepts anything reasonable and hands back a single flat
+ * list. Failure is soft — callers treat "no wallet" as "hide the chip".
+ */
+export interface CarretWalletBalance {
+  asset: string;                     // "USDC"
+  chain?: string;                    // "stellar"
+  balance: string;                   // decimal string
+  available?: string;                // decimal string
+}
+
+export async function listWalletBalances(accountId: number | string): Promise<CarretWalletBalance[]> {
+  const res = await carretFetch<unknown>('GET', '/wallet/', {
+    query: { account_id: String(accountId) },
+  });
+  return normalizeWallets(res);
+}
+
+function normalizeWallets(res: unknown): CarretWalletBalance[] {
+  const items: unknown[] = Array.isArray(res)
+    ? res
+    : (res as { results?: unknown[]; balances?: unknown[] } | null)?.results
+      ?? (res as { balances?: unknown[] } | null)?.balances
+      ?? [];
+  return items
+    .map((raw) => {
+      const w = raw as Record<string, unknown>;
+      const asset = String(w.asset ?? w.currency ?? w.symbol ?? '').toUpperCase();
+      if (!asset) return null;
+      const chain = w.chain ?? w.network;
+      const balance = String(w.balance ?? w.total ?? w.total_balance ?? '0');
+      const available = w.available ?? w.available_balance ?? w.spendable;
+      return {
+        asset,
+        chain: chain ? String(chain) : undefined,
+        balance,
+        available: available !== undefined ? String(available) : undefined,
+      } as CarretWalletBalance;
+    })
+    .filter((v): v is CarretWalletBalance => v !== null);
 }
 
 /** GET /bank/?account_id=<id> — list registered banks for an account. */

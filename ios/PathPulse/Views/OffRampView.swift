@@ -14,10 +14,22 @@ struct OffRampView: View {
     @State private var resume: CarretResumeResponse? = nil
     @State private var kycSheetOpen = false
     @State private var withdrawSheetOpen = false
+    @State private var bankSheetOpen = false
+    @State private var onrampSheetOpen = false
+    @State private var banks: [CarretBank]? = nil
+    @State private var wallets: [CarretWalletBalance]? = nil
 
     private let data = DataRepository()
 
     private var kycVerified: Bool { resume?.kycStatus == "verified" }
+    private var hasVerifiedBank: Bool { (banks ?? []).contains { $0.status.lowercased() == "verified" } }
+    private var hasPendingBank: Bool { (banks ?? []).contains { $0.status.lowercased() == "pending" } }
+    private var primaryUsdcBalance: Double? {
+        guard let w = wallets else { return nil }
+        let usdc = w.first { $0.asset.uppercased() == "USDC" }
+        let s = usdc?.available ?? usdc?.balance
+        return s.flatMap(Double.init)
+    }
 
     var body: some View {
         ScrollView {
@@ -31,8 +43,18 @@ struct OffRampView: View {
                     kycBanner
                 }
 
+                if kycVerified {
+                    balanceAndBankStrip
+                }
+
                 if let l = limits {
                     limitsChip(l)
+                }
+
+                if kycVerified, banks?.isEmpty == true {
+                    bankCta
+                } else if kycVerified, hasPendingBank, !hasVerifiedBank {
+                    pendingBankBanner
                 }
 
                 PpCard {
@@ -67,7 +89,13 @@ struct OffRampView: View {
         .refreshable { await refresh() }
         .sheet(isPresented: $kycSheetOpen) { KycView() }
         .sheet(isPresented: $withdrawSheetOpen, onDismiss: { Task { await refresh() } }) {
-            WithdrawSheet(data: data, limits: limits)
+            WithdrawSheet(data: data, limits: limits, wallets: wallets)
+        }
+        .sheet(isPresented: $bankSheetOpen, onDismiss: { Task { await refresh() } }) {
+            BankRegistrationSheet(data: data, existingBanks: banks ?? [])
+        }
+        .sheet(isPresented: $onrampSheetOpen, onDismiss: { Task { await refresh() } }) {
+            OnRampSheet(data: data, bankHint: (banks ?? []).first { $0.status.lowercased() == "verified" })
         }
     }
 
@@ -90,17 +118,113 @@ struct OffRampView: View {
                         .foregroundStyle(PathPulseColor.black60)
                 }
                 Spacer()
-                Button(action: { withdrawSheetOpen = true }) {
-                    Text("New withdrawal")
-                        .font(PathPulseFont.labelMedium)
-                        .foregroundStyle(PathPulseColor.white)
-                        .padding(.horizontal, PpSpace.md)
-                        .padding(.vertical, PpSpace.sm)
-                        .background(PathPulseColor.black)
-                        .clipShape(Capsule())
+                VStack(alignment: .trailing, spacing: PpSpace.xs) {
+                    Button(action: {
+                        if hasVerifiedBank { withdrawSheetOpen = true } else { bankSheetOpen = true }
+                    }) {
+                        Text(hasVerifiedBank ? "New withdrawal" : "Add bank")
+                            .font(PathPulseFont.labelMedium)
+                            .foregroundStyle(PathPulseColor.white)
+                            .padding(.horizontal, PpSpace.md)
+                            .padding(.vertical, PpSpace.sm)
+                            .background(PathPulseColor.black)
+                            .clipShape(Capsule())
+                    }
+                    if hasVerifiedBank {
+                        Button(action: { onrampSheetOpen = true }) {
+                            Text("Add funds")
+                                .font(PathPulseFont.labelSmall)
+                                .foregroundStyle(PathPulseColor.mintInk)
+                                .padding(.horizontal, PpSpace.md)
+                                .padding(.vertical, 6)
+                                .background(PathPulseColor.mint26)
+                                .clipShape(Capsule())
+                        }
+                    }
                 }
             }
         }
+    }
+
+    @ViewBuilder private var balanceAndBankStrip: some View {
+        HStack(spacing: PpSpace.sm) {
+            if let usdc = primaryUsdcBalance {
+                HStack(spacing: 6) {
+                    Image(systemName: "dollarsign.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PathPulseColor.mint)
+                    Text("\(formatUsdc(usdc)) USDC available")
+                        .font(PathPulseFont.labelSmall)
+                        .foregroundStyle(PathPulseColor.mintInk)
+                }
+                .padding(.horizontal, PpSpace.md)
+                .padding(.vertical, PpSpace.xs)
+                .background(PathPulseColor.mint26)
+                .clipShape(Capsule())
+            }
+            if hasVerifiedBank, let b = (banks ?? []).first(where: { $0.status.lowercased() == "verified" }) {
+                Text("→ \(b.bank_name) ••\(b.last4)")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black60)
+                    .lineLimit(1)
+                Spacer()
+                Button("Manage") { bankSheetOpen = true }
+                    .font(PathPulseFont.labelSmall)
+                    .foregroundStyle(PathPulseColor.black70)
+            }
+        }
+    }
+
+    @ViewBuilder private var bankCta: some View {
+        PpCard {
+            VStack(alignment: .leading, spacing: PpSpace.sm) {
+                HStack(spacing: PpSpace.md) {
+                    ZStack {
+                        Circle().fill(PathPulseColor.mint26).frame(width: 40, height: 40)
+                        Image(systemName: "building.columns.fill")
+                            .foregroundStyle(PathPulseColor.mint)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Add your bank")
+                            .font(PathPulseFont.titleMedium)
+                            .foregroundStyle(PathPulseColor.black)
+                        Text("Carret runs a ₹1 penny-drop to verify ownership. Takes about a minute.")
+                            .font(PathPulseFont.bodySmall)
+                            .foregroundStyle(PathPulseColor.black60)
+                    }
+                }
+                Button(action: { bankSheetOpen = true }) {
+                    Text("Register bank account")
+                        .font(PathPulseFont.labelMedium)
+                        .foregroundStyle(PathPulseColor.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(PathPulseColor.black)
+                        .clipShape(Capsule())
+                }
+                .padding(.top, PpSpace.xs)
+            }
+        }
+    }
+
+    @ViewBuilder private var pendingBankBanner: some View {
+        HStack(spacing: PpSpace.sm) {
+            ProgressView().tint(PathPulseColor.mint)
+            Text("Verifying your bank with a ₹1 penny-drop. This usually takes under a minute.")
+                .font(PathPulseFont.bodySmall)
+                .foregroundStyle(PathPulseColor.black60)
+        }
+        .padding(PpSpace.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PathPulseColor.mint26)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func formatUsdc(_ v: Double) -> String {
+        let fmt = NumberFormatter()
+        fmt.minimumFractionDigits = 2
+        fmt.maximumFractionDigits = 2
+        return fmt.string(from: NSNumber(value: v)) ?? String(format: "%.2f", v)
     }
 
     @ViewBuilder private var kycBanner: some View {
@@ -157,12 +281,249 @@ struct OffRampView: View {
             async let s = data.offRampSessions(limit: 50)
             async let l = data.carretLimits()
             async let r = data.resumeCarretKyc()
+            async let b = data.listCarretBanks()
+            async let w = data.carretWallets()
             sessions = try await s.items
-            // Both are best-effort — missing sub-account etc. leaves them hidden.
+            // Best-effort — a missing sub-account etc. leaves each hidden.
             limits = (try? await l)
             resume = (try? await r) ?? nil
+            banks = (try? await b)
+            wallets = (try? await w)
         } catch {
             errorMessage = UserErrors.message(error)
+        }
+    }
+}
+
+// MARK: - Bank registration sheet
+
+/// Register a payout bank against the driver's Carret sub-account.
+/// Fires POST /v1/carret/banks, then polls listCarretBanks every 4s
+/// so the driver watches "Pending" → "Verified" without leaving the sheet.
+private struct BankRegistrationSheet: View {
+    let data: DataRepository
+    let existingBanks: [CarretBank]
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var accountNo: String = ""
+    @State private var confirmAccountNo: String = ""
+    @State private var ifsc: String = ""
+    @State private var holder: String = ""
+    @State private var bankName: String = ""
+    @State private var submitting = false
+    @State private var error: String? = nil
+    @State private var banks: [CarretBank]
+    @State private var pollTask: Task<Void, Never>? = nil
+
+    init(data: DataRepository, existingBanks: [CarretBank]) {
+        self.data = data
+        self.existingBanks = existingBanks
+        _banks = State(initialValue: existingBanks)
+    }
+
+    private var ifscValid: Bool { ifsc.range(of: "^[A-Z]{4}0[A-Z0-9]{6}$", options: .regularExpression) != nil }
+    private var accountValid: Bool { accountNo.range(of: "^[0-9]{9,18}$", options: .regularExpression) != nil }
+    private var accountsMatch: Bool { accountNo == confirmAccountNo && !accountNo.isEmpty }
+    private var canSubmit: Bool {
+        !submitting && ifscValid && accountValid && accountsMatch
+            && !holder.trimmingCharacters(in: .whitespaces).isEmpty
+            && !bankName.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+    private var hasVerified: Bool { banks.contains { $0.status.lowercased() == "verified" } }
+    private var hasPending: Bool { banks.contains { $0.status.lowercased() == "pending" } }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                PathPulseColor.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: PpSpace.lg) {
+                        if !banks.isEmpty { banksList }
+                        if !hasVerified { form }
+                    }
+                    .padding(PpSize.screenPadding)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Payout bank")
+                        .font(PathPulseFont.labelLarge)
+                        .foregroundStyle(PathPulseColor.black)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark").foregroundStyle(PathPulseColor.black)
+                    }
+                }
+            }
+        }
+        .onAppear { pollPending() }
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    @ViewBuilder private var banksList: some View {
+        VStack(spacing: PpSpace.sm) {
+            ForEach(banks) { b in
+                HStack(spacing: PpSpace.md) {
+                    ZStack {
+                        Circle().fill(colorFor(b.status).opacity(0.18)).frame(width: 36, height: 36)
+                        Image(systemName: iconFor(b.status))
+                            .foregroundStyle(colorFor(b.status))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(b.bank_name) ••\(b.last4)")
+                            .font(PathPulseFont.bodyMedium)
+                            .foregroundStyle(PathPulseColor.black)
+                        Text(b.bank_ifsc)
+                            .font(PathPulseFont.bodySmall)
+                            .foregroundStyle(PathPulseColor.black50)
+                    }
+                    Spacer()
+                    PpStatusPill(text: b.status.capitalized, color: colorFor(b.status))
+                }
+                .padding(PpSpace.md)
+                .background(PathPulseColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(PathPulseColor.black05, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        }
+    }
+
+    @ViewBuilder private var form: some View {
+        VStack(alignment: .leading, spacing: PpSpace.md) {
+            Text(hasVerified ? "Add another bank" : "Register your bank")
+                .font(PathPulseFont.titleMedium)
+                .foregroundStyle(PathPulseColor.black)
+            Text("Carret runs a ₹1 penny-drop to prove you own the account. Funds are refunded automatically.")
+                .font(PathPulseFont.bodySmall)
+                .foregroundStyle(PathPulseColor.black60)
+
+            if let error {
+                HStack(alignment: .top, spacing: PpSpace.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(PathPulseColor.red600)
+                    Text(error)
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.red700)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(PpSpace.md)
+                .background(PathPulseColor.red100)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            field("Account holder name (as per bank)", text: $holder, placeholder: "Aditya Kumar Singh", cap: .words)
+            field("Bank name", text: $bankName, placeholder: "HDFC Bank", cap: .words)
+            field("IFSC", text: Binding(
+                get: { ifsc },
+                set: { ifsc = $0.uppercased().filter { $0.isLetter || $0.isNumber } }
+            ), placeholder: "HDFC0001234", cap: .allCharacters, keyboard: .asciiCapable, valid: ifscValid || ifsc.isEmpty)
+            field("Account number", text: Binding(
+                get: { accountNo },
+                set: { accountNo = $0.filter(\.isNumber) }
+            ), placeholder: "9-18 digits", keyboard: .numberPad, valid: accountValid || accountNo.isEmpty)
+            field("Re-enter account number", text: Binding(
+                get: { confirmAccountNo },
+                set: { confirmAccountNo = $0.filter(\.isNumber) }
+            ), placeholder: "Must match above", keyboard: .numberPad, valid: accountsMatch || confirmAccountNo.isEmpty)
+
+            Button(action: { Task { await submit() } }) {
+                HStack(spacing: PpSpace.sm) {
+                    if submitting { ProgressView().tint(PathPulseColor.white) }
+                    Text(submitting ? "Verifying…" : "Register bank")
+                        .font(PathPulseFont.labelLarge)
+                        .foregroundStyle(PathPulseColor.white)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(canSubmit ? PathPulseColor.black : PathPulseColor.black50)
+                .clipShape(Capsule())
+            }
+            .disabled(!canSubmit)
+            .padding(.top, PpSpace.sm)
+        }
+    }
+
+    @ViewBuilder private func field(
+        _ label: String,
+        text: Binding<String>,
+        placeholder: String,
+        cap: TextInputAutocapitalization = .never,
+        keyboard: UIKeyboardType = .default,
+        valid: Bool = true
+    ) -> some View {
+        VStack(alignment: .leading, spacing: PpSpace.xs) {
+            Text(label)
+                .font(PathPulseFont.labelSmall)
+                .foregroundStyle(PathPulseColor.black50)
+            TextField(placeholder, text: text)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(cap)
+                .keyboardType(keyboard)
+                .font(PathPulseFont.bodyMedium)
+                .padding(PpSpace.md)
+                .background(PathPulseColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(valid ? PathPulseColor.black15 : PathPulseColor.red600, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    @MainActor private func submit() async {
+        guard canSubmit else { return }
+        submitting = true; error = nil
+        defer { submitting = false }
+        do {
+            let bank = try await data.registerCarretBank(.init(
+                bank_account_no: accountNo,
+                bank_ifsc: ifsc,
+                bank_account_name: holder.trimmingCharacters(in: .whitespaces),
+                bank_name: bankName.trimmingCharacters(in: .whitespaces)
+            ))
+            // Optimistic — merge/replace by id.
+            banks = banks.filter { $0.id != bank.id } + [bank]
+            accountNo = ""; confirmAccountNo = ""; ifsc = ""; holder = ""; bankName = ""
+            pollPending()
+        } catch {
+            self.error = UserErrors.message(error)
+        }
+    }
+
+    private func pollPending() {
+        pollTask?.cancel()
+        pollTask = Task {
+            while !Task.isCancelled {
+                if !hasPending { return }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if Task.isCancelled { return }
+                if let fresh = try? await data.listCarretBanks() {
+                    await MainActor.run { banks = fresh }
+                }
+            }
+        }
+    }
+
+    private func colorFor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "verified": return PathPulseColor.mint
+        case "pending":  return PathPulseColor.accentAmber
+        case "failed":   return PathPulseColor.red600
+        default:         return PathPulseColor.black40
+        }
+    }
+
+    private func iconFor(_ status: String) -> String {
+        switch status.lowercased() {
+        case "verified": return "checkmark.seal.fill"
+        case "pending":  return "clock.fill"
+        case "failed":   return "xmark.octagon.fill"
+        default:         return "building.columns"
         }
     }
 }
@@ -172,6 +533,7 @@ struct OffRampView: View {
 private struct WithdrawSheet: View {
     let data: DataRepository
     let limits: CarretLimits?
+    var wallets: [CarretWalletBalance]? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var amount: String = ""
@@ -261,9 +623,20 @@ private struct WithdrawSheet: View {
 
     @ViewBuilder private var amountCard: some View {
         VStack(alignment: .leading, spacing: PpSpace.xs) {
-            Text("Amount")
-                .font(PathPulseFont.labelSmall)
-                .foregroundStyle(PathPulseColor.black50)
+            HStack {
+                Text("Amount")
+                    .font(PathPulseFont.labelSmall)
+                    .foregroundStyle(PathPulseColor.black50)
+                Spacer()
+                if let usdc = wallets?.first(where: { $0.asset.uppercased() == "USDC" }),
+                   let n = Double(usdc.available ?? usdc.balance) {
+                    Button(action: { amount = trimTrailingZeros(String(format: "%.2f", n)); rescheduleQuote() }) {
+                        Text("Max \(String(format: "%.2f", n))")
+                            .font(PathPulseFont.labelSmall)
+                            .foregroundStyle(PathPulseColor.mintInk)
+                    }
+                }
+            }
             HStack(spacing: PpSpace.sm) {
                 TextField("0", text: $amount)
                     .keyboardType(.decimalPad)
@@ -514,6 +887,14 @@ private struct WithdrawSheet: View {
         }
     }
 
+    private func trimTrailingZeros(_ s: String) -> String {
+        guard s.contains(".") else { return s }
+        var out = s
+        while out.hasSuffix("0") { out.removeLast() }
+        if out.hasSuffix(".") { out.removeLast() }
+        return out
+    }
+
     private func sanitize(_ raw: String) -> String {
         var s = raw.filter { $0.isNumber || $0 == "." }
         if let firstDot = s.firstIndex(of: ".") {
@@ -568,5 +949,285 @@ private struct OffRampRow: View {
             }
         }
         .padding(.vertical, PpSpace.md)
+    }
+}
+
+// MARK: - On-ramp sheet
+
+/// Deposit INR from the driver's verified bank onto their Carret trading
+/// wallet. Same {amount → quote → confirm → success} shape as the
+/// withdrawal sheet, direction reversed (INR → USDC).
+private struct OnRampSheet: View {
+    let data: DataRepository
+    let bankHint: CarretBank?
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var amount: String = "1000"
+    @State private var quote: OnRampQuote? = nil
+    @State private var quoting = false
+    @State private var placing = false
+    @State private var placed: OnRampSession? = nil
+    @State private var error: String? = nil
+    @State private var quoteTask: Task<Void, Never>? = nil
+    @State private var pollTask: Task<Void, Never>? = nil
+
+    private var canPlace: Bool {
+        guard let n = Double(amount), n > 0 else { return false }
+        return quote != nil && !placing && !quoting
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                PathPulseColor.background.ignoresSafeArea()
+                if let s = placed { success(s) } else { form }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(placed == nil ? "Add funds" : "Deposit placed")
+                        .font(PathPulseFont.labelLarge)
+                        .foregroundStyle(PathPulseColor.black)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark").foregroundStyle(PathPulseColor.black)
+                    }
+                }
+            }
+        }
+        .onAppear { rescheduleQuote() }
+        .onDisappear { quoteTask?.cancel(); pollTask?.cancel() }
+    }
+
+    @ViewBuilder private var form: some View {
+        VStack(spacing: 0) {
+            if let error {
+                HStack(alignment: .top, spacing: PpSpace.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(PathPulseColor.red600)
+                    Text(error)
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.red700)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(PpSpace.md)
+                .background(PathPulseColor.red100)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, PpSize.screenPadding)
+                .padding(.top, PpSpace.md)
+            }
+
+            ScrollView {
+                VStack(spacing: PpSpace.lg) {
+                    if let b = bankHint {
+                        HStack(spacing: PpSpace.sm) {
+                            Image(systemName: "building.columns.fill")
+                                .foregroundStyle(PathPulseColor.mint)
+                            Text("From \(b.bank_name) ••\(b.last4)")
+                                .font(PathPulseFont.labelSmall)
+                                .foregroundStyle(PathPulseColor.mintInk)
+                        }
+                        .padding(.horizontal, PpSpace.md)
+                        .padding(.vertical, PpSpace.xs)
+                        .background(PathPulseColor.mint26)
+                        .clipShape(Capsule())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    VStack(alignment: .leading, spacing: PpSpace.xs) {
+                        Text("Amount")
+                            .font(PathPulseFont.labelSmall)
+                            .foregroundStyle(PathPulseColor.black50)
+                        HStack(spacing: PpSpace.sm) {
+                            Text("₹")
+                                .font(PathPulseFont.titleLarge)
+                                .foregroundStyle(PathPulseColor.black40)
+                            TextField("1000", text: $amount)
+                                .keyboardType(.decimalPad)
+                                .font(PathPulseFont.displaySmall)
+                                .foregroundStyle(PathPulseColor.black)
+                                .onChange(of: amount) { _, new in
+                                    amount = new.filter { $0.isNumber || $0 == "." }
+                                    rescheduleQuote()
+                                }
+                            Text("INR")
+                                .font(PathPulseFont.titleLarge)
+                                .foregroundStyle(PathPulseColor.black40)
+                        }
+                        .padding(PpSpace.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(PathPulseColor.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(PathPulseColor.black15, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+
+                    if let q = quote { quotePreview(q) }
+                    if quoting {
+                        HStack(spacing: PpSpace.sm) {
+                            ProgressView().tint(PathPulseColor.mint)
+                            Text("Fetching rate…")
+                                .font(PathPulseFont.bodySmall)
+                                .foregroundStyle(PathPulseColor.black50)
+                        }
+                    }
+                }
+                .padding(PpSize.screenPadding)
+            }
+
+            Divider().background(PathPulseColor.black05)
+            Button(action: { Task { await place() } }) {
+                HStack(spacing: PpSpace.sm) {
+                    if placing { ProgressView().tint(PathPulseColor.white) }
+                    Text(placing ? "Placing…" : "Confirm deposit")
+                        .font(PathPulseFont.labelLarge)
+                        .foregroundStyle(PathPulseColor.white)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(canPlace ? PathPulseColor.black : PathPulseColor.black50)
+                .clipShape(Capsule())
+            }
+            .disabled(!canPlace)
+            .padding(.horizontal, PpSize.screenPadding)
+            .padding(.vertical, PpSpace.md)
+        }
+    }
+
+    @ViewBuilder private func quotePreview(_ q: OnRampQuote) -> some View {
+        VStack(alignment: .leading, spacing: PpSpace.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("You receive")
+                    .font(PathPulseFont.labelMedium)
+                    .foregroundStyle(PathPulseColor.black60)
+                Spacer()
+                Text("\(q.cryptoAmount) \(q.asset)")
+                    .font(PathPulseFont.displaySmall)
+                    .foregroundStyle(PathPulseColor.black)
+            }
+            HStack {
+                Text("Rate")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black50)
+                Spacer()
+                Text("₹\(q.rate) / \(q.asset)")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black70)
+            }
+            ForEach(q.fees) { f in
+                HStack {
+                    Text(f.label)
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black50)
+                    Spacer()
+                    Text("\(f.currency == "INR" ? "₹" : "")\(f.amount)")
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black70)
+                }
+            }
+            HStack(spacing: PpSpace.xs) {
+                Image(systemName: q.live ? "bolt.fill" : "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(q.live ? PathPulseColor.mint : PathPulseColor.black40)
+                Text(q.live ? "Live quote · valid 10 min" : "Indicative rate — final at confirm")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black50)
+            }
+        }
+        .padding(PpSpace.md)
+        .background(PathPulseColor.surface)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(PathPulseColor.black05, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    @ViewBuilder private func success(_ s: OnRampSession) -> some View {
+        VStack(spacing: PpSpace.xl) {
+            Spacer(minLength: 60)
+            ZStack {
+                Circle().fill(PathPulseColor.mint26).frame(width: 140, height: 140)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 64, weight: .semibold))
+                    .foregroundStyle(PathPulseColor.mint)
+            }
+            VStack(spacing: PpSpace.sm) {
+                Text("Deposit placed")
+                    .font(PathPulseFont.headlineMedium)
+                    .foregroundStyle(PathPulseColor.black)
+                Text("₹\(s.amount) → \(s.cryptoAmount ?? "…") \(s.asset). Carret will credit your trading wallet as the order fills.")
+                    .font(PathPulseFont.bodyMedium)
+                    .foregroundStyle(PathPulseColor.black60)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, PpSize.screenPadding)
+            }
+            Spacer()
+            Button(action: { dismiss() }) {
+                Text("Done")
+                    .font(PathPulseFont.labelLarge)
+                    .foregroundStyle(PathPulseColor.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(PathPulseColor.black)
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, PpSize.screenPadding)
+            .padding(.bottom, PpSpace.xl)
+        }
+        .onAppear { pollTerminal(id: s.id) }
+    }
+
+    private func rescheduleQuote() {
+        quoteTask?.cancel()
+        quote = nil
+        let a = amount
+        guard let n = Double(a), n > 0 else { quoting = false; return }
+        quoting = true
+        quoteTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            if Task.isCancelled { return }
+            do {
+                let q = try await data.onRampQuote(amount: a)
+                await MainActor.run {
+                    if a == amount { self.quote = q; self.error = nil }
+                    self.quoting = false
+                }
+            } catch {
+                await MainActor.run {
+                    if a == amount { self.error = UserErrors.message(error); self.quote = nil }
+                    self.quoting = false
+                }
+            }
+        }
+    }
+
+    @MainActor private func place() async {
+        guard canPlace else { return }
+        placing = true; error = nil
+        defer { placing = false }
+        do {
+            placed = try await data.createOnRampSession(amount: amount)
+        } catch {
+            self.error = UserErrors.message(error)
+        }
+    }
+
+    private func pollTerminal(id: String) {
+        pollTask?.cancel()
+        pollTask = Task {
+            let terminal: Set<String> = ["filled", "partially_filled", "cancelled", "partially_cancelled"]
+            while !Task.isCancelled {
+                do {
+                    let fresh = try await data.onRampSession(id: id)
+                    await MainActor.run { placed = fresh }
+                    if terminal.contains(fresh.status.lowercased()) { return }
+                } catch { /* keep polling */ }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
     }
 }
