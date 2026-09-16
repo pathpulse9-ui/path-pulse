@@ -28,6 +28,7 @@ import {
   createOfframpQuote,
   getConfiguredDepositAddress,
   getOfframpOrder,
+  listBanks,
   mapCarretStatus,
   placeOfframpOrder,
   resolveOfframpRouteId,
@@ -188,13 +189,7 @@ const carretLiveProvider: OffRampProvider = {
 
     const routeId = await resolveOfframpRouteId();
     const quote = await createOfframpQuote({ routeId, amount: session.amount });
-    if (!env.carret.bankId) {
-      throw httpError(
-        'CARRET_BANK_ID not configured — register a bank first (POST /bank/) and set the env',
-        500,
-        'ConfigError',
-      );
-    }
+
     // PAT-80: refuse upfront if this order would push the driver's Carret
     // sub-account over the ₹30K/day withdraw_inr cap. The check runs after
     // the quote (so we know the exact INR amount) but before place_order
@@ -207,7 +202,28 @@ const carretLiveProvider: OffRampProvider = {
       await assertUnderLimit(mapping.carretAccountId, 'withdraw_inr', fiatInr);
     }
 
-    const order = await placeOfframpOrder({ quoteId: quote.id, bankId: env.carret.bankId });
+    // Prefer the driver's own registered + verified bank; fall back to
+    // the env shared test bank when they haven't added one (dev/legacy).
+    // Prod launch flips this so a missing driver bank blocks the order
+    // instead of silently paying out to the platform's shared bank.
+    let bankId: number | string | undefined = env.carret.bankId || undefined;
+    if (mapping) {
+      try {
+        const banks = await listBanks(mapping.carretAccountId);
+        const preferred =
+          banks.find((b) => String(b.status).toLowerCase() === 'verified') ?? banks[0];
+        if (preferred) bankId = preferred.id;
+      } catch { /* Carret unreachable — env fallback stays */ }
+    }
+    if (!bankId) {
+      throw httpError(
+        'No verified bank on your Carret account. Register a bank first, then retry.',
+        422,
+        'NoBankRegistered',
+      );
+    }
+
+    const order = await placeOfframpOrder({ quoteId: quote.id, bankId });
     s.carretQuoteId = quote.id;
     s.carretOrderId = order.id;
     session.fiatAmountEstimate = fiatInr.toFixed(2);

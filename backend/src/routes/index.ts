@@ -62,6 +62,8 @@ import {
   getKycStatus,
   cleanupKyc,
   whitelistWallet,
+  registerBank,
+  listBanks,
   type CarretKycStatusResponse,
 } from '../services/carret.js';
 import { carretLive } from '../config/env.js';
@@ -1074,4 +1076,49 @@ router.post('/v1/carret/kyc/cleanup', requireSession(), async (req, res, next) =
   } catch (e) {
     next(e);
   }
+});
+
+// ── Banking (production off-ramp destination) ──────────────────────
+//
+// A driver must have a registered + verified bank on Carret before their
+// first withdrawal, otherwise Carret's /place_order/ 400s. These routes let
+// the mobile app + web dashboard collect IFSC + account number in a wizard
+// step and forward to Carret's POST /bank/. Carret runs a ₹1 penny-drop
+// against the account to verify ownership; the returned bank_id is the
+// value we pin to future off-ramp orders (replacing the env fallback).
+const registerBankSchema = z.object({
+  bank_account_no: z.string().regex(/^\d{9,18}$/, 'account number must be 9-18 digits'),
+  bank_ifsc: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'IFSC must be 11 chars, e.g. HDFC0001234'),
+  bank_account_name: z.string().min(1).max(120),
+  bank_name: z.string().min(1).max(120),
+});
+
+router.get('/v1/carret/banks', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const mapping = await getMapping(session.userId);
+    if (!mapping) { res.json({ items: [] }); return; }
+    const banks = await listBanks(mapping.carretAccountId);
+    res.json({ items: banks });
+  } catch (e) { next(e); }
+});
+
+router.post('/v1/carret/banks', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.status(422).json({ error: 'NoMapping', message: 'Provision your Carret sub-account first' });
+      return;
+    }
+    const parsed = registerBankSchema.parse(req.body);
+    const bank = await registerBank({
+      accountId: mapping.carretAccountId,
+      bankAccountNo: parsed.bank_account_no,
+      bankIfsc: parsed.bank_ifsc.toUpperCase(),
+      bankAccountName: parsed.bank_account_name,
+      bankName: parsed.bank_name,
+    });
+    res.json(bank);
+  } catch (e) { next(e); }
 });

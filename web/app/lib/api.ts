@@ -541,3 +541,33 @@ export function cleanupCarretKyc(accountId: number | string) {
     body: JSON.stringify({ account_id: accountId }),
   });
 }
+
+/**
+ * One registered bank on the driver's Carret sub-account. Status flips from
+ * pending → verified after Carret's ₹1 penny-drop test lands (~a minute).
+ */
+export interface CarretBank {
+  id: number;
+  account_id: number;
+  status: 'verified' | 'pending' | 'failed' | string;
+  bank_account_no: string;
+  bank_ifsc: string;
+  bank_account_name: string;
+  bank_name: string;
+}
+
+export function listCarretBanks() {
+  return apiFetch<{ items: CarretBank[] }>('/v1/carret/banks');
+}
+
+export function registerCarretBank(bank: {
+  bank_account_no: string;
+  bank_ifsc: string;
+  bank_account_name: string;
+  bank_name: string;
+}) {
+  return apiFetch<CarretBank>('/v1/carret/banks', {
+    method: 'POST',
+    body: JSON.stringify(bank),
+  });
+}
