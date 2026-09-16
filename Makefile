@@ -50,8 +50,11 @@ help:
 	grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 check: ## typecheck + build + test locally
-	if [ "$(CHECK)" != 1 ]; then echo "check: skipped (CHECK=0)"; exit 0; fi
-	corepack pnpm -r --if-present run typecheck && corepack pnpm -r --if-present run build && (cd backend && corepack pnpm test)
+	@if [ "$(CHECK)" != 1 ]; then \
+	  echo "check: skipped (CHECK=0)"; \
+	else \
+	  corepack pnpm -r --if-present run typecheck && corepack pnpm -r --if-present run build && (cd backend && corepack pnpm test); \
+	fi
 
 login:
 	aws ecr get-login-password --region $(REGION) | docker login --username AWS --password-stdin $(ECR) >/dev/null && echo "ecr: logged in"
