@@ -32,6 +32,14 @@ struct DataRepository: Sendable {
         return try await client.post("v1/offramp/sessions", body: Body(amount: amount))
     }
 
+    /// GET /v1/offramp/sessions/{id} — poll a single session for the
+    /// Carret order-status transitions (open → filled | partially_filled |
+    /// cancelled | partially_cancelled). Used by the withdrawal sheet's
+    /// success page to show the driver whether the payout hit their bank.
+    func offRampSession(id: String) async throws -> OffRampSession {
+        try await client.get("v1/offramp/sessions/\(id)")
+    }
+
     // MARK: - SCOUT
 
     func scoutRoster() async throws -> ScoutRoster {

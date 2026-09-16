@@ -181,6 +181,7 @@ private struct WithdrawSheet: View {
     @State private var placedSession: OffRampSession? = nil
     @State private var error: String? = nil
     @State private var quoteTask: Task<Void, Never>? = nil
+    @State private var pollTask: Task<Void, Never>? = nil
 
     var body: some View {
         NavigationStack {
@@ -323,11 +324,19 @@ private struct WithdrawSheet: View {
                 Image(systemName: q.live ? "bolt.fill" : "clock.arrow.circlepath")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(q.live ? PathPulseColor.mint : PathPulseColor.black40)
-                Text(q.live ? "Live quote from \(q.provider.capitalized)" : "Indicative rate — final rate confirmed at placement")
+                Text(q.live ? "Live quote from \(q.provider.capitalized) · valid 10 min" : "Indicative rate — final rate locked at confirm")
                     .font(PathPulseFont.bodySmall)
                     .foregroundStyle(PathPulseColor.black50)
             }
             .padding(.top, PpSpace.xs)
+            HStack(spacing: PpSpace.xs) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(PathPulseColor.black40)
+                Text("Funds are blocked the moment you confirm — the payout hits your bank once Carret marks the order filled.")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black50)
+            }
         }
         .padding(PpSpace.md)
         .background(PathPulseColor.surface)
@@ -359,23 +368,34 @@ private struct WithdrawSheet: View {
     // MARK: Success
 
     @ViewBuilder private func success(_ s: OffRampSession) -> some View {
+        let (heroBg, heroFg, heroIcon, title, subtitle) = statusStyling(for: s)
         VStack(spacing: PpSpace.xl) {
             Spacer(minLength: PpSpace.xxxl)
             ZStack {
-                Circle().fill(PathPulseColor.mint26).frame(width: 140, height: 140)
-                Image(systemName: "checkmark.circle.fill")
+                Circle().fill(heroBg).frame(width: 140, height: 140)
+                Image(systemName: heroIcon)
                     .font(.system(size: 64, weight: .semibold))
-                    .foregroundStyle(PathPulseColor.mint)
+                    .foregroundStyle(heroFg)
             }
             VStack(spacing: PpSpace.sm) {
-                Text("Withdrawal placed")
+                Text(title)
                     .font(PathPulseFont.headlineMedium)
                     .foregroundStyle(PathPulseColor.black)
-                Text("\(s.amount) \(s.asset.code) → \(s.fiatCurrency). We'll notify you when it lands in your bank.")
+                Text(subtitle)
                     .font(PathPulseFont.bodyMedium)
                     .foregroundStyle(PathPulseColor.black60)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, PpSize.screenPadding)
+                HStack(spacing: PpSpace.xs) {
+                    PpStatusPill(
+                        text: s.status.replacingOccurrences(of: "_", with: " "),
+                        color: Color.ppOffRampStatus(s.status),
+                    )
+                    Text("\(s.amount) \(s.asset.code)")
+                        .font(PathPulseFont.labelMedium)
+                        .foregroundStyle(PathPulseColor.black70)
+                }
+                .padding(.top, PpSpace.xs)
             }
             Spacer()
             Button(action: { dismiss() }) {
@@ -389,6 +409,62 @@ private struct WithdrawSheet: View {
             }
             .padding(.horizontal, PpSize.screenPadding)
             .padding(.bottom, PpSpace.xl)
+        }
+        .onAppear { pollUntilTerminal(sessionId: s.id) }
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    /// Poll the backend every 3s until the session hits a terminal state.
+    /// Mirrors Carret's `open → filled | partially_filled | cancelled |
+    /// partially_cancelled` transitions so the driver watches the payout
+    /// land in real time.
+    private func pollUntilTerminal(sessionId: String) {
+        pollTask?.cancel()
+        pollTask = Task {
+            let terminalCarret: Set<String> = ["filled", "partially_filled", "cancelled", "partially_cancelled"]
+            let terminalOurs: Set<String>  = ["completed", "error", "refunded"]
+            while !Task.isCancelled {
+                do {
+                    let fresh = try await data.offRampSession(id: sessionId)
+                    await MainActor.run { placedSession = fresh }
+                    if terminalCarret.contains(fresh.status.lowercased())
+                        || terminalOurs.contains(fresh.status.lowercased()) { return }
+                } catch { /* keep polling */ }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    /// Maps a Carret / backend status to the hero-icon, title, and subtitle
+    /// copy shown on the success screen. Intermediate states show a mint
+    /// spinner-style checkmark; terminal filled shows the full checkmark;
+    /// cancelled variants show the warning glyph.
+    private func statusStyling(for s: OffRampSession) -> (Color, Color, String, String, String) {
+        switch s.status.lowercased() {
+        case "filled", "completed":
+            return (
+                PathPulseColor.mint26, PathPulseColor.mint, "checkmark.circle.fill",
+                "Payout in your bank",
+                "\(s.amount) \(s.asset.code) → \(s.fiatCurrency) landed."
+            )
+        case "partially_filled":
+            return (
+                PathPulseColor.mint26, PathPulseColor.mint, "checkmark.circle.fill",
+                "Partially filled",
+                "Some of your \(s.asset.code) converted. The remainder is refunded."
+            )
+        case "cancelled", "partially_cancelled", "error":
+            return (
+                PathPulseColor.red100, PathPulseColor.red600, "exclamationmark.triangle.fill",
+                "Withdrawal didn't complete",
+                "Carret cancelled the order. Any blocked funds are released back to your account."
+            )
+        default:
+            return (
+                PathPulseColor.mint26, PathPulseColor.mint, "hourglass",
+                "Withdrawal placed",
+                "\(s.amount) \(s.asset.code) → \(s.fiatCurrency). Waiting for Carret to fill your order."
+            )
         }
     }
 
