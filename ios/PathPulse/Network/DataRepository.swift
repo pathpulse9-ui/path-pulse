@@ -109,8 +109,13 @@ struct DataRepository: Sendable {
         )
     }
 
+    /// GET /v1/carret/kyc/status/{accountId}. Backend proxies Carret's raw
+    /// `{success, kyc_info: {kyc_status, …}}` envelope, so we decode the
+    /// envelope and hand callers the inner `kyc_info`. This is what the
+    /// wizard's polling task consumes to route to verified/rejected.
     func getCarretKycStatus(accountId: String) async throws -> CarretKycStatus {
-        try await client.get("v1/carret/kyc/status/\(accountId)")
+        let envelope: CarretKycStatusEnvelope = try await client.get("v1/carret/kyc/status/\(accountId)")
+        return envelope.kyc_info
     }
 
     func cleanupCarretKyc(accountId: String) async throws {

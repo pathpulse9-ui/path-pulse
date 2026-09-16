@@ -244,6 +244,18 @@ struct CarretKycStatus: Codable {
     var ovd_documents: [CarretKycDocumentEntry]?
 }
 
+/// Carret wraps its `/kyc/{account_id}/` status body as
+/// `{success: Bool, kyc_info: {kyc_status, kyc_session, ovd_documents, …}}`
+/// — the backend proxies that raw shape through unchanged, so the wire
+/// type on our client is the envelope, not the inner status. Previously
+/// we tried to decode straight into `CarretKycStatus`, which silently
+/// failed every 3s poll and left the wizard stuck on "Verifying your
+/// identity" even after Carret marked the account verified.
+struct CarretKycStatusEnvelope: Codable {
+    let success: Bool
+    let kyc_info: CarretKycStatus
+}
+
 /// Response from POST /v1/carret/kyc/document — driver-facing surface
 /// only needs `success` and `message`; the nested `document` payload
 /// varies wildly per doc type so we don't decode it here.
