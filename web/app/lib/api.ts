@@ -520,8 +520,19 @@ export async function uploadCarretKycFile(params: {
   return res.json();
 }
 
-export function getCarretKycStatus(accountId: number | string) {
-  return apiFetch<CarretKycStatus>(`/v1/carret/kyc/status/${accountId}`);
+/**
+ * GET /v1/carret/kyc/status/{accountId}. Backend proxies Carret's raw
+ * envelope `{success, kyc_info: {kyc_status, kyc_session, ovd_documents}}`.
+ * Callers want the inner `kyc_info`, so unwrap before returning. Previously
+ * we tried to decode the envelope directly as CarretKycStatus, silently
+ * ended up with `undefined` on every poll, and the wizard sat forever on
+ * "Verifying your identity" even after Carret marked the account verified.
+ */
+export async function getCarretKycStatus(accountId: number | string): Promise<CarretKycStatus> {
+  const raw = await apiFetch<{ success?: boolean; kyc_info?: CarretKycStatus } & CarretKycStatus>(
+    `/v1/carret/kyc/status/${accountId}`,
+  );
+  return raw.kyc_info ?? raw;
 }
 
 export function cleanupCarretKyc(accountId: number | string) {

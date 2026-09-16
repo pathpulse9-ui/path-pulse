@@ -521,24 +521,41 @@ fun KycScreen(
 
     // On mount, ask the backend if this session (or this driver's email)
     // already has a KYC application saved. If yes, hydrate accountId and
-    // route to the right step — verified/rejected go straight to the
-    // outcome, manual_review kicks off polling. `pending` leaves the wizard
-    // where the driver last was so the persisted draft picks up mid-flow.
+    // route to the right step. Also unsticks the wizard when SharedPrefs
+    // persisted a terminal page from an earlier run but the backend has
+    // nothing (or something inconsistent) to back it up — otherwise the
+    // driver watches the checking spinner forever with no live poll.
+    // Mirrors iOS 1379e34.
     LaunchedEffect(Unit) {
+        val isTerminal = page == WizardPage.Checking ||
+            page == WizardPage.Verified || page == WizardPage.Rejected
         try {
-            val resumed = dataRepository.resumeCarretKyc() ?: return@LaunchedEffect
+            val resumed = dataRepository.resumeCarretKyc()
+            if (resumed == null) {
+                if (isTerminal) { setPage(WizardPage.Welcome); error = null }
+                return@LaunchedEffect
+            }
             if (accountId.isEmpty()) accountId = resumed.carretAccountId
             if (email.isEmpty() && resumed.email != null) email = resumed.email
             when (resumed.kycStatus) {
                 "verified" -> setPage(WizardPage.Verified)
-                "rejected" -> setPage(WizardPage.Rejected)
+                "rejected", "re_kyc" -> setPage(WizardPage.Rejected)
                 "manual_review" -> {
                     setPage(WizardPage.Checking)
                     startPolling()
                 }
-                else -> Unit // pending — stay on current persisted page
+                else -> {
+                    // pending — keep polling if we're already on checking,
+                    // otherwise snap terminal-but-stale pages back to welcome.
+                    if (page == WizardPage.Checking) startPolling()
+                    else if (page == WizardPage.Verified || page == WizardPage.Rejected) {
+                        setPage(WizardPage.Welcome); error = null
+                    }
+                }
             }
-        } catch (_: Exception) { /* silent — driver just starts fresh */ }
+        } catch (_: Exception) {
+            if (isTerminal) { setPage(WizardPage.Welcome); error = null }
+        }
     }
 }
 

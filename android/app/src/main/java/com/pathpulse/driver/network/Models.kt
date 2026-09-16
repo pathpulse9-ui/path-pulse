@@ -254,6 +254,21 @@ data class CarretKycStatus(
     val ovd_documents: List<CarretKycDocumentEntry>? = null,
 )
 
+/**
+ * Carret wraps its `/kyc/{account_id}/` status body as
+ *   { success, kyc_info: { kyc_session, kyc_status, ovd_documents, … } }
+ * — the backend proxies that raw shape through unchanged. Decode via
+ * this envelope and hand callers the inner `kyc_info`, otherwise
+ * kotlinx.serialization fails silently on every poll and the wizard
+ * sits forever on "Verifying your identity" even after Carret has
+ * marked the account verified.
+ */
+@Serializable
+data class CarretKycStatusEnvelope(
+    val success: Boolean,
+    val kyc_info: CarretKycStatus,
+)
+
 // PAT-80: Carret daily-limit tracking
 @Serializable
 data class CarretLimitsRemaining(

@@ -176,8 +176,16 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
         ).ensureSuccess()
     }
 
-    suspend fun getCarretKycStatus(accountId: String): CarretKycStatus =
-        client.get("$baseUrl/v1/carret/kyc/status/$accountId").ensureSuccess().body()
+    /**
+     * GET /v1/carret/kyc/status/{accountId} — decode the envelope Carret
+     * returns and hand callers the inner kyc_info. See CarretKycStatusEnvelope
+     * for the reason we can't decode straight into CarretKycStatus.
+     */
+    suspend fun getCarretKycStatus(accountId: String): CarretKycStatus {
+        val env: CarretKycStatusEnvelope =
+            client.get("$baseUrl/v1/carret/kyc/status/$accountId").ensureSuccess().body()
+        return env.kyc_info
+    }
 
     suspend fun cleanupCarretKyc(accountId: String) {
         client.post("$baseUrl/v1/carret/kyc/cleanup") {

@@ -346,21 +346,38 @@ export default function KycPage() {
   }, [page, firstName, lastName, email, phone, dobIso, panDobIso, gender, occupation, income, panNumber, panName, sessionId, accountId]);
 
   // ── Resume on mount ─────────────────────────────────────────
-  // If the backend has a saved application for this session (or for this
-  // driver's email from an earlier install/browser), hydrate accountId +
-  // route to the right step. Failures silently fall back to a fresh start.
+  // Hydrates accountId + routes to the right step from the backend's
+  // saved application. The tricky bit: `page` is persisted to localStorage,
+  // so terminal pages (.checking / .verified / .rejected) survive a hard
+  // refresh — a stale one leaves the driver watching a spinner that never
+  // resolves. If we can't back the persisted terminal state with an
+  // authoritative status from the backend, snap to welcome so the wizard
+  // is usable again. Mirrors iOS 1379e34.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const isTerminal = page === 'checking' || page === 'verified' || page === 'rejected';
       try {
         const r = await resumeCarretKyc();
-        if (cancelled || !r) return;
+        if (cancelled) return;
+        if (!r) {
+          if (isTerminal) { setPage('welcome'); setError(null); }
+          return;
+        }
         if (!accountId) setAccountId(r.carretAccountId);
         if (!email && r.email) setEmail(r.email);
-        if (r.kycStatus === 'verified') setPage('verified');
-        else if (r.kycStatus === 'rejected' || (r.kycStatus as string) === 're_kyc') setPage('rejected');
-        else if (r.kycStatus === 'manual_review') setPage('checking');
-      } catch { /* silent — driver just starts fresh */ }
+        const s = r.kycStatus as string;
+        if (s === 'verified')                        setPage('verified');
+        else if (s === 'rejected' || s === 're_kyc') setPage('rejected');
+        else if (s === 'manual_review')              setPage('checking');
+        else {
+          // pending — keep polling if we're already on checking, otherwise
+          // snap terminal-but-stale pages back to welcome.
+          if (page === 'verified' || page === 'rejected') { setPage('welcome'); setError(null); }
+        }
+      } catch {
+        if (isTerminal) { setPage('welcome'); setError(null); }
+      }
     })();
     return () => { cancelled = true; };
     // Run once on mount — deps intentionally empty.
