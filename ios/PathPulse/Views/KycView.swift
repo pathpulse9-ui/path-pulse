@@ -593,6 +593,27 @@ struct KycView: View {
             }
             .padding(.top, PpSpace.lg)
         }
+        .onAppear(perform: prefillSecondaryFromEarlier)
+    }
+
+    /// Carry the name + DOB the driver already typed on the Name / DOB steps
+    /// forward into the Secondary-ID fields so they don't have to re-type
+    /// identical info. Only fills when the target field is empty — a manual
+    /// edit is never overwritten.
+    private func prefillSecondaryFromEarlier() {
+        if secondaryName.isEmpty {
+            let full = [firstName, lastName]
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            if !full.isEmpty { secondaryName = full }
+        }
+        if secondarySurname.isEmpty, !lastName.isEmpty {
+            secondarySurname = lastName.trimmingCharacters(in: .whitespaces)
+        }
+        if secondaryDobDate == nil, let dob = dobDate {
+            secondaryDobDate = dob
+        }
     }
 
     @ViewBuilder
@@ -667,6 +688,7 @@ struct KycView: View {
                     selection: Binding(get: { secondaryDateOfIssueDate }, set: { secondaryDateOfIssueDate = $0 }),
                     label: "Date of issue",
                     isPresented: $showSecondaryIssueSheet,
+                    kind: .dateOfIssue,
                 )
                 datePickerCard(
                     selection: Binding(get: { secondaryDobDate }, set: { secondaryDobDate = $0 }),
@@ -888,10 +910,9 @@ struct KycView: View {
         selection: Binding<Date?>,
         label: String,
         isPresented: Binding<Bool>,
+        kind: DatePickerKind = .dateOfBirth,
     ) -> some View {
-        // Reasonable KYC window: 100 years back → 18 years old today.
-        let maxDate = Calendar.current.date(byAdding: .year, value: -18, to: Date()) ?? Date()
-        let minDate = Calendar.current.date(byAdding: .year, value: -100, to: Date()) ?? Date()
+        let (minDate, maxDate) = kind.range
         return VStack(alignment: .leading, spacing: PpSpace.xs) {
             Text(label).font(PathPulseFont.labelSmall).foregroundStyle(PathPulseColor.black50)
             Button {
@@ -919,13 +940,20 @@ struct KycView: View {
             .buttonStyle(.plain)
         }
         .sheet(isPresented: isPresented) {
-            datePickerSheet(selection: selection, minDate: minDate, maxDate: maxDate, isPresented: isPresented)
+            datePickerSheet(
+                selection: selection,
+                title: label,
+                minDate: minDate,
+                maxDate: maxDate,
+                isPresented: isPresented,
+            )
         }
     }
 
     @ViewBuilder
     private func datePickerSheet(
         selection: Binding<Date?>,
+        title: String,
         minDate: Date,
         maxDate: Date,
         isPresented: Binding<Bool>,
@@ -935,7 +963,7 @@ struct KycView: View {
                 Button("Cancel") { isPresented.wrappedValue = false }
                     .foregroundStyle(PathPulseColor.black60)
                 Spacer()
-                Text("Date of birth")
+                Text(title)
                     .font(PathPulseFont.labelLarge)
                     .foregroundStyle(PathPulseColor.black)
                 Spacer()
@@ -1395,6 +1423,32 @@ private enum WizardPage: Int, CaseIterable {
 private struct WizardAction {
     let label: String
     let busyLabel: String
+}
+
+/// The two acceptable date windows the wizard's date picker uses.
+///
+/// `dateOfBirth` — 18 years old today back to 100 years, the standard
+/// KYC-eligible birth range.
+/// `dateOfIssue` — a document issue date; the last 30 years up to today.
+enum DatePickerKind {
+    case dateOfBirth
+    case dateOfIssue
+
+    /// (min, max) inclusive range the picker allows.
+    var range: (Date, Date) {
+        let cal = Calendar.current
+        let today = Date()
+        switch self {
+        case .dateOfBirth:
+            let max = cal.date(byAdding: .year, value: -18,  to: today) ?? today
+            let min = cal.date(byAdding: .year, value: -100, to: today) ?? today
+            return (min, max)
+        case .dateOfIssue:
+            let max = today
+            let min = cal.date(byAdding: .year, value: -30, to: today) ?? today
+            return (min, max)
+        }
+    }
 }
 
 /// The four secondary-ID options Carret accepts alongside PAN.
