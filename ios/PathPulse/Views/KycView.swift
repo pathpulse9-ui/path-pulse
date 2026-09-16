@@ -1263,15 +1263,16 @@ struct KycView: View {
         } catch { self.error = UserErrors.message(error) }
     }
 
-    /// Welcome-page "Start fresh" — wipes the local draft AND asks Carret to
-    /// delete any pending KYC session on the current sub-account so a fresh
-    /// initiate isn't blocked by a stale `already-in-pending-state` error.
+    /// Welcome-page "Start fresh" — full hard reset on both sides so the next
+    /// KYC attempt is genuinely a new user, not silently adopted back into
+    /// the previous accountId keyed on the (unchanged) guest session cookie.
+    /// The single `session/reset` call:
+    ///   • runs Carret's /kyc/cleanup for the currently mapped accountId
+    ///   • deletes the backend's carret_subaccounts mapping row
+    /// After that, `clearDraft()` wipes @AppStorage. Any resume-on-mount
+    /// or provision-subaccount call after this starts from a blank slate.
     @MainActor private func freshStart() async {
-        if !accountId.isEmpty {
-            // Best-effort — if Carret's cleanup fails (network, or the account
-            // was never provisioned), just carry on with the local wipe.
-            _ = try? await data.cleanupCarretKyc(accountId: accountId)
-        }
+        _ = try? await data.resetCarretSession()
         pollingTask?.cancel()
         clearDraft()
         error = nil

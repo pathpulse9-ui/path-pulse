@@ -140,6 +140,17 @@ export async function upsertMapping(m: CarretMapping): Promise<CarretMapping> {
   return m;
 }
 
+/**
+ * Delete the mapping row for a session's userId. Called by the wizard's
+ * "Start fresh" so a subsequent `provision-subaccount` doesn't silently
+ * return the stale row (which would ignore whatever new email/phone the
+ * driver just typed and adopt them back into the old Carret account).
+ */
+export async function deleteMapping(userId: string): Promise<void> {
+  if (!hasDb()) { memoryStore.delete(userId); return; }
+  await db().query('delete from carret_subaccounts where user_id = $1', [userId]);
+}
+
 export async function markWalletWhitelisted(userId: string): Promise<void> {
   const now = new Date().toISOString();
   if (!hasDb()) {

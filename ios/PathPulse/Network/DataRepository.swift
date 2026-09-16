@@ -61,6 +61,15 @@ struct DataRepository: Sendable {
         try await client.getOptional("v1/carret/resume")
     }
 
+    /// POST /v1/carret/session/reset — cleans up Carret's pending KYC session
+    /// for our current mapping AND deletes the backend mapping row. Powers
+    /// the wizard's Start-fresh affordance so the next attempt is truly
+    /// clean on both sides. Idempotent (safe to call with no mapping).
+    @discardableResult
+    func resetCarretSession() async throws -> CarretResetResponse {
+        try await client.post("v1/carret/session/reset")
+    }
+
     func initiateCarretKyc(accountId: String) async throws -> CarretKycInitiateResponse {
         struct Body: Codable { let account_id: String }
         return try await client.post("v1/carret/kyc/initiate", body: Body(account_id: accountId))

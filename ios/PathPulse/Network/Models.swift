@@ -199,6 +199,14 @@ struct CarretResumeResponse: Codable {
     var referenceId: String?
 }
 
+/// Response from POST /v1/carret/session/reset — reports whether a
+/// mapping was actually cleared. Optional wasAccountId is set only
+/// when we did clear (so ops has an audit trail).
+struct CarretResetResponse: Codable {
+    let cleared: Bool
+    var wasAccountId: String?
+}
+
 struct CarretKycSession: Codable {
     let session_id: String
     let status: String             // pending / verified / rejected / manual_review

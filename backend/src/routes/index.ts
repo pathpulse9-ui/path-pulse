@@ -66,7 +66,7 @@ import {
 import { carretLive } from '../config/env.js';
 import {
   getMapping, getMappingByEmail, getMappingByPhone,
-  upsertMapping, markWalletWhitelisted,
+  upsertMapping, deleteMapping, markWalletWhitelisted,
 } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
@@ -831,6 +831,36 @@ router.get('/v1/carret/resume', async (req, res, next) => {
       email: mapping.email,
       referenceId: mapping.referenceId,
     });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * "Hard reset" for the wizard's Start-fresh affordance.
+ *   1. Cleans up any pending KYC session on Carret for the current mapping
+ *      (best-effort — network / no-session errors don't fail the whole reset)
+ *   2. Deletes the mapping row so the next /provision creates a genuinely
+ *      fresh account. Without this, provision returned the stale accountId
+ *      keyed on the (unchanged) guest cookie and silently adopted the driver
+ *      back into the old Carret account even after they typed a new email.
+ * Idempotent: safe to call when no mapping exists (returns { cleared: false }).
+ */
+router.post('/v1/carret/session/reset', async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+      return;
+    }
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.json({ cleared: false });
+      return;
+    }
+    try { await cleanupKyc(mapping.carretAccountId); } catch { /* best-effort */ }
+    await deleteMapping(session.userId);
+    res.json({ cleared: true, wasAccountId: mapping.carretAccountId });
   } catch (e) {
     next(e);
   }
