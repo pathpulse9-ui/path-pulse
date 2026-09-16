@@ -31,9 +31,23 @@ struct KycView: View {
     @AppStorage("kyc_occupation") private var occupation: String = "Business Owner"
     @AppStorage("kyc_income") private var income: String = "₹5 Lakhs-₹10 Lakhs"
     @AppStorage("kyc_dobIso") private var dobIso: String = ""       // YYYY-MM-DD
+    // PAN — now photo-first per Carret guidance. The number/name/dob fields
+    // stay in @AppStorage so a driver who dropped a previous build's typed
+    // PAN doesn't lose it, but the wizard no longer collects them.
     @AppStorage("kyc_panNumber") private var panNumber: String = ""
     @AppStorage("kyc_panName") private var panName: String = ""
     @AppStorage("kyc_panDobIso") private var panDobIso: String = ""
+
+    // Secondary ID card — driver picks one of Aadhaar / Voter ID / Passport /
+    // Driving License. Aadhaar is XML/file, the others are number-based.
+    @AppStorage("kyc_secondaryTypeRaw") private var secondaryTypeRaw: String = SecondaryDocType.aadhaar.rawValue
+    @AppStorage("kyc_secondaryNumber") private var secondaryNumber: String = ""
+    @AppStorage("kyc_secondaryName") private var secondaryName: String = ""
+    @AppStorage("kyc_secondaryDobIso") private var secondaryDobIso: String = ""
+    // Passport-only extras
+    @AppStorage("kyc_secondarySurname") private var secondarySurname: String = ""
+    @AppStorage("kyc_secondaryFileNumber") private var secondaryFileNumber: String = ""
+    @AppStorage("kyc_secondaryDateOfIssueIso") private var secondaryDateOfIssueIso: String = ""
 
     // ── Non-persisted (transient / files / network) ────────────────
     @State private var submitting = false
@@ -65,12 +79,32 @@ struct KycView: View {
         get { Self.parseIso(panDobIso) }
         nonmutating set { panDobIso = newValue.map(Self.toIso) ?? "" }
     }
+    private var secondaryType: SecondaryDocType {
+        get { SecondaryDocType(rawValue: secondaryTypeRaw) ?? .aadhaar }
+        nonmutating set { secondaryTypeRaw = newValue.rawValue }
+    }
+    private var secondaryDobDate: Date? {
+        get { Self.parseIso(secondaryDobIso) }
+        nonmutating set { secondaryDobIso = newValue.map(Self.toIso) ?? "" }
+    }
+    private var secondaryDateOfIssueDate: Date? {
+        get { Self.parseIso(secondaryDateOfIssueIso) }
+        nonmutating set { secondaryDateOfIssueIso = newValue.map(Self.toIso) ?? "" }
+    }
+    /// Backend expects dd/mm/yyyy strings.
+    private var secondaryDob: String { secondaryDobDate.map(Self.formatDob) ?? "" }
+    private var secondaryDateOfIssue: String { secondaryDateOfIssueDate.map(Self.formatDob) ?? "" }
 
-    // Aadhaar + selfie (transient — user re-picks if they left the flow).
+    // Files — transient. Driver re-picks after any relaunch (URIs die anyway).
+    @State private var panPickerShown = false
+    @State private var pickedPanURL: URL? = nil        // PAN card photo (image)
     @State private var aadhaarPickerShown = false
-    @State private var pickedAadhaarURL: URL? = nil
+    @State private var pickedAadhaarURL: URL? = nil    // Aadhaar XML/photo — only used when secondary=aadhaar
     @State private var selfieItem: PhotosPickerItem? = nil
     @State private var pickedSelfieURL: URL? = nil
+    @State private var showSecondaryDobSheet = false
+    @State private var showSecondaryIssueSheet = false
+    @State private var showSecondaryTypeSheet = false
 
     // Verification poll
     @State private var kycStatus: CarretKycStatus? = nil
@@ -291,8 +325,8 @@ struct KycView: View {
         ) {
             VStack(spacing: PpSpace.md) {
                 bullet("Your name & basic details")
-                bullet("PAN card")
-                bullet("Aadhaar (from DigiLocker, or a photo)")
+                bullet("A photo of your PAN card")
+                bullet("One more ID: Aadhaar, Voter ID, Passport, or DL")
                 bullet("A quick selfie")
             }
             .padding(.top, PpSpace.lg)
@@ -301,8 +335,7 @@ struct KycView: View {
             // wipes the draft and lets the driver start clean.
             if !accountId.isEmpty || !firstName.isEmpty || !email.isEmpty || !dobIso.isEmpty {
                 Button {
-                    clearDraft()
-                    error = nil
+                    Task { await freshStart() }
                 } label: {
                     Text("Start fresh — clear saved details")
                         .font(PathPulseFont.labelMedium)
@@ -488,59 +521,166 @@ struct KycView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - PAN
+    // MARK: - PAN — photo upload (per Carret guidance)
 
     @ViewBuilder
     private var panPage: some View {
         pageShell(
             icon: "creditcard.fill",
-            title: "Enter your PAN card",
-            subtitle: "Copy these exactly as printed on the card — name spelling and DOB must match India's tax records.",
+            title: "Upload your PAN card",
+            subtitle: "Snap a clear photo of the front of your PAN card — Carret extracts the number, name, and DOB from the image.",
         ) {
             VStack(spacing: PpSpace.md) {
-                bigField("PAN number (10 characters)", text: $panNumber, placeholder: "ABCDE1234F")
-                    .textInputAutocapitalization(.characters)
-                bigField("Name on card", text: $panName, placeholder: "e.g. RAHUL KUMAR SHARMA")
-                datePickerCard(
-                    selection: Binding(get: { panDobDate }, set: { panDobDate = $0 }),
-                    label: "Date of birth",
-                    isPresented: $showPanDobSheet,
+                Button(action: { panPickerShown = true }) {
+                    dropZone(
+                        icon: pickedPanURL == nil ? "camera.fill" : "checkmark.circle.fill",
+                        title: pickedPanURL?.lastPathComponent ?? "Choose PAN photo",
+                        subtitle: pickedPanURL == nil ? "JPG, PNG, or PDF — front of the card" : "Ready to upload",
+                        selected: pickedPanURL != nil,
+                    )
+                }
+                .fileImporter(
+                    isPresented: $panPickerShown,
+                    allowedContentTypes: [.image, .jpeg, .png, .pdf],
+                ) { result in
+                    if case .success(let url) = result { pickedPanURL = url }
+                }
+                infoTile(
+                    icon: "info.circle.fill",
+                    text: "Good light, all four corners visible, no glare on the name or number strip.",
                 )
             }
             .padding(.top, PpSpace.lg)
         }
     }
 
-    // MARK: - Aadhaar
+    // MARK: - Secondary ID (Aadhaar / Voter ID / Passport / Driving License)
 
     @ViewBuilder
     private var aadhaarPage: some View {
         pageShell(
-            icon: "doc.badge.arrow.up.fill",
-            title: "Upload your Aadhaar",
-            subtitle: "The DigiLocker XML verifies fastest, but a clear photo or PDF of your card also works.",
+            icon: secondaryType.icon,
+            title: "Add a second ID",
+            subtitle: "Carret needs one more identity document alongside your PAN. Pick the one you have handy.",
         ) {
             VStack(spacing: PpSpace.md) {
-                Button(action: { aadhaarPickerShown = true }) {
-                    dropZone(
-                        icon: pickedAadhaarURL == nil ? "arrow.up.doc.fill" : "checkmark.circle.fill",
-                        title: pickedAadhaarURL?.lastPathComponent ?? "Choose Aadhaar file",
-                        subtitle: pickedAadhaarURL == nil ? "XML, ZIP, JPG, PNG, or PDF" : "Ready to upload",
-                        selected: pickedAadhaarURL != nil,
-                    )
+                secondaryTypePicker
+                if secondaryType.isNumberBased {
+                    secondaryNumberFields
+                } else {
+                    secondaryFilePicker
                 }
-                .fileImporter(
-                    isPresented: $aadhaarPickerShown,
-                    allowedContentTypes: [.xml, .zip, .image, .jpeg, .png, .pdf],
-                ) { result in
-                    if case .success(let url) = result { pickedAadhaarURL = url }
-                }
-                infoTile(
-                    icon: "sparkles",
-                    text: "Pro tip: DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP. That's the fastest path to verified.",
-                )
             }
             .padding(.top, PpSpace.lg)
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryTypePicker: some View {
+        Button(action: { showSecondaryTypeSheet = true }) {
+            HStack(spacing: PpSpace.md) {
+                Image(systemName: secondaryType.icon)
+                    .foregroundStyle(PathPulseColor.mint)
+                    .frame(width: 24)
+                Text(secondaryType.displayName)
+                    .font(PathPulseFont.bodyLarge)
+                    .foregroundStyle(PathPulseColor.black)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(PathPulseColor.black50)
+            }
+            .padding(.horizontal, PpSpace.md)
+            .frame(height: 56)
+            .frame(maxWidth: .infinity)
+            .background(PathPulseColor.surface)
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PathPulseColor.black15, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .confirmationDialog("Choose a secondary ID", isPresented: $showSecondaryTypeSheet, titleVisibility: .visible) {
+            ForEach(SecondaryDocType.allCases) { t in
+                Button(t.displayName) { secondaryType = t }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryFilePicker: some View {
+        VStack(spacing: PpSpace.md) {
+            Button(action: { aadhaarPickerShown = true }) {
+                dropZone(
+                    icon: pickedAadhaarURL == nil ? "arrow.up.doc.fill" : "checkmark.circle.fill",
+                    title: pickedAadhaarURL?.lastPathComponent ?? "Choose Aadhaar file",
+                    subtitle: pickedAadhaarURL == nil ? "XML from DigiLocker, or a JPG/PNG/PDF" : "Ready to upload",
+                    selected: pickedAadhaarURL != nil,
+                )
+            }
+            .fileImporter(
+                isPresented: $aadhaarPickerShown,
+                allowedContentTypes: [.xml, .zip, .image, .jpeg, .png, .pdf],
+            ) { result in
+                if case .success(let url) = result { pickedAadhaarURL = url }
+            }
+            infoTile(
+                icon: "sparkles",
+                text: "DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP. Fastest path to verified.",
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryNumberFields: some View {
+        VStack(spacing: PpSpace.md) {
+            bigField(numberFieldLabel, text: $secondaryNumber, placeholder: numberFieldPlaceholder)
+                .textInputAutocapitalization(.characters)
+            if secondaryType != .voter_id {
+                bigField("Full name (as on document)", text: $secondaryName, placeholder: "e.g. RAHUL KUMAR SHARMA")
+            } else {
+                bigField("Full name (as on card)", text: $secondaryName, placeholder: "e.g. RAHUL KUMAR SHARMA")
+            }
+            if secondaryType == .passport {
+                bigField("Surname (as printed on passport)", text: $secondarySurname, placeholder: "SHARMA")
+                bigField("File number", text: $secondaryFileNumber, placeholder: "e.g. XXX0612316XXXX")
+                datePickerCard(
+                    selection: Binding(get: { secondaryDateOfIssueDate }, set: { secondaryDateOfIssueDate = $0 }),
+                    label: "Date of issue",
+                    isPresented: $showSecondaryIssueSheet,
+                )
+                datePickerCard(
+                    selection: Binding(get: { secondaryDobDate }, set: { secondaryDobDate = $0 }),
+                    label: "Date of birth",
+                    isPresented: $showSecondaryDobSheet,
+                )
+            } else if secondaryType == .driving_license {
+                datePickerCard(
+                    selection: Binding(get: { secondaryDobDate }, set: { secondaryDobDate = $0 }),
+                    label: "Date of birth",
+                    isPresented: $showSecondaryDobSheet,
+                )
+            }
+            infoTile(
+                icon: "info.circle.fill",
+                text: "Enter your document number exactly as printed. Spaces and case matter for some.",
+            )
+        }
+    }
+
+    private var numberFieldLabel: String {
+        switch secondaryType {
+        case .voter_id:        return "Voter ID number (EPIC)"
+        case .passport:        return "Passport number"
+        case .driving_license: return "Driving licence number"
+        case .aadhaar:         return "Aadhaar number" // unreachable — Aadhaar is file-based
+        }
+    }
+    private var numberFieldPlaceholder: String {
+        switch secondaryType {
+        case .voter_id:        return "e.g. KA14201XXXXXX"
+        case .passport:        return "e.g. Z1234567"
+        case .driving_license: return "e.g. KA14 20211234567"
+        case .aadhaar:         return ""
         }
     }
 
@@ -926,8 +1066,17 @@ struct KycView: View {
         case .contact:  return email.contains("@") && phone.count == 10
         case .bornWhen: return dobDate != nil
         case .about:    return true
-        case .pan:      return panNumber.count >= 10 && !panName.isEmpty && panDobDate != nil
-        case .aadhaar:  return pickedAadhaarURL != nil
+        case .pan:      return pickedPanURL != nil
+        case .aadhaar:
+            switch secondaryType {
+            case .aadhaar:         return pickedAadhaarURL != nil
+            case .voter_id:        return !secondaryNumber.isEmpty && !secondaryName.isEmpty
+            case .driving_license: return !secondaryNumber.isEmpty && !secondaryName.isEmpty && secondaryDobDate != nil
+            case .passport:
+                return !secondaryNumber.isEmpty && !secondaryName.isEmpty && !secondarySurname.isEmpty
+                    && !secondaryFileNumber.isEmpty
+                    && secondaryDobDate != nil && secondaryDateOfIssueDate != nil
+            }
         case .selfie:   return pickedSelfieURL != nil
         default:        return false
         }
@@ -958,9 +1107,9 @@ struct KycView: View {
                 if initiated { page = .pan }
             }
         case .pan:
-            if await submitPan() { page = .aadhaar }
+            if await uploadPan() { page = .aadhaar }
         case .aadhaar:
-            if await uploadAadhaar() { page = .selfie }
+            if await submitSecondary() { page = .selfie }
         case .selfie:
             if await uploadSelfie() {
                 page = .checking
@@ -1005,30 +1154,69 @@ struct KycView: View {
         } catch { self.error = UserErrors.message(error); return false }
     }
 
-    @MainActor private func submitPan() async -> Bool {
+    /// PAN is now photo-first per Carret guidance — Carret OCRs the number,
+    /// name, and DOB off the image itself.
+    @MainActor private func uploadPan() async -> Bool {
+        guard let url = pickedPanURL else { return false }
         do {
-            _ = try await data.submitCarretKycDocument(
-                kycSessionId: sessionId,
-                document: CarretKycDocumentSubmission(
-                    document_type: "pan",
-                    document_number: panNumber.uppercased(),
-                    name: panName, dob: panDob,
-                ),
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            try await data.uploadCarretKycFile(
+                kycSession: sessionId, docType: "pan",
+                fileType: "image",
+                fileURL: url,
             )
             return true
         } catch { self.error = UserErrors.message(error); return false }
     }
 
-    @MainActor private func uploadAadhaar() async -> Bool {
-        guard let url = pickedAadhaarURL else { return false }
+    /// Secondary ID — Aadhaar via file upload (XML/photo), everything else
+    /// via number-based `/kyc/document/submit/` with per-type fields.
+    @MainActor private func submitSecondary() async -> Bool {
         do {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            try await data.uploadCarretKycFile(
-                kycSession: sessionId, docType: "aadhaar",
-                fileType: aadhaarFileType(for: url),
-                fileURL: url,
-            )
+            switch secondaryType {
+            case .aadhaar:
+                guard let url = pickedAadhaarURL else { return false }
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                try await data.uploadCarretKycFile(
+                    kycSession: sessionId, docType: "aadhaar",
+                    fileType: aadhaarFileType(for: url),
+                    fileURL: url,
+                )
+            case .voter_id:
+                _ = try await data.submitCarretKycDocument(
+                    kycSessionId: sessionId,
+                    document: CarretKycDocumentSubmission(
+                        document_type: "voter_id",
+                        document_number: secondaryNumber.uppercased(),
+                        name: secondaryName,
+                    ),
+                )
+            case .driving_license:
+                _ = try await data.submitCarretKycDocument(
+                    kycSessionId: sessionId,
+                    document: CarretKycDocumentSubmission(
+                        document_type: "driving_license",
+                        document_number: secondaryNumber.uppercased(),
+                        name: secondaryName,
+                        dob: secondaryDob,
+                    ),
+                )
+            case .passport:
+                _ = try await data.submitCarretKycDocument(
+                    kycSessionId: sessionId,
+                    document: CarretKycDocumentSubmission(
+                        document_type: "passport",
+                        document_number: secondaryNumber.uppercased(),
+                        name: secondaryName,
+                        dob: secondaryDob,
+                        surname_from_passport: secondarySurname,
+                        file_number: secondaryFileNumber,
+                        date_of_issue: secondaryDateOfIssue,
+                    ),
+                )
+            }
             return true
         } catch { self.error = UserErrors.message(error); return false }
     }
@@ -1050,6 +1238,20 @@ struct KycView: View {
             page = .name
             error = nil
         } catch { self.error = UserErrors.message(error) }
+    }
+
+    /// Welcome-page "Start fresh" — wipes the local draft AND asks Carret to
+    /// delete any pending KYC session on the current sub-account so a fresh
+    /// initiate isn't blocked by a stale `already-in-pending-state` error.
+    @MainActor private func freshStart() async {
+        if !accountId.isEmpty {
+            // Best-effort — if Carret's cleanup fails (network, or the account
+            // was never provisioned), just carry on with the local wipe.
+            _ = try? await data.cleanupCarretKyc(accountId: accountId)
+        }
+        pollingTask?.cancel()
+        clearDraft()
+        error = nil
     }
 
     private func startPolling() {
@@ -1126,7 +1328,7 @@ private enum WizardPage: Int, CaseIterable {
         case .welcome:  return "Verification"
         case .name, .contact, .bornWhen, .about: return "About you"
         case .pan:      return "PAN card"
-        case .aadhaar:  return "Aadhaar"
+        case .aadhaar:  return "Secondary ID"
         case .selfie:   return "Selfie"
         case .checking: return "Verifying"
         case .verified, .rejected: return "Verification"
@@ -1135,12 +1337,12 @@ private enum WizardPage: Int, CaseIterable {
 
     var action: WizardAction? {
         switch self {
-        case .welcome:  return WizardAction(label: "Get started",     busyLabel: "Get started")
+        case .welcome:  return WizardAction(label: "Get started",   busyLabel: "Get started")
         case .name, .contact, .bornWhen: return WizardAction(label: "Continue", busyLabel: "Continue")
-        case .about:    return WizardAction(label: "Continue",        busyLabel: "Saving…")
-        case .pan:      return WizardAction(label: "Verify PAN",      busyLabel: "Checking…")
-        case .aadhaar:  return WizardAction(label: "Upload Aadhaar",  busyLabel: "Uploading…")
-        case .selfie:   return WizardAction(label: "Upload photo",    busyLabel: "Uploading…")
+        case .about:    return WizardAction(label: "Continue",      busyLabel: "Saving…")
+        case .pan:      return WizardAction(label: "Upload PAN",    busyLabel: "Uploading…")
+        case .aadhaar:  return WizardAction(label: "Submit ID",     busyLabel: "Submitting…")
+        case .selfie:   return WizardAction(label: "Upload photo",  busyLabel: "Uploading…")
         default:        return nil
         }
     }
@@ -1149,6 +1351,37 @@ private enum WizardPage: Int, CaseIterable {
 private struct WizardAction {
     let label: String
     let busyLabel: String
+}
+
+/// The four secondary-ID options Carret accepts alongside PAN.
+///
+/// Aadhaar is the only file-based option (XML from DigiLocker or a photo);
+/// the rest submit via `/kyc/document/submit/` with a document number and
+/// per-type fields. At least one secondary must be submitted for KYC to
+/// pass — that's a Carret hard requirement, not a UI choice.
+enum SecondaryDocType: String, CaseIterable, Identifiable {
+    case aadhaar, voter_id, passport, driving_license
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .aadhaar:         return "Aadhaar (XML from DigiLocker)"
+        case .voter_id:        return "Voter ID"
+        case .passport:        return "Passport"
+        case .driving_license: return "Driving License"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .aadhaar:         return "doc.badge.arrow.up.fill"
+        case .voter_id:        return "person.crop.rectangle.stack.fill"
+        case .passport:        return "book.closed.fill"
+        case .driving_license: return "car.fill"
+        }
+    }
+    /// Backend document_type value (Carret enum name).
+    var apiValue: String { rawValue }
+    /// Does the driver enter a document number (true) or upload a file (false)?
+    var isNumberBased: Bool { self != .aadhaar }
 }
 
 private enum Gender: String, CaseIterable, Identifiable {

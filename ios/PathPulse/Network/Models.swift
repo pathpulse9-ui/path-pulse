@@ -216,6 +216,10 @@ struct CarretKycDocumentSubmission: Codable {
     var document_number: String?
     var name: String?
     var dob: String?
+    // Passport-only extras (Carret spec).
+    var surname_from_passport: String?
+    var file_number: String?
+    var date_of_issue: String?
 }
 
 struct CarretKycDocumentEntry: Codable, Hashable, Identifiable {
