@@ -61,6 +61,7 @@ import {
   getKycStatus,
   cleanupKyc,
   whitelistWallet,
+  type CarretKycStatusResponse,
 } from '../services/carret.js';
 import { carretLive } from '../config/env.js';
 import {
@@ -897,10 +898,37 @@ router.post('/v1/carret/subaccount', requireSession(), async (req, res, next) =>
 
 const initiateKycSchema = z.object({ account_id: z.union([z.number(), z.string()]) });
 
+/**
+ * Idempotent wrapper over Carret's POST /kyc/initiate/. Carret rejects a
+ * second initiate on the same account with 4xx "KYC session already exists
+ * in pending state." That's not really an error for us — we just want the
+ * current session id. So on that specific failure we fall back to
+ * `getKycStatus`, extract the existing `kyc_session`, and hand it back in
+ * the same response shape the client expects on a fresh initiate.
+ */
 router.post('/v1/carret/kyc/initiate', requireSession(), async (req, res, next) => {
   try {
     const { account_id } = initiateKycSchema.parse(req.body);
-    res.json(await initiateKyc(account_id));
+    try {
+      res.json(await initiateKyc(account_id));
+    } catch (e) {
+      const msg = String((e as Error).message ?? '').toLowerCase();
+      const status = (e as { status?: number }).status;
+      const looksLikeDuplicate = status === 422 && msg.includes('already exists');
+      if (!looksLikeDuplicate) throw e;
+      // Pull the still-pending session id off the status endpoint.
+      const status_ = await getKycStatus(account_id);
+      // Carret wraps: `{success, kyc_info: {kyc_session, kyc_status, …}}` on
+      // the newer taas v2.0 shape. Handle both wrapped + flat responses.
+      const info = (status_ as unknown as { kyc_info?: CarretKycStatusResponse }).kyc_info ?? status_;
+      const sessionId = info.kyc_session;
+      if (!sessionId) throw e;
+      res.json({
+        success: true,
+        message: 'Resuming existing KYC session',
+        session: { session_id: sessionId, status: info.kyc_status },
+      });
+    }
   } catch (e) {
     next(e);
   }
