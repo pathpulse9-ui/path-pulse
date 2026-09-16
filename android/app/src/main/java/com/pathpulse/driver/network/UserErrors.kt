@@ -27,8 +27,10 @@ object UserErrors {
     private fun httpMessage(e: ApiException): String {
         val status = e.apiError.error.substringAfter("http_", "").toIntOrNull()
         val msg = e.apiError.message
-        // Prefer the server's user-safe message when it looks safe.
-        val safeMsg = firstUsableSentence(msg)
+        // Prefer the server's user-safe message when it looks safe. Two shapes:
+        // - a plain sentence (firstUsableSentence handles that), or
+        // - Carret's DRF field-error JSON blob (extractDrfFieldError handles that).
+        val safeMsg = extractDrfFieldError(msg) ?: firstUsableSentence(msg)
         if (status == null) return safeMsg ?: "Something went wrong. Please try again."
         return httpMessage(status, safeMsg)
     }
@@ -43,6 +45,38 @@ object UserErrors {
         503 -> safeMsg ?: "Our payments partner is briefly unavailable. Please try again in a few minutes."
         in 500..599 -> safeMsg ?: "Something's off on our side. Please try again in a moment."
         else -> "Something went wrong. Please try again."
+    }
+
+    /**
+     * Parses Carret's DRF field-error shape (`{"field":["msg", ...]}` or
+     * `{"detail": "msg"}`) and returns the first driver-facing sentence,
+     * or null when input isn't JSON. Uses org.json (bundled with Android)
+     * to avoid pulling a whole codec dependency for one call.
+     */
+    private fun extractDrfFieldError(raw: String?): String? {
+        val trimmed = raw?.trim().orEmpty()
+        if (!trimmed.startsWith("{")) return null
+        val obj = try { org.json.JSONObject(trimmed) } catch (_: Exception) { return null }
+        // Known keys first.
+        for (key in listOf("detail", "message", "error")) {
+            val v = obj.optString(key, "")
+            if (v.isNotEmpty()) return v.trim()
+        }
+        // Fall back to the first non-empty string in any field's array.
+        val it = obj.keys()
+        while (it.hasNext()) {
+            val key = it.next()
+            val v = obj.opt(key)
+            when (v) {
+                is String -> if (v.isNotEmpty()) return v
+                is org.json.JSONArray ->
+                    for (i in 0 until v.length()) {
+                        val s = v.optString(i, "")
+                        if (s.isNotEmpty()) return s
+                    }
+            }
+        }
+        return null
     }
 
     private fun firstUsableSentence(raw: String?): String? {

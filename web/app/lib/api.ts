@@ -59,27 +59,71 @@ export class ApiError extends Error {
 }
 
 function toApiError(status: number, rawText: string): ApiError {
-  let upstream = '';
-  try {
-    const parsed = JSON.parse(rawText) as { message?: string };
-    if (typeof parsed.message === 'string') upstream = parsed.message.trim();
-  } catch {
-    upstream = rawText.trim();
-  }
+  // Always try for a friendly sentence first — this unpacks the backend's
+  // {error, message, requestId} envelope AND the DRF field-error JSON that
+  // Carret 4xx bodies embed inside `message` ({"field":["msg", ...]}) so the
+  // UI never has to render "{\"email\":[\"…\"]}" verbatim.
+  const friendly = extractFriendlyError(rawText);
 
-  if (status === 401) {
-    return new ApiError(status, 'Sign in to continue.');
+  // Auth/permission still get their own overrides so the UI can route the
+  // user to sign-in / ops access instead of just displaying the raw copy.
+  if (status === 401) return new ApiError(status, 'Sign in to continue.');
+  if (status === 403) return new ApiError(status, 'This action needs an operator session — use Ops access in the top bar.');
+  if (status === 404) return new ApiError(status, friendly || 'Not found.');
+  if (status >= 500) return new ApiError(status, friendly || 'The service is briefly unavailable. Please try again.');
+  return new ApiError(status, friendly || 'That request could not be completed.');
+}
+
+/**
+ * Best-effort extraction of a human sentence from any error body the
+ * backend hands us — plain string, {message: "..."}, {detail: "..."},
+ * or Carret's DRF field-error shape {"field":["msg", ...]}.
+ * Returns "" when nothing is readable — caller then falls back to a
+ * per-status sentence.
+ */
+function extractFriendlyError(raw: string): string {
+  const parsed = safeJson(raw);
+  if (parsed && typeof parsed === 'object') {
+    const obj = parsed as Record<string, unknown>;
+    const outer = firstString(obj.message) ?? firstString(obj.detail) ?? firstString(obj.error);
+    if (outer) {
+      // Outer message may itself be a JSON blob (Carret DRF field errors).
+      const inner = safeJson(outer);
+      const innerMsg = extractDrf(inner);
+      if (innerMsg) return innerMsg;
+      if (!outer.startsWith('{')) return outer;
+    }
+    const drf = extractDrf(parsed);
+    if (drf) return drf;
   }
-  if (status === 403) {
-    return new ApiError(status, 'This action needs an operator session — use Ops access in the top bar.');
+  const trimmed = raw.trim();
+  return trimmed && !trimmed.startsWith('{') ? trimmed : '';
+}
+
+function safeJson(text: string): unknown {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+function firstString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+function extractDrf(v: unknown): string | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const obj = v as Record<string, unknown>;
+  for (const key of ['detail', 'message', 'error']) {
+    const s = firstString(obj[key]);
+    if (s) return s;
   }
-  if (status === 404) {
-    return new ApiError(status, upstream || 'Not found.');
+  for (const val of Object.values(obj)) {
+    const s = firstString(val);
+    if (s) return s;
+    if (Array.isArray(val)) {
+      const first = val.find((x) => typeof x === 'string' && x.trim());
+      if (typeof first === 'string') return first.trim();
+    }
   }
-  if (status >= 500) {
-    return new ApiError(status, upstream || 'The service is briefly unavailable. Please try again.');
-  }
-  return new ApiError(status, upstream || 'That request could not be completed.');
+  return undefined;
 }
 
 export function getHealth() {
