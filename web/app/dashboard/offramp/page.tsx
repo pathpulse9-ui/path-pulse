@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { CarretLimits } from '../../lib/api';
-import { getCarretLimits } from '../../lib/api';
+import type { CarretLimits, CarretResumeResponse } from '../../lib/api';
+import { getCarretLimits, resumeCarretKyc } from '../../lib/api';
 import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
 import {
   listOffRampSessions,
@@ -11,6 +11,7 @@ import {
   getOffRampQuote,
 } from '../../lib/api';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
+import Link from 'next/link';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
@@ -43,6 +44,18 @@ export default function OffRampPage() {
   useEffect(() => {
     getCarretLimits().then(setLimits).catch(() => setLimits(null));
   }, []);
+
+  // Gate the withdrawal form on KYC status. Resume is authoritative — the
+  // backend refreshes from Carret on every call, so a driver who KYC-d in
+  // another surface (mobile app, dashboard) sees the form unlock as soon as
+  // Carret marks them verified. Null while loading, then verified/pending/
+  // rejected/re_kyc/manual_review.
+  const [resume, setResume] = useState<CarretResumeResponse | null | 'loading'>('loading');
+  useEffect(() => {
+    resumeCarretKyc().then((r) => setResume(r)).catch(() => setResume(null));
+  }, []);
+  const kycVerified = resume && resume !== 'loading' && resume.kycStatus === 'verified';
+  const kycLoading  = resume === 'loading';
 
   const load = useCallback(async () => {
     try {
@@ -124,7 +137,52 @@ export default function OffRampPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-white p-6 space-y-4">
+      {/* KYC gate. Withdrawals are blocked until Carret marks this driver
+          verified. Backend /v1/carret/resume is authoritative — refreshed
+          live on every call — so users who KYC-d in another surface see
+          this unlock immediately. */}
+      {kycLoading && (
+        <div className="rounded-2xl bg-white p-6 text-sm text-black/50">
+          Checking your KYC status…
+        </div>
+      )}
+      {!kycLoading && !kycVerified && (
+        <div className="rounded-2xl bg-white p-6 flex items-start gap-4">
+          <div className="grid place-items-center h-10 w-10 rounded-full bg-black/5 shrink-0">🔒</div>
+          <div className="flex-1">
+            <p className="text-black font-medium tracking-[-0.02em]">
+              {resume?.kycStatus === 'rejected' || (resume?.kycStatus as string) === 're_kyc'
+                ? "We couldn't verify your last KYC — try again"
+                : resume?.kycStatus === 'manual_review'
+                ? 'Your KYC is under manual review at Carret'
+                : resume?.kycStatus === 'pending'
+                ? 'Finish your KYC to unlock withdrawals'
+                : 'Verify your identity to unlock withdrawals'}
+            </p>
+            <p className="text-sm text-black/60 mt-1">
+              A one-time check with Carret Infra: PAN photo, one more ID, and a selfie. Takes ~3 minutes.
+            </p>
+          </div>
+          <Link
+            href="/dashboard/kyc"
+            className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium ${
+              resume?.kycStatus === 'manual_review'
+                ? 'bg-black/5 text-black/60 pointer-events-none'
+                : 'bg-black text-white hover:bg-gray-800 transition-colors'
+            }`}
+          >
+            {resume?.kycStatus === 'rejected' || (resume?.kycStatus as string) === 're_kyc'
+              ? 'Retry'
+              : resume?.kycStatus === 'manual_review'
+              ? 'In review'
+              : resume?.kycStatus === 'pending'
+              ? 'Continue'
+              : 'Start'}
+          </Link>
+        </div>
+      )}
+
+      <div className={`rounded-2xl bg-white p-6 space-y-4 ${!kycVerified ? 'opacity-50 pointer-events-none' : ''}`}>
         <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
           Start a withdrawal
         </h2>
