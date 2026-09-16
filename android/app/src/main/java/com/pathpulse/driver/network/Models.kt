@@ -43,7 +43,12 @@ data class GuestSessionResponse(
 data class ApiError(
     val error: String,
     val message: String,
-    val requestId: String? = null,
+    // Backend sends `requestId` as a JSON number (e.g. 1754). kotlinx
+    // serialization is strict on numeric-vs-string mismatch, so declaring
+    // this as `String?` broke the whole ApiError decode — the friendly
+    // message never made it to UserErrors and the driver saw the generic
+    // "Something went wrong" copy.
+    val requestId: Int? = null,
 )
 
 @Serializable

@@ -38,7 +38,12 @@ struct GuestSessionResponse: Codable {
 struct APIErrorPayload: Codable, Equatable {
     let error: String
     let message: String
-    var requestId: String?
+    // Backend sends `requestId` as a JSON number (e.g. 1754). Swift's decoder
+    // is strict on numeric-vs-string mismatches, so declaring this as `String?`
+    // broke the entire decode — `payload` came back nil, and driver-facing
+    // copy fell all the way to the generic "Some of the details couldn't be
+    // accepted" line even when Carret was returning a perfectly good message.
+    var requestId: Int?
 }
 
 struct HealthResponse: Codable {
