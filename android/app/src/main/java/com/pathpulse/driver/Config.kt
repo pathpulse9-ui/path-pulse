@@ -1,5 +1,5 @@
 package com.pathpulse.driver
 
 object Config {
-    const val GOOGLE_WEB_CLIENT_ID = "195179797561-jce7rme6ou8jf2lsvt8lthv0q5h52o5a.apps.googleusercontent.com"
+    const val GOOGLE_WEB_CLIENT_ID = "151282836945-nq5fvcpc4cjk2b4o1gpgsaks98969kgs.apps.googleusercontent.com"
 }
