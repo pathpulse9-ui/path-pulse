@@ -23,6 +23,7 @@ function usePersistedString(key: string, initial: string): [string, (v: string) 
 }
 import {
   createCarretSubAccount,
+  resumeCarretKyc,
   initiateCarretKyc,
   submitCarretKycDocument,
   uploadCarretKycFile,
@@ -184,7 +185,14 @@ export default function KycPage() {
         annual_income: income,
       };
       const acc = await createCarretSubAccount(input);
-      setAccountId(String(acc.id));
+      setAccountId(acc.carretAccountId);
+      // If the backend adopted an existing account that's already verified /
+      // rejected, jump straight to the outcome page — no point re-walking
+      // PAN/Aadhaar/selfie.
+      if (acc.existed) {
+        if (acc.kycStatus === 'verified') { setPage('verified'); return false; }
+        if (acc.kycStatus === 'rejected') { setPage('rejected'); return false; }
+      }
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create sub-account');
@@ -284,6 +292,28 @@ export default function KycPage() {
     } finally { setSubmitting(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, firstName, lastName, email, phone, dobIso, panDobIso, gender, occupation, income, panNumber, panName, sessionId, accountId]);
+
+  // ── Resume on mount ─────────────────────────────────────────
+  // If the backend has a saved application for this session (or for this
+  // driver's email from an earlier install/browser), hydrate accountId +
+  // route to the right step. Failures silently fall back to a fresh start.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await resumeCarretKyc();
+        if (cancelled || !r) return;
+        if (!accountId) setAccountId(r.carretAccountId);
+        if (!email && r.email) setEmail(r.email);
+        if (r.kycStatus === 'verified') setPage('verified');
+        else if (r.kycStatus === 'rejected') setPage('rejected');
+        else if (r.kycStatus === 'manual_review') setPage('checking');
+      } catch { /* silent — driver just starts fresh */ }
+    })();
+    return () => { cancelled = true; };
+    // Run once on mount — deps intentionally empty.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Polling — driven by page === 'checking' ─────────────────
   useEffect(() => {

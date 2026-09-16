@@ -96,11 +96,31 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
 
     // ── Carret KYC (PAT-79) ────────────────────────────────────────────
 
-    suspend fun createCarretSubAccount(input: CarretSubAccountInput): CarretSubAccountResponse =
-        client.post("$baseUrl/v1/carret/subaccount") {
+    /**
+     * Session-authed find-or-create — backend either adopts an existing
+     * Carret sub-account (same session, or same email from an earlier
+     * install / browser) or creates a fresh one. Idempotent, so callers can
+     * invoke it on every About-page submit without worrying about
+     * duplicate-email 4xxs.
+     */
+    suspend fun createCarretSubAccount(input: CarretSubAccountInput): CarretProvisionResponse =
+        client.post("$baseUrl/v1/carret/provision-subaccount") {
             contentType(ContentType.Application.Json)
             setBody(input)
         }.ensureSuccess().body()
+
+    /**
+     * GET /v1/carret/resume — is there a saved KYC application for this
+     * session? Returns null on 204 (nothing saved yet).
+     */
+    suspend fun resumeCarretKyc(): CarretResumeResponse? {
+        val res = client.get("$baseUrl/v1/carret/resume")
+        return when (res.status.value) {
+            204 -> null
+            in 200..299 -> res.body()
+            else -> { res.ensureSuccess(); null } // ensureSuccess throws
+        }
+    }
 
     @Serializable
     private data class AccountIdBody(val account_id: String)

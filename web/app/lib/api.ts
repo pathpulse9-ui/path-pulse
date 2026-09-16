@@ -400,6 +400,25 @@ export interface CarretSubAccountResponse {
   user: { id: number; email: string; first_name: string; last_name: string };
 }
 
+/**
+ * POST /v1/carret/provision-subaccount — session-authed find-or-create.
+ * `existed` is true when the backend adopted an existing Carret account
+ * (either same session, or same email from an earlier install/browser).
+ */
+export interface CarretProvisionResponse {
+  carretAccountId: string;
+  kycStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  existed: boolean;
+}
+
+/** GET /v1/carret/resume — hydrates saved state; null when nothing saved. */
+export interface CarretResumeResponse {
+  carretAccountId: string;
+  kycStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  email?: string;
+  referenceId?: string;
+}
+
 export interface CarretKycSession {
   session_id: string;
   status: 'pending' | 'verified' | 'rejected' | 'manual_review';
@@ -425,7 +444,7 @@ export interface CarretKycStatus {
 }
 
 export function createCarretSubAccount(input: CarretSubAccountInput) {
-  return apiFetch<CarretSubAccountResponse>('/v1/carret/subaccount', {
+  return apiFetch<CarretProvisionResponse>('/v1/carret/provision-subaccount', {
     method: 'POST',
     body: JSON.stringify({
       is_email_verified: true,
@@ -434,6 +453,24 @@ export function createCarretSubAccount(input: CarretSubAccountInput) {
       ...input,
     }),
   });
+}
+
+/**
+ * Fetch any saved KYC application for this session (or the driver's email
+ * from an earlier install/browser). Returns null when nothing is on file
+ * yet — the backend responds 204 in that case.
+ */
+export async function resumeCarretKyc(): Promise<CarretResumeResponse | null> {
+  const res = await fetch(`${API_BASE_URL}/v1/carret/resume`, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (res.status === 204) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw toApiError(res.status, text);
+  }
+  return (await res.json()) as CarretResumeResponse;
 }
 
 export function initiateCarretKyc(accountId: number | string) {

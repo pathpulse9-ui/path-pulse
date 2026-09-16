@@ -156,6 +156,33 @@ struct KycView: View {
         .sheet(isPresented: $showCountrySheet) {
             CountryPickerSheet(selection: $country, isPresented: $showCountrySheet)
         }
+        .task { await attemptResume() }
+    }
+
+    /// On wizard mount, ask the backend if we already have a KYC application
+    /// on file for this session (or for this driver's email from an earlier
+    /// install / browser). If yes: hydrate accountId, and route to the right
+    /// step based on its status — verified/rejected go straight to the
+    /// outcome page, everything else lets the wizard continue where it left
+    /// off. Failures are silent; the driver just starts from scratch.
+    @MainActor private func attemptResume() async {
+        // Session cookie may be seeded lazily on first request; give it a
+        // beat before we call. Cheap; no user-visible delay.
+        guard let resumed = try? await data.resumeCarretKyc() else { return }
+        if accountId.isEmpty { accountId = resumed.carretAccountId }
+        if email.isEmpty, let e = resumed.email { email = e }
+        switch resumed.kycStatus {
+        case "verified": page = .verified
+        case "rejected": page = .rejected
+        case "manual_review":
+            // Polling the status page will pick this up and route accordingly.
+            page = .checking
+            startPolling()
+        default:
+            // pending — leave the wizard where the driver last was so they
+            // pick up mid-flow.
+            break
+        }
     }
 
     // MARK: - Chrome
@@ -957,7 +984,15 @@ struct KycView: View {
                 occupation: occupation,
                 annual_income: income,
             ))
-            accountId = String(acc.id)
+            accountId = acc.carretAccountId
+            // If this call adopted a pre-existing Carret account (either same
+            // session, or same email from an earlier install), and it was
+            // already verified/rejected, jump straight to the outcome page —
+            // no point walking PAN/Aadhaar/selfie again.
+            if acc.existed {
+                if acc.kycStatus == "verified" { page = .verified; return false }
+                if acc.kycStatus == "rejected" { page = .rejected; return false }
+            }
             return true
         } catch { self.error = UserErrors.message(error); return false }
     }

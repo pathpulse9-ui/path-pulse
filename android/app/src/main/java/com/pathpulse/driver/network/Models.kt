@@ -194,6 +194,30 @@ data class CarretSubAccountResponse(
     val aml_status: String? = null,
 )
 
+/**
+ * Response from POST /v1/carret/provision-subaccount — session-authed
+ * find-or-create. `existed = true` when the backend adopted an existing
+ * account (same session, or same email from an earlier install / browser).
+ */
+@Serializable
+data class CarretProvisionResponse(
+    val carretAccountId: String,
+    val kycStatus: String,
+    val existed: Boolean,
+)
+
+/**
+ * Response from GET /v1/carret/resume — the wizard uses this on mount to
+ * jump straight to the right page instead of re-collecting details.
+ */
+@Serializable
+data class CarretResumeResponse(
+    val carretAccountId: String,
+    val kycStatus: String,
+    val email: String? = null,
+    val referenceId: String? = null,
+)
+
 @Serializable
 data class CarretKycSession(
     val session_id: String,

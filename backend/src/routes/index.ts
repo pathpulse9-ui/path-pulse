@@ -63,7 +63,7 @@ import {
   whitelistWallet,
 } from '../services/carret.js';
 import { carretLive } from '../config/env.js';
-import { getMapping, upsertMapping, markWalletWhitelisted } from '../services/carretSubAccountStore.js';
+import { getMapping, getMappingByEmail, upsertMapping, markWalletWhitelisted } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
@@ -716,6 +716,20 @@ const createSubAccountSchema = z.object({
  * Every downstream KYC / off-ramp call resolves the account id through
  * `getMapping(userId)` instead of the shared env fallback.
  */
+/**
+ * Session-authed find-or-create with cross-session resume by email.
+ *
+ * Resolution order:
+ *   1. This session already has a mapping → return it (existed: true)
+ *   2. Someone (maybe an earlier install) already registered this email
+ *      on Carret and we saved that mapping → adopt it into this
+ *      session's userId, return existed: true
+ *   3. Neither — create a fresh Carret sub-account and persist the mapping
+ *
+ * The email-lookup fallback (step 2) is what lets a driver come back on a
+ * new install / cleared cookies and continue their KYC without hitting
+ * Carret's "user with this email already exists" 4xx.
+ */
 router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
@@ -723,24 +737,89 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
       res.status(401).json({ error: 'Unauthorized', message: 'session required' });
       return;
     }
+
+    // Step 1 — same session, already has a Carret account.
     const existing = await getMapping(session.userId);
     if (existing) {
-      res.json({ carretAccountId: existing.carretAccountId, kycStatus: existing.kycStatus, existed: true });
+      res.json({
+        carretAccountId: existing.carretAccountId,
+        kycStatus: existing.kycStatus,
+        existed: true,
+      });
       return;
     }
+
     const parsed = createSubAccountSchema.parse(req.body);
+
+    // Step 2 — different session but same email → adopt.
+    const byEmail = await getMappingByEmail(parsed.email);
+    if (byEmail) {
+      const adopted = await upsertMapping({
+        userId: session.userId,
+        carretAccountId: byEmail.carretAccountId,
+        referenceId: byEmail.referenceId,
+        kycStatus: byEmail.kycStatus,
+        walletWhitelistedAt: byEmail.walletWhitelistedAt,
+        email: parsed.email,
+      });
+      res.json({
+        carretAccountId: adopted.carretAccountId,
+        kycStatus: adopted.kycStatus,
+        existed: true,
+      });
+      return;
+    }
+
+    // Step 3 — genuinely new user + email → create.
     const clientIp =
       (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
       req.socket.remoteAddress ||
       '0.0.0.0';
-    const account = await createSubAccount({ ...parsed, user_ip_address: parsed.user_ip_address ?? clientIp });
+    const account = await createSubAccount({
+      ...parsed,
+      user_ip_address: parsed.user_ip_address ?? clientIp,
+    });
     const mapping = await upsertMapping({
       userId: session.userId,
       carretAccountId: String(account.id),
       referenceId: account.reference_id,
       kycStatus: account.kyc_status,
+      email: parsed.email,
     });
-    res.json({ carretAccountId: mapping.carretAccountId, kycStatus: mapping.kycStatus, existed: false });
+    res.json({
+      carretAccountId: mapping.carretAccountId,
+      kycStatus: mapping.kycStatus,
+      existed: false,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Resume the current session's KYC application (if any). Returns the
+ * saved Carret accountId + latest kycStatus, or 204 when the driver has
+ * never provisioned a sub-account. Used by the wizard on mount to jump
+ * straight to the appropriate step instead of re-asking for name / DOB.
+ */
+router.get('/v1/carret/resume', async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+      return;
+    }
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.status(204).end();
+      return;
+    }
+    res.json({
+      carretAccountId: mapping.carretAccountId,
+      kycStatus: mapping.kycStatus,
+      email: mapping.email,
+      referenceId: mapping.referenceId,
+    });
   } catch (e) {
     next(e);
   }

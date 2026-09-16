@@ -60,6 +60,31 @@ final class APIClient: @unchecked Sendable {
         try await send(makeRequest(path: path, method: "GET", query: query))
     }
 
+    /// GET where a `204 No Content` is a valid, non-error outcome that should
+    /// surface as `nil` instead of a decoding error. Used by endpoints like
+    /// `/v1/carret/resume` which return 204 when the driver has no state saved.
+    func getOptional<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T? {
+        let request = try makeRequest(path: path, method: "GET", query: query)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let err as URLError {
+            throw APIError.transport(err)
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if http.statusCode == 204 { return nil }
+        guard (200..<300).contains(http.statusCode) else {
+            let payload = try? decoder.decode(APIErrorPayload.self, from: data)
+            throw APIError.http(status: http.statusCode, payload: payload)
+        }
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch let err as DecodingError {
+            throw APIError.decoding(err)
+        }
+    }
+
     func post<T: Decodable>(_ path: String, body: Encodable? = nil) async throws -> T {
         try await send(makeRequest(path: path, method: "POST", body: body))
     }

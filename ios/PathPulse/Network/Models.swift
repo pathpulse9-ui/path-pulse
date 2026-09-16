@@ -181,6 +181,24 @@ struct CarretSubAccountResponse: Codable {
     var aml_status: String?
 }
 
+/// Response from POST /v1/carret/provision-subaccount — a session-authed
+/// find-or-create. `existed = true` when the backend adopted an existing
+/// account (same session or same email from an earlier install/browser).
+struct CarretProvisionResponse: Codable {
+    let carretAccountId: String
+    let kycStatus: String
+    let existed: Bool
+}
+
+/// Response from GET /v1/carret/resume — surfaces the saved KYC state so
+/// the wizard can pick up where the driver left off.
+struct CarretResumeResponse: Codable {
+    let carretAccountId: String
+    let kycStatus: String
+    var email: String?
+    var referenceId: String?
+}
+
 struct CarretKycSession: Codable {
     let session_id: String
     let status: String             // pending / verified / rejected / manual_review

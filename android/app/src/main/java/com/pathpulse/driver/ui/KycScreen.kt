@@ -223,20 +223,35 @@ fun KycScreen(
         }
     }
 
-    suspend fun doCreateSubAccount(): Boolean = try {
-        val acc = dataRepository.createCarretSubAccount(
-            CarretSubAccountInput(
-                email = email,
-                phone_number = fullPhone,
-                first_name = firstName, last_name = lastName,
-                dob = dob, country = country,
-                gender = gender.name,
-                occupation = occupation,
-                annual_income = income,
-            ),
-        )
-        accountId = acc.id.toString(); true
-    } catch (e: Exception) { error = UserErrors.message(e); false }
+    suspend fun doCreateSubAccount(): Boolean {
+        try {
+            val acc = dataRepository.createCarretSubAccount(
+                CarretSubAccountInput(
+                    email = email,
+                    phone_number = fullPhone,
+                    first_name = firstName, last_name = lastName,
+                    dob = dob, country = country,
+                    gender = gender.name,
+                    occupation = occupation,
+                    annual_income = income,
+                ),
+            )
+            accountId = acc.carretAccountId
+            // If we adopted a pre-existing account that's already verified /
+            // rejected, jump straight to the outcome so the driver doesn't
+            // walk PAN/Aadhaar/selfie again.
+            if (acc.existed) {
+                when (acc.kycStatus) {
+                    "verified" -> { setPage(WizardPage.Verified); return false }
+                    "rejected" -> { setPage(WizardPage.Rejected); return false }
+                }
+            }
+            return true
+        } catch (e: Exception) {
+            error = UserErrors.message(e)
+            return false
+        }
+    }
 
     suspend fun doInitiate(): Boolean = try {
         val r = dataRepository.initiateCarretKyc(accountId)
@@ -504,8 +519,26 @@ fun KycScreen(
         }
     }
 
+    // On mount, ask the backend if this session (or this driver's email)
+    // already has a KYC application saved. If yes, hydrate accountId and
+    // route to the right step — verified/rejected go straight to the
+    // outcome, manual_review kicks off polling. `pending` leaves the wizard
+    // where the driver last was so the persisted draft picks up mid-flow.
     LaunchedEffect(Unit) {
-        // Nothing on mount — polling is triggered from Selfie submission.
+        try {
+            val resumed = dataRepository.resumeCarretKyc() ?: return@LaunchedEffect
+            if (accountId.isEmpty()) accountId = resumed.carretAccountId
+            if (email.isEmpty() && resumed.email != null) email = resumed.email
+            when (resumed.kycStatus) {
+                "verified" -> setPage(WizardPage.Verified)
+                "rejected" -> setPage(WizardPage.Rejected)
+                "manual_review" -> {
+                    setPage(WizardPage.Checking)
+                    startPolling()
+                }
+                else -> Unit // pending — stay on current persisted page
+            }
+        } catch (_: Exception) { /* silent — driver just starts fresh */ }
     }
 }
 

@@ -121,6 +121,11 @@ create table if not exists carret_subaccounts (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Email a sub-account was registered with. Idempotent add for prod rollout
+-- (existing rows stay NULL until they see an update). Indexed for the
+-- lower(email) lookup in getMappingByEmail.
+alter table carret_subaccounts add column if not exists email text;
+create index if not exists carret_subaccounts_email_lower_idx on carret_subaccounts (lower(email));
 
 -- PAT-77: idempotency-key cache. Any money-moving POST that presents an
 -- Idempotency-Key gets its response frozen here for 24h so a client retry

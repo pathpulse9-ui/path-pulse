@@ -45,8 +45,20 @@ struct DataRepository: Sendable {
 
     // MARK: - Carret KYC (PAT-79)
 
-    func createCarretSubAccount(_ input: CarretSubAccountInput) async throws -> CarretSubAccountResponse {
-        try await client.post("v1/carret/subaccount", body: input)
+    /// Session-authed find-or-create. Backend either returns the existing
+    /// Carret account bound to this session (or to this email, from a prior
+    /// install/browser), or creates a fresh one. Idempotent — callers can
+    /// invoke it every time the wizard's About step is submitted without
+    /// worrying about duplicate-email 4xxs.
+    func createCarretSubAccount(_ input: CarretSubAccountInput) async throws -> CarretProvisionResponse {
+        try await client.post("v1/carret/provision-subaccount", body: input)
+    }
+
+    /// GET /v1/carret/resume — is there a KYC application already on file
+    /// for this session (or for this driver's email from an earlier one)?
+    /// Returns nil when nothing is saved yet (backend responds 204).
+    func resumeCarretKyc() async throws -> CarretResumeResponse? {
+        try await client.getOptional("v1/carret/resume")
     }
 
     func initiateCarretKyc(accountId: String) async throws -> CarretKycInitiateResponse {
