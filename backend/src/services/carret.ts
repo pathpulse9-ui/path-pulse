@@ -147,6 +147,9 @@ export interface CarretOrder {
   payment_method: string;
   bank_id?: number | string;
   quote_id?: number | string;
+  created_at?: string | number;
+  updated_at?: string | number;
+  filled_time?: string | number;
 }
 
 /** DRF-style pagination envelope Carret returns for list endpoints. */
@@ -308,18 +311,28 @@ export async function placeOfframpOrder(params: {
  * on accounts with many orders but works today; a targeted endpoint would be
  * nice-to-have.
  */
-export async function getOfframpOrder(orderId: number | string): Promise<CarretOrder> {
-  if (!env.carret.accountId) {
-    throw new Error('CARRET_ACCOUNT_ID required to fetch order status');
+export async function listOfframpOrders(
+  accountId: number | string = env.carret.accountId,
+): Promise<CarretOrder[]> {
+  if (!accountId) {
+    throw new Error('CARRET_ACCOUNT_ID required to list orders');
   }
   const page = await carretFetch<CarretPage<CarretOrder & { order_type?: string; side?: string }>>(
     'GET',
     '/offramp/orders/',
-    { query: { account_id: env.carret.accountId } },
+    { query: { account_id: accountId } },
   );
-  const match = (page.results ?? []).find((o) => String(o.id) === String(orderId));
+  return page.results ?? [];
+}
+
+export async function getOfframpOrder(
+  orderId: number | string,
+  accountId: number | string = env.carret.accountId,
+): Promise<CarretOrder> {
+  const orders = await listOfframpOrders(accountId);
+  const match = orders.find((o) => String(o.id) === String(orderId));
   if (!match) {
-    throw new Error(`Carret order ${orderId} not found for account ${env.carret.accountId}`);
+    throw new Error(`Carret order ${orderId} not found for account ${accountId}`);
   }
   return match;
 }
@@ -352,6 +365,20 @@ export async function listBanks(accountId: number | string): Promise<CarretBank[
 }
 
 // ── Status mapping (Carret → PathPulse OffRampStatus lifecycle) ───────
+
+/**
+ * Carret timestamps come back as Unix epoch **seconds** (a float), not ISO
+ * strings — `new Date(1787125834.93)` would be read as milliseconds and land in
+ * 1970. Normalise both shapes to epoch milliseconds.
+ */
+export function carretTimestampMs(v: string | number | undefined): number | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'number') return Math.round(v * 1000);
+  const asNumber = Number(v);
+  if (Number.isFinite(asNumber) && !/[-:TZ]/.test(v)) return Math.round(asNumber * 1000);
+  const parsed = Date.parse(v);
+  return Number.isNaN(parsed) ? null : parsed;
+}
 
 export function mapCarretStatus(status: string): OffRampStatus | null {
   switch (status) {

@@ -5,6 +5,10 @@ Deliverables 4, 5, 6 · Stellar **testnet** · compiled 2026-09-16
 Every transaction hash below was re-verified against Horizon on the compile date and returned
 `successful: true`. Every account returned HTTP 200. Nothing here is illustrative.
 
+> **Superseded in part (2026-09-19).** Reviewer findings on D4, D5 and D6 are answered in
+> `docs/TRANCHE2_REVIEW_RESPONSE.md`, with two deliverable modifications filed for approval.
+> Read §4.1 and §5.1 below together with their correction notes.
+
 **Verify any transaction:** `https://stellar.expert/explorer/testnet/tx/<hash>`
 **Verify any account:** `https://stellar.expert/explorer/testnet/account/<address>`
 **Raw ledger data:** `https://horizon-testnet.stellar.org/transactions/<hash>`
@@ -54,7 +58,14 @@ Every transaction hash below was re-verified against Horizon on the compile date
 | Wallet whitelist | **94** — Stellar USDC address approved |
 | Static egress IP | **3.223.23.150** — whitelisted by Carret |
 
-### 4.1 — Successful testnet withdrawal flow through the sandbox
+### 4.1 — Successful withdrawal flow through Carret's dev environment
+
+> **Correction (2026-09-19).** These three orders were **not funded by a Stellar transfer on
+> any network** — they were funded by a Carret-side dev credit (`POST /crypto_deposit/`), so
+> no USDC moved on testnet or mainnet and no transfer hash exists. Carret has no testnet;
+> their dev environment uses real mainnet USDC, and PathPulse runs on testnet. What these
+> orders prove is the Carret API path and INR settlement to a registered bank — not an
+> on-chain deposit. See `docs/TRANCHE2_REVIEW_RESPONSE.md` §4b.
 
 | Order id | Amount | Net INR | Status |
 |---|---|---|---|
@@ -78,6 +89,10 @@ Rate ≈ 98–99 INR/USDC · Carret fee 0.59% · TDS 1%
 
 ### 4.3 — Off-ramp events linked to Stellar settlement transactions
 
+> **Strengthened (2026-09-19).** `settlementBatchId` is now **mandatory** on every off-ramp
+> session (400 if absent, submit disabled in the UI), sessions and their status events are
+> persisted in Postgres, and the link survives reconciliation. See §4c of the review response.
+
 `settlementBatchId` is carried on the off-ramp session and validated server-side.
 
 | Input | Result |
@@ -94,10 +109,19 @@ above. Provider abstraction: `OffRampProvider` (`carret` live, `ramp` wired).
 
 # D5 — Cross-Asset Settlement Routing
 
-**Architecture:** multi-source aggregator — Aquarius and Stellar Broker quoted in parallel,
-best execution wins, each the other's fallback. Slippage default 100 bps.
+**Architecture:** multi-source aggregator — Aquarius and Stellar Broker are quoted in
+parallel and the better price wins the comparison. **Aquarius is the execution venue; Stellar
+Broker is quote-only** (`canExecute: false`). Fallback is therefore one-directional: if Broker
+quoting fails, Aquarius still quotes *and* fills; if Aquarius fails, a Broker quote cannot be
+filled. Slippage default 100 bps. See `docs/DELIVERABLE_MODIFICATION_D5_ROUTING.md`.
 
-### 5.1 — Asset conversions executed through Stellar Broker on Testnet
+### 5.1 — Asset conversions executed on Testnet
+
+> **Scope modification filed.** The criterion names Stellar Broker as the execution venue.
+> Broker cannot fill on testnet (no partner key; its quotes are mainnet-priced), so the
+> conversion below was executed on **Aquarius**, which the deliverable names as an AMM
+> liquidity source. Broker remains integrated as a parallel quote source.
+> See `docs/DELIVERABLE_MODIFICATION_D5_ROUTING.md`.
 
 | | |
 |---|---|
@@ -167,6 +191,12 @@ Each badge: 1 unit, `is_authorized: true`, one authorised holder per asset. Each
 carries an authorised USDC trustline.
 
 ### 6.3 — Reward multipliers 1.0× / 1.2× / 1.5× applied correctly
+
+> **Superseded (2026-09-19).** The assignment API no longer accepts a score and no longer
+> mints a fresh driver: `POST /v1/scout/assign` takes a driver id and reads the score from the
+> feed. A replacement example running the full chain — feed score → SCOUT assignment → a
+> settlement applying the multiplier, on three existing drivers — is in
+> `docs/TRANCHE2_REVIEW_RESPONSE.md` §D6.
 
 Batch **`stl_1789491082569_c75c7b27`** · tx `c117e2b8…` · ledger 4693499
 
@@ -276,12 +306,14 @@ an unsigned XDR for human review; a quorum signs out of band.
 
 ## Scope notes
 
-**Fiat partner.** The deliverable names Mercuryo. Their Stellar SEP-24 endpoint supports XLM
+**Fiat partner.** Formally filed as `docs/DELIVERABLE_MODIFICATION_D4_OFFRAMP.md`.
+The deliverable names Mercuryo. Their Stellar SEP-24 endpoint supports XLM
 only and offers no INR corridor, so the corridor the deliverable describes could not be served.
 Carret Infra (FIU-IND registered) delivered it behind the same `OffRampProvider` interface — a
 partner substitution, not an architectural change.
 
-**Stellar Broker execution.** Broker is integrated and quoting. Its execution path requires a
+**Stellar Broker execution.** Formally filed as
+`docs/DELIVERABLE_MODIFICATION_D5_ROUTING.md`. Broker is integrated and quoting. Its execution path requires a
 partner key and prices against mainnet liquidity, so it cannot fill on testnet. Aquarius is the
 venue that fills — which the deliverable contemplates in describing "existing AMM liquidity
 sources such as Aquarius".

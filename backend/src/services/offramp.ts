@@ -36,6 +36,15 @@ import {
 } from './carret.js';
 import { getMapping } from './carretSubAccountStore.js';
 import { assertUnderLimit, recordUsage } from './carretLimits.js';
+import {
+  findSessionByCarretOrderId,
+  getSession,
+  listSessionsByUser,
+  recordEvent,
+  saveSession,
+  type OffRampEventSource,
+  type StoredOffRampSession,
+} from './offRampStore.js';
 
 /**
  * Fiat off-ramp orchestration (D4 — Ramp Network).
@@ -66,24 +75,11 @@ export interface OffRampContext {
 interface OffRampProvider {
   readonly name: 'ramp' | 'carret';
   readonly sandbox: boolean;
-  start(session: OffRampSession, ctx: OffRampContext): Promise<void>;
-  status(session: OffRampSession): Promise<OffRampStatus>;
+  start(session: SessionInternal, ctx: OffRampContext): Promise<void>;
+  status(session: SessionInternal): Promise<OffRampStatus>;
 }
 
-/**
- * Provider-private state we attach to a session but don't expose in the public
- * contract. Today: Carret's order_id (webhook `ref` + polling handle).
- */
-interface CarretSessionMeta {
-  carretOrderId?: string | number;
-  carretQuoteId?: string | number;
-  /** Stellar-style memo (numeric string) — required on every deposit tx. */
-  carretDepositMemo?: string | null;
-  /** PathPulse userId — populated in createWithdrawal so PAT-80 limit
-   *  tracking can resolve the driver's Carret sub-account. */
-  ppUserId?: string;
-}
-type SessionInternal = OffRampSession & CarretSessionMeta;
+type SessionInternal = StoredOffRampSession;
 
 const callbackBase = `${process.env.PUBLIC_API_URL ?? `http://localhost:${env.port}`}/v1/offramp/callback`;
 
@@ -143,8 +139,8 @@ const carretSandboxProvider: OffRampProvider = {
     const s = session as SessionInternal;
     const quote = carretMocks.quote(session.amount);
     const order = carretMocks.order(quote.id, session.amount);
-    s.carretQuoteId = quote.id;
-    s.carretOrderId = order.id;
+    s.carretQuoteId = String(quote.id);
+    s.carretOrderId = String(order.id);
     session.fiatAmountEstimate = quote.output_amount.amount.toFixed(2);
     session.anchorAccount = sandboxAnchor;
     session.merchantTransactionId = String(order.id); // reuse existing field for correlation
@@ -226,6 +222,9 @@ const carretLiveProvider: OffRampProvider = {
     const order = await placeOfframpOrder({ quoteId: quote.id, bankId });
     s.carretQuoteId = quote.id;
     s.carretOrderId = order.id;
+    const order = await placeOfframpOrder({ quoteId: quote.id, bankId: env.carret.bankId });
+    s.carretQuoteId = String(quote.id);
+    s.carretOrderId = String(order.id);
     session.fiatAmountEstimate = fiatInr.toFixed(2);
     session.merchantTransactionId = String(order.id);
     session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
@@ -259,8 +258,6 @@ function pickProvider(): OffRampProvider {
 
 const provider: OffRampProvider = pickProvider();
 
-// ── in-memory index (links off-ramp events to settlement batches; feeds D8) ──
-const sessions = new Map<string, OffRampSession>();
 
 function assetOf(ref?: AssetRef): AssetRef {
   if (ref?.code) return ref;
@@ -276,7 +273,14 @@ export async function createWithdrawal(
   if (!/^\d+(\.\d{1,7})?$/.test(req.amount) || Number(req.amount) <= 0) {
     throw httpError('amount must be a positive 7-decimal number', 400, 'ValidationError');
   }
-  if (req.settlementBatchId) await getSettlementBatch(req.settlementBatchId); // 404 if unknown
+  if (!req.settlementBatchId) {
+    throw httpError(
+      'settlementBatchId is required — every off-ramp session must name the settlement batch it draws from',
+      400,
+      'ValidationError',
+    );
+  }
+  await getSettlementBatch(req.settlementBatchId);
 
   const now = new Date().toISOString();
   const fiatFallback = provider.name === 'carret' ? env.carret.fiat : env.ramp.fiat;
@@ -292,22 +296,59 @@ export async function createWithdrawal(
     settlementBatchId: req.settlementBatchId,
     createdAt: now,
     updatedAt: now,
-    ppUserId: userId, // PAT-80: lets carretLiveProvider resolve Carret sub-account for limit tracking
+    ppUserId: userId,
   };
 
   await provider.start(session, ctx);
-  sessions.set(session.id, session);
+  await saveSession(session);
+  await recordEvent({
+    sessionId: session.id,
+    previousStatus: null,
+    status: session.status,
+    source: 'create',
+    detail: {
+      provider: session.provider,
+      settlementBatchId: session.settlementBatchId,
+      carretOrderId: session.carretOrderId ?? null,
+    },
+    createdAt: now,
+  });
   return session;
 }
 
-async function refresh(session: OffRampSession): Promise<OffRampSession> {
+/**
+ * Persist a status transition and append the event. Terminal states are sticky:
+ * `completed` and `error` never move again, so a late webhook or a reconciler
+ * pass cannot regress a settled session.
+ */
+async function applyStatus(
+  session: SessionInternal,
+  next: OffRampStatus,
+  source: OffRampEventSource,
+  detail?: Record<string, unknown>,
+): Promise<SessionInternal> {
+  if (session.status === 'completed' || session.status === 'error') return session;
+  if (next === session.status) return session;
+
+  const previousStatus = session.status;
+  session.status = next;
+  session.updatedAt = new Date().toISOString();
+  await saveSession(session);
+  await recordEvent({
+    sessionId: session.id,
+    previousStatus,
+    status: next,
+    source,
+    detail,
+    createdAt: session.updatedAt,
+  });
+  return session;
+}
+
+async function refresh(session: SessionInternal): Promise<SessionInternal> {
   if (session.status === 'completed' || session.status === 'error') return session;
   const next = await provider.status(session);
-  if (next !== session.status) {
-    session.status = next;
-    session.updatedAt = new Date().toISOString();
-  }
-  return session;
+  return applyStatus(session, next, 'poll');
 }
 
 /**
@@ -316,8 +357,8 @@ async function refresh(session: OffRampSession): Promise<OffRampSession> {
  * confirm that the id exists.
  */
 export async function getWithdrawal(id: string, userId: string): Promise<OffRampSession> {
-  const s = sessions.get(id);
-  if (!s || (s as SessionInternal).ppUserId !== userId) {
+  const s = await getSession(id);
+  if (!s || s.ppUserId !== userId) {
     throw httpError(`Off-ramp session ${id} not found`, 404, 'NotFound');
   }
   return refresh(s);
@@ -328,7 +369,7 @@ export async function listWithdrawals(
   cursor?: string,
   limit = 50,
 ): Promise<OffRampSessionPage> {
-  const owned = [...sessions.values()].filter((s) => (s as SessionInternal).ppUserId === userId);
+  const owned = await listSessionsByUser(userId);
   const all = await Promise.all(owned.map(refresh));
   all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
@@ -339,37 +380,55 @@ export async function listWithdrawals(
 }
 
 /** Apply a verified Ramp webhook to the session identified by the `ref` query param. */
-export function applyCallback(sessionId: string, rampStatus: string): boolean {
-  const s = sessions.get(sessionId);
+export async function applyCallback(sessionId: string, rampStatus: string): Promise<boolean> {
+  const s = await getSession(sessionId);
   if (!s) return false;
-  // Terminal states are sticky — a late webhook can't regress completed → error.
-  if (s.status === 'completed' || s.status === 'error') return true;
   const mapped = mapRampStatus(rampStatus);
-  if (mapped && mapped !== s.status) {
-    s.status = mapped;
-    s.updatedAt = new Date().toISOString();
-  }
+  if (mapped) await applyStatus(s, mapped, 'webhook', { rampStatus });
   return true;
 }
 
 /**
  * Apply a verified Carret webhook. Carret webhooks carry the order_id (not our
- * session id), so we look up the session by the carretOrderId meta field.
+ * session id), so we look up the session by the persisted carretOrderId.
  */
-export function applyCarretCallback(orderId: string, carretStatus: string): boolean {
-  const target = String(orderId);
-  const s = [...sessions.values()].find(
-    (v) => String((v as SessionInternal).carretOrderId ?? '') === target,
-  );
+export async function applyCarretCallback(
+  orderId: string,
+  carretStatus: string,
+): Promise<boolean> {
+  const s = await findSessionByCarretOrderId(String(orderId));
   if (!s) return false;
-  // Terminal states are sticky — a late webhook can't regress completed → error.
-  if (s.status === 'completed' || s.status === 'error') return true;
   const mapped = mapCarretStatus(carretStatus);
-  if (mapped && mapped !== s.status) {
-    s.status = mapped;
-    s.updatedAt = new Date().toISOString();
-  }
+  if (mapped) await applyStatus(s, mapped, 'webhook', { carretStatus, orderId: String(orderId) });
   return true;
+}
+
+/**
+ * Drive a session to a status discovered out of band — used by the orphan
+ * reconciler when a webhook never arrived and Carret's order list is the only
+ * source of truth for where the order actually ended up.
+ */
+export async function reconcileSessionStatus(
+  sessionId: string,
+  next: OffRampStatus,
+  detail: Record<string, unknown>,
+): Promise<OffRampSession | null> {
+  const s = await getSession(sessionId);
+  if (!s) return null;
+  return applyStatus(s, next, 'reconciler', detail);
+}
+
+/** Attach the Carret order the reconciler matched to an orphaned session. */
+export async function attachCarretOrder(
+  sessionId: string,
+  orderId: string,
+): Promise<void> {
+  const s = await getSession(sessionId);
+  if (!s) return;
+  s.carretOrderId = String(orderId);
+  s.merchantTransactionId = String(orderId);
+  s.updatedAt = new Date().toISOString();
+  await saveSession(s);
 }
 
 /**

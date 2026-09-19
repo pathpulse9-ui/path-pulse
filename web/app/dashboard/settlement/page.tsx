@@ -1,44 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Asset,
-  BASE_FEE,
-  Horizon,
-  Keypair,
-  Networks,
-  Operation,
-  TransactionBuilder,
-} from '@stellar/stellar-sdk';
 import type { SettlementBatch, GroupPayoutBatch } from '@pathpulse/contract';
-import { FRIENDBOT_URL } from '../../lib/stellar';
-import { listSettlementBatches, createSettlementBatch, createGroupPayout } from '../../lib/api';
+import {
+  listSettlementBatches,
+  createSettlementBatch,
+  createGroupPayout,
+  getSettlementBatch,
+  prepareScoutDemoDrivers,
+  type DemoScoutDriver,
+} from '../../lib/api';
 import { parseRecipientsFile, type ParsedRecipient } from '../../lib/parseRecipients';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
 const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
-
-async function makeFundedDriver(withUsdcTrustline = false): Promise<string> {
-  const kp = Keypair.random();
-  const res = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(kp.publicKey())}`);
-  if (!res.ok) throw new Error(`Friendbot HTTP ${res.status}`);
-  if (withUsdcTrustline) {
-    const server = new Horizon.Server('https://horizon-testnet.stellar.org');
-    const acct = await server.loadAccount(kp.publicKey());
-    const tx = new TransactionBuilder(acct, {
-      fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
-    })
-      .addOperation(Operation.changeTrust({ asset: new Asset('USDC', USDC_ISSUER) }))
-      .setTimeout(60)
-      .build();
-    tx.sign(kp);
-    await server.submitTransaction(tx);
-  }
-  return kp.publicKey();
-}
 
 function tierClasses(tier: number) {
   if (tier === 3) return 'bg-green-100 text-green-700 border-green-300';
@@ -55,6 +32,8 @@ export default function SettlementPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [demoDrivers, setDemoDrivers] = useState<DemoScoutDriver[]>([]);
+  const [warning, setWarning] = useState<string | null>(null);
 
   const [recipients, setRecipients] = useState<ParsedRecipient[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -85,25 +64,37 @@ export default function SettlementPage() {
     load();
   }, [load]);
 
-  // Reviewer demo: generate + Friendbot-fund 3 driver accounts (tiers 1/2/3),
-  // then run a 100 XLM settlement through the backend engine.
+  // Reviewer demo. No tier is asserted anywhere: each driver's badge is
+  // assigned from their validation score, and the settlement request carries
+  // no tier at all — the engine reads the badge from chain.
   const runSample = useCallback(async () => {
     setRunning(true);
     setError(null);
+    setWarning(null);
+    setDemoDrivers([]);
     try {
-      setStatus('Funding 3 sample driver accounts on testnet…');
-      const tiers = [1, 2, 3] as const;
-      const run = Date.now().toString(36);
-      const drivers = [];
-      for (let i = 0; i < tiers.length; i++) {
-        const address = await makeFundedDriver(settlementAsset === 'USDC');
-        drivers.push({ userId: `sample-driver-${run}-${i + 1}`, address, tier: tiers[i] });
-      }
+      setStatus('Reading validation scores and assigning SCOUT badges…');
+      const { drivers } = await prepareScoutDemoDrivers();
+      setDemoDrivers(drivers);
+
       setStatus('Executing 50/30/20 settlement…');
       const batch = await createSettlementBatch({
         grossAmount: settlementAsset === 'USDC' ? '1' : '100',
-        drivers,
+        drivers: drivers.map((d) => ({ userId: d.userId, address: d.address })),
         asset: settlementAsset === 'USDC' ? { code: 'USDC', issuer: USDC_ISSUER } : undefined,
+      }).catch(async (e: unknown) => {
+        // The split is irreversible on-chain before the driver fan-out is
+        // attempted, so a payout-provider outage must not be reported as a
+        // failed settlement. Recover the persisted batch and warn instead.
+        const message = e instanceof Error ? e.message : String(e);
+        const settled = message.includes('settled on-chain');
+        const id = settled ? /(stl_[0-9a-z_]+)/.exec(message)?.[1] : undefined;
+        if (!id) throw e;
+        setWarning(
+          `Settlement ${id} is final on chain. The SDP driver fan-out did not run — ` +
+            'retry it from Payouts. The 50/30/20 split below is complete.',
+        );
+        return getSettlementBatch(id);
       });
       setSelected(batch);
       await load();
@@ -384,6 +375,59 @@ export default function SettlementPage() {
 
         {status && <p className="text-sm text-black/50">{status}</p>}
         {error != null && <ErrorNotice error={error} />}
+        {warning && (
+          <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {warning}
+          </p>
+        )}
+
+        {demoDrivers.length > 0 && (
+          <div className="rounded-xl border border-black/10 p-4 space-y-2">
+            <div className="text-xs text-black/50">
+              Tiers came from validation scores, not from this request — the settlement was
+              submitted with no tier at all.
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-black/50 border-b border-black/10">
+                  <th className="py-2 font-medium">Driver</th>
+                  <th className="py-2 font-medium">Score</th>
+                  <th className="py-2 font-medium">Source</th>
+                  <th className="py-2 font-medium">Badge on chain</th>
+                  <th className="py-2 font-medium">Assignment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {demoDrivers.map((d) => (
+                  <tr key={d.userId} className="border-b border-black/5">
+                    <td className="py-2 font-mono text-xs">{d.userId}</td>
+                    <td className="py-2">{d.score.toFixed(4)}</td>
+                    <td className="py-2 text-xs text-black/50">{d.scoreSource}</td>
+                    <td className="py-2">
+                      <span className={`text-xs rounded-full border px-2 py-0.5 ${tierClasses(d.tier ?? 1)}`}>
+                        SCOUT{d.tier ?? 1} · {d.multiplier.toFixed(1)}×
+                      </span>
+                    </td>
+                    <td className="py-2 font-mono text-xs">
+                      {d.assignmentTx ? (
+                        <a
+                          href={explorerTx(d.assignmentTx)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline text-blue-600"
+                        >
+                          {short(d.assignmentTx)}
+                        </a>
+                      ) : (
+                        <span className="text-black/40">already held</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {!error && batches.length === 0 && !loading && !running && (
           <div className="rounded-xl border border-dashed border-black/15 p-8 text-center">

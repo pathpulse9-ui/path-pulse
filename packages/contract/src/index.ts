@@ -154,7 +154,11 @@ export const SCOUT_MULTIPLIER: Record<ScoutTier, number> = { 1: 1.0, 2: 1.2, 3: 
 export interface SettlementDriverInput {
   userId: string;
   address: string;
-  tier: ScoutTier;
+  /**
+   * Optional fallback only. The engine reads the driver's SCOUT badge from
+   * chain; this is used solely when they hold none. Callers should omit it.
+   */
+  tier?: ScoutTier;
 }
 
 export interface CreateSettlementBatchRequest {
@@ -178,6 +182,14 @@ export interface SettlementDriverPayout {
   tier: ScoutTier;
   multiplier: number;
   amount: string;
+  /**
+   * The validation score that justified this multiplier, captured at
+   * settlement time. Absent for drivers with no score on record.
+   */
+  score?: number;
+  scoreSource?: ScoreSource;
+  scoredAt?: string;
+  scoreImportId?: string;
 }
 
 export interface SettlementBatch {
@@ -237,9 +249,37 @@ export interface ValidationScore {
   source: ScoreSource;
 }
 
-/** Assign a tier from a PulseGen validation score (0..1). */
+export interface ScoreImportRecord {
+  id: string;
+  supplier: string;
+  sourceRef?: string;
+  notes?: string;
+  payloadSha256: string;
+  scoreCount: number;
+  importedBy: string;
+  receivedAt: string;
+  createdAt: string;
+}
+
+export type ScoreFeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'synthetic';
+
+export interface ScoreFeedStatus {
+  pulseGenLive: boolean;
+  /** Host the live feed points at — a localhost value means a stub, not the real feed. */
+  endpointHost: string | null;
+  mode: ScoreFeedMode;
+  scoredDrivers: number;
+  latestImport: ScoreImportRecord | null;
+  scores: (ValidationScore & { importId: string | null })[];
+}
+
+/**
+ * Assign a tier to an existing driver. The score is read from the active score
+ * provider for that driver — it is never supplied by the caller, so an operator
+ * cannot hand-pick a tier.
+ */
 export interface AssignScoutTierRequest {
-  score: number;
+  driverId: string;
 }
 
 export interface ScoutAssignment {
@@ -248,6 +288,9 @@ export interface ScoutAssignment {
   tier: ScoutTier;
   multiplier: number;
   score: number;
+  scoredAt: string;
+  scoreSource: ScoreSource;
+  scoreImportId?: string;
   issuer: string;
   assetCode: string;
   txHash: string;

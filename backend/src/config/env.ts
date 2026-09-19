@@ -261,6 +261,12 @@ if (isMainnet) {
   if (env.carret.allowTestnet) {
     problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');
   }
+  if (!env.pulseGen.baseUrl || !env.pulseGen.apiKey) {
+    problems.push(
+      'PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet — synthetic validation ' +
+        'scores measure nothing and must never determine a real payout multiplier',
+    );
+  }
 
   if (problems.length) {
     throw new Error(

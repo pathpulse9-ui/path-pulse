@@ -138,7 +138,7 @@ export default function OffRampPage() {
     try {
       const session = await createOffRampWithdrawal({
         amount,
-        settlementBatchId: batchId.trim() || undefined,
+        settlementBatchId: batchId.trim(),
       });
       setSelected(session);
       await load();
@@ -235,17 +235,17 @@ export default function OffRampPage() {
             />
           </label>
           <label className="text-sm flex-1 min-w-48">
-            <span className="block text-black/50 mb-1">Settlement batch ID (optional)</span>
+            <span className="block text-black/50 mb-1">Settlement batch ID (required)</span>
             <input
               value={batchId}
               onChange={(e) => setBatchId(e.target.value)}
-              placeholder="stl_… (links the off-ramp to a settlement)"
+              placeholder="stl_… (the settlement this withdrawal draws from)"
               className="rounded-xl border border-black/10 bg-white text-black placeholder:text-black/30 px-3 py-2 text-sm w-full font-mono focus:outline-none focus:border-black/30"
             />
           </label>
           <button
             onClick={startWithdrawal}
-            disabled={busy}
+            disabled={busy || !batchId.trim()}
             className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
           >
             {busy ? 'Starting…' : 'Sell to fiat'}
@@ -284,7 +284,7 @@ export default function OffRampPage() {
                 {quoting
                   ? 'refreshing…'
                   : quote.live
-                    ? `live · ${quote.provider}${quote.quoteId ? ` · #${quote.quoteId}` : ''}`
+                    ? `live quote · ${quote.provider}${quote.quoteId ? ` · #${quote.quoteId}` : ''}`
                     : 'indicative estimate'}
               </span>
             </div>

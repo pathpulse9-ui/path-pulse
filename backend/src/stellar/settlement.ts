@@ -17,6 +17,7 @@ import { createPayoutBatch } from '../services/payouts.js';
 import { saveBatch, attachPayoutBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
 import { assertMainnetAllowed } from './networkGuard.js';
 import { logger } from '../config/logger.js';
+import { resolveScore } from '../services/pulsegen.js';
 
 /**
  * Deterministic 50 / 30 / 20 settlement engine (D6).
@@ -73,12 +74,12 @@ export function computeSplit(grossStr: string, drivers: CreateSettlementBatchReq
   const treasury = (gross * 20n) / 100n;
   const driverRewards = gross - authorities - treasury; // 30% + any rounding dust
 
-  const sumWeights = drivers.reduce((a, d) => a + tierWeight(d.tier), 0n);
+  const sumWeights = drivers.reduce((a, d) => a + tierWeight(d.tier ?? 1), 0n);
   let allocated = 0n;
   const payouts = drivers.map((d) => {
-    const amount = sumWeights > 0n ? (driverRewards * tierWeight(d.tier)) / sumWeights : 0n;
+    const amount = sumWeights > 0n ? (driverRewards * tierWeight(d.tier ?? 1)) / sumWeights : 0n;
     allocated += amount;
-    return { userId: d.userId, address: d.address, tier: d.tier, amount };
+    return { userId: d.userId, address: d.address, tier: d.tier ?? 1, amount };
   });
   // Assign the rounding remainder to the first driver so the pool sums exactly.
   if (payouts.length > 0) payouts[0].amount += driverRewards - allocated;
@@ -118,8 +119,16 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
   const resolvedDrivers = await Promise.all(
     req.drivers.map(async (d) => {
       const { tier } = await getOnchainTier(d.address);
-      return { ...d, tier: tier ?? d.tier };
+      return { ...d, tier: tier ?? d.tier ?? 1 };
     }),
+  );
+
+  // Capture the score behind each multiplier now, not at read time: a later
+  // rescore must not silently rewrite why this batch paid what it paid.
+  const scoreByDriver = new Map(
+    await Promise.all(
+      req.drivers.map(async (d) => [d.userId, await resolveScore(d.userId)] as const),
+    ),
   );
   const split = computeSplit(req.grossAmount, resolvedDrivers);
 
@@ -156,13 +165,20 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     );
   }
 
-  const driverPayouts: SettlementDriverPayout[] = split.payouts.map((p) => ({
-    userId: p.userId,
-    address: p.address,
-    tier: p.tier,
-    multiplier: SCOUT_MULTIPLIER[p.tier],
-    amount: fromStroops(p.amount),
-  }));
+  const driverPayouts: SettlementDriverPayout[] = split.payouts.map((p) => {
+    const scored = scoreByDriver.get(p.userId);
+    return {
+      userId: p.userId,
+      address: p.address,
+      tier: p.tier,
+      multiplier: SCOUT_MULTIPLIER[p.tier],
+      amount: fromStroops(p.amount),
+      score: scored?.score,
+      scoreSource: scored?.source,
+      scoredAt: scored?.scoredAt,
+      scoreImportId: scored?.importId ?? undefined,
+    };
+  });
 
   const batchId = `stl_${Date.now()}_${randomBytes(4).toString('hex')}`;
 

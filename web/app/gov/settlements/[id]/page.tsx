@@ -103,7 +103,8 @@ export default function GovSettlementDetailPage(
             <div className="text-sm font-semibold">Driver payouts</div>
             <div className="mt-1 text-xs text-black/50">
               {batch.driverPayouts.length} driver{batch.driverPayouts.length === 1 ? '' : 's'} — fanned out from
-              driver_pool via SDP.
+              driver_pool via SDP. Each multiplier is the driver&apos;s on-chain SCOUT badge, and the score
+              shown is the validation result recorded when this batch settled.
             </div>
           </div>
           <table className="w-full text-sm">
@@ -113,6 +114,7 @@ export default function GovSettlementDetailPage(
                 <th className="px-5 py-3">Address</th>
                 <th className="px-5 py-3">Tier</th>
                 <th className="px-5 py-3">Multiplier</th>
+                <th className="px-5 py-3">Validation score</th>
                 <th className="px-5 py-3 text-right">Amount</th>
               </tr>
             </thead>
@@ -129,6 +131,22 @@ export default function GovSettlementDetailPage(
                     </span>
                   </td>
                   <td className="px-5 py-3">{p.multiplier.toFixed(1)}×</td>
+                  <td className="px-5 py-3 text-xs">
+                    {p.score === undefined ? (
+                      <span className="text-black/40">no score on record</span>
+                    ) : (
+                      <>
+                        <div className="font-medium text-black/80">{p.score.toFixed(4)}</div>
+                        <div className="text-black/45">
+                          {p.scoreSource}
+                          {p.scoredAt ? ` · ${new Date(p.scoredAt).toLocaleDateString()}` : ''}
+                        </div>
+                        {p.scoreImportId && (
+                          <div className="font-mono text-[10px] text-black/35">{p.scoreImportId}</div>
+                        )}
+                      </>
+                    )}
+                  </td>
                   <td className="px-5 py-3 text-right font-medium">{p.amount} {asset}</td>
                 </tr>
               ))}

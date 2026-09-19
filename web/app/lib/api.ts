@@ -21,6 +21,7 @@ import type {
   CreateOffRampWithdrawalRequest,
   ScoutConfig,
   ScoutAssignment,
+  ScoreFeedStatus,
   ScoutRevocation,
   ScoutTierLookup,
   RoutingQuote,
@@ -298,10 +299,33 @@ export function getScoutConfig() {
   return apiFetch<ScoutConfig>('/v1/scout');
 }
 
-export function assignScoutTier(score: number) {
+export function getScoreFeed() {
+  return apiFetch<ScoreFeedStatus>('/v1/scout/feed');
+}
+
+export function assignScoutTier(driverId: string) {
   return apiFetch<ScoutAssignment>('/v1/scout/assign', {
     method: 'POST',
-    body: JSON.stringify({ score }),
+    body: JSON.stringify({ driverId }),
+  });
+}
+
+export interface DemoScoutDriver {
+  userId: string;
+  address: string;
+  score: number;
+  scoredAt: string;
+  scoreSource: string;
+  scoreImportId: string | null;
+  tier: 1 | 2 | 3 | null;
+  multiplier: number;
+  assignmentTx: string | null;
+}
+
+export function prepareScoutDemoDrivers() {
+  return apiFetch<{ drivers: DemoScoutDriver[] }>('/v1/ops/demo/scout-drivers', {
+    method: 'POST',
+    body: JSON.stringify({}),
   });
 }
 

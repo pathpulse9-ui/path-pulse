@@ -163,6 +163,79 @@ create table if not exists carret_daily_usage (
   updated_at timestamptz not null default now(),
   primary key (carret_account_id, activity, ymd_ist)
 );
+
+create table if not exists off_ramp_sessions (
+  id text primary key,
+  user_id text not null,
+  provider text not null,
+  sandbox boolean not null default false,
+  status text not null,
+  amount text not null,
+  asset_code text not null,
+  asset_issuer text,
+  fiat_currency text not null,
+  fiat_amount_estimate text,
+  settlement_batch_id text,
+  interactive_url text,
+  anchor_account text,
+  merchant_transaction_id text,
+  stellar_tx_hash text,
+  carret_order_id text,
+  carret_quote_id text,
+  carret_deposit_memo text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists off_ramp_sessions_user_idx on off_ramp_sessions (user_id, created_at desc);
+create index if not exists off_ramp_sessions_batch_idx on off_ramp_sessions (settlement_batch_id);
+create index if not exists off_ramp_sessions_order_idx on off_ramp_sessions (carret_order_id);
+create index if not exists off_ramp_sessions_status_idx on off_ramp_sessions (status, created_at);
+
+create table if not exists off_ramp_status_events (
+  id bigserial primary key,
+  session_id text not null,
+  previous_status text,
+  status text not null,
+  source text not null,
+  detail jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists off_ramp_status_events_session_idx on off_ramp_status_events (session_id, id);
+
+-- D6 score feed: PulseGen validation results and their provenance.
+-- A score is only trustworthy if you can say where it came from, so every
+-- batch records its supplier, when it arrived, who imported it and a hash of
+-- the exact payload. Scores are append-only history; the newest row per
+-- driver is the current one.
+create table if not exists score_imports (
+  id text primary key,
+  supplier text not null,
+  source_ref text,
+  payload_sha256 text not null,
+  score_count int not null,
+  imported_by text not null,
+  received_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  notes text
+);
+
+create index if not exists score_imports_received_at_idx on score_imports (received_at desc);
+
+create table if not exists driver_scores (
+  id bigserial primary key,
+  driver_id text not null,
+  score numeric(9, 8) not null,
+  scored_at timestamptz not null,
+  source text not null,
+  import_id text references score_imports (id),
+  created_at timestamptz not null default now(),
+  constraint driver_scores_score_range check (score >= 0 and score <= 1)
+);
+
+create unique index if not exists driver_scores_unique_idx on driver_scores (driver_id, scored_at, source);
+create index if not exists driver_scores_latest_idx on driver_scores (driver_id, scored_at desc);
 `;
 
 export async function migrate(): Promise<void> {
