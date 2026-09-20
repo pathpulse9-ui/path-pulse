@@ -36,6 +36,16 @@ import {
 } from './carret.js';
 import { getMapping } from './carretSubAccountStore.js';
 import { assertUnderLimit, recordUsage } from './carretLimits.js';
+import {
+  appendEvent as storeAppendEvent,
+  findByCarretOrder as storeFindByCarretOrder,
+  getSession as storeGetSession,
+  hydrateAll as storeHydrateAll,
+  listByUser as storeListByUser,
+  updateStatus as storeUpdateStatus,
+  upsertSession as storeUpsertSession,
+} from './offrampStore.js';
+import { logger } from '../config/logger.js';
 
 /**
  * Fiat off-ramp orchestration (D4 — Ramp Network).
@@ -297,15 +307,36 @@ export async function createWithdrawal(
 
   await provider.start(session, ctx);
   sessions.set(session.id, session);
+  // Persist so a restart doesn't lose the in-flight order, and the
+  // reconciler has a durable row to sweep. Log-and-continue on DB
+  // failure — the Map still serves this process, and the reconciler
+  // will pick up any drift on the next boot with a working DB.
+  try {
+    await storeUpsertSession(session);
+    await storeAppendEvent(session.id, 'placed', null, session.status, {
+      amount: session.amount,
+      settlementBatchId: session.settlementBatchId,
+      carretOrderId: session.carretOrderId,
+    });
+  } catch (e) {
+    logger.warn({ err: e, sessionId: session.id }, 'offramp session persist failed');
+  }
   return session;
 }
 
 async function refresh(session: OffRampSession): Promise<OffRampSession> {
   if (session.status === 'completed' || session.status === 'error') return session;
+  const prev = session.status;
   const next = await provider.status(session);
-  if (next !== session.status) {
+  if (next !== prev) {
     session.status = next;
     session.updatedAt = new Date().toISOString();
+    try {
+      await storeUpdateStatus(session.id, next);
+      await storeAppendEvent(session.id, 'poll', null, next);
+    } catch (e) {
+      logger.warn({ err: e, sessionId: session.id, next }, 'offramp poll persist failed');
+    }
   }
   return session;
 }
@@ -316,7 +347,15 @@ async function refresh(session: OffRampSession): Promise<OffRampSession> {
  * confirm that the id exists.
  */
 export async function getWithdrawal(id: string, userId: string): Promise<OffRampSession> {
-  const s = sessions.get(id);
+  let s = sessions.get(id);
+  if (!s) {
+    // Miss in the hot path — hydrate from DB. Covers post-restart access.
+    const row = await storeGetSession(id).catch(() => null);
+    if (row && row.ppUserId === userId) {
+      sessions.set(row.id, row as SessionInternal);
+      s = row as SessionInternal;
+    }
+  }
   if (!s || (s as SessionInternal).ppUserId !== userId) {
     throw httpError(`Off-ramp session ${id} not found`, 404, 'NotFound');
   }
@@ -328,6 +367,13 @@ export async function listWithdrawals(
   cursor?: string,
   limit = 50,
 ): Promise<OffRampSessionPage> {
+  // Pull persisted rows first so a restart doesn't hide history, then
+  // union with anything the current process may have in the Map that
+  // hasn't been persisted yet (DB write failed, etc.).
+  const persisted = await storeListByUser(userId, 200).catch(() => []);
+  for (const row of persisted) {
+    if (!sessions.has(row.id)) sessions.set(row.id, row as SessionInternal);
+  }
   const owned = [...sessions.values()].filter((s) => (s as SessionInternal).ppUserId === userId);
   const all = await Promise.all(owned.map(refresh));
   all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -339,16 +385,22 @@ export async function listWithdrawals(
 }
 
 /** Apply a verified Ramp webhook to the session identified by the `ref` query param. */
-export function applyCallback(sessionId: string, rampStatus: string): boolean {
-  const s = sessions.get(sessionId);
+export async function applyCallback(sessionId: string, rampStatus: string): Promise<boolean> {
+  let s = sessions.get(sessionId);
+  if (!s) {
+    const row = await storeGetSession(sessionId).catch(() => null);
+    if (row) { sessions.set(row.id, row as SessionInternal); s = row as SessionInternal; }
+  }
   if (!s) return false;
-  // Terminal states are sticky — a late webhook can't regress completed → error.
   if (s.status === 'completed' || s.status === 'error') return true;
   const mapped = mapRampStatus(rampStatus);
   if (mapped && mapped !== s.status) {
     s.status = mapped;
     s.updatedAt = new Date().toISOString();
+    await storeUpdateStatus(s.id, mapped).catch(() => {});
   }
+  await storeAppendEvent(s.id, 'webhook', rampStatus, mapped ?? null, { source: 'ramp' })
+    .catch(() => {});
   return true;
 }
 
@@ -356,19 +408,27 @@ export function applyCallback(sessionId: string, rampStatus: string): boolean {
  * Apply a verified Carret webhook. Carret webhooks carry the order_id (not our
  * session id), so we look up the session by the carretOrderId meta field.
  */
-export function applyCarretCallback(orderId: string, carretStatus: string): boolean {
+export async function applyCarretCallback(orderId: string, carretStatus: string): Promise<boolean> {
   const target = String(orderId);
-  const s = [...sessions.values()].find(
+  let s = [...sessions.values()].find(
     (v) => String((v as SessionInternal).carretOrderId ?? '') === target,
   );
+  if (!s) {
+    const row = await storeFindByCarretOrder(target).catch(() => null);
+    if (row) { sessions.set(row.id, row as SessionInternal); s = row as SessionInternal; }
+  }
   if (!s) return false;
-  // Terminal states are sticky — a late webhook can't regress completed → error.
-  if (s.status === 'completed' || s.status === 'error') return true;
+  if (s.status === 'completed' || s.status === 'error') {
+    await storeAppendEvent(s.id, 'webhook', carretStatus, null, { note: 'terminal-late' }).catch(() => {});
+    return true;
+  }
   const mapped = mapCarretStatus(carretStatus);
   if (mapped && mapped !== s.status) {
     s.status = mapped;
     s.updatedAt = new Date().toISOString();
+    await storeUpdateStatus(s.id, mapped).catch(() => {});
   }
+  await storeAppendEvent(s.id, 'webhook', carretStatus, mapped ?? null).catch(() => {});
   return true;
 }
 

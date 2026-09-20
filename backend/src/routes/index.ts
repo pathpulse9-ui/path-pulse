@@ -57,6 +57,8 @@ import {
   listSessions as onrampListSessions,
   getSession as onrampGetSession,
 } from '../services/onramp.js';
+import { reconcileOnce } from '../services/orphanReconciler.js';
+import { listEvents as offrampListEvents } from '../services/offrampStore.js';
 import { verifyRampWebhook } from '../services/ramp.js';
 import {
   verifyCarretWebhook,
@@ -600,6 +602,40 @@ router.get('/v1/onramp/sessions/:id', requireSession(), async (req, res, next) =
   } catch (e) { next(e); }
 });
 
+// ── D4 / T2 reconciler dev handles ─────────────────────────────────────
+//
+// - GET /v1/offramp/sessions/:id/events → the full status-event log for
+//   one session (placed → webhook* → poll* → reconciler*), so the demo
+//   can screenshot the recovery.
+// - POST /v1/ops/offramp/reconcile-once → forces one reconciler sweep
+//   without waiting for the interval. Requires the session cookie so
+//   only signed-in operators can trigger it (there's no destructive
+//   effect; the endpoint just calls Carret + writes rows).
+router.get('/v1/offramp/sessions/:id/events', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    // Reuse getWithdrawal to enforce ownership before dumping events.
+    const s = await getWithdrawal(req.params.id, session.userId);
+    const events = await offrampListEvents(s.id);
+    res.json({
+      session: {
+        id: s.id,
+        status: s.status,
+        settlementBatchId: s.settlementBatchId,
+        provider: s.provider,
+      },
+      events,
+    });
+  } catch (e) { next(e); }
+});
+
+router.post('/v1/ops/offramp/reconcile-once', requireSession(), async (_req, res, next) => {
+  try {
+    const result = await reconcileOnce();
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
 // Cross-asset routing (D5): quote across active routers, then execute the best route.
 const routableSchema = z.string().min(1);
 const amountSchema = z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number');
@@ -712,7 +748,9 @@ router.post('/v1/offramp/callback', (req, res) => {
     };
     const orderId = body.order_id ?? body.data?.order_id;
     const status = body.status ?? body.data?.status;
-    if (orderId && status) applyCarretCallback(orderId, status);
+    if (orderId && status) {
+      applyCarretCallback(orderId, status).catch(() => {});
+    }
     res.status(200).json({ ok: true });
     return;
   }
@@ -726,7 +764,7 @@ router.post('/v1/offramp/callback', (req, res) => {
   const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined;
   const body = req.body as { type?: string; status?: string; payload?: { status?: string } };
   const status = body.type ?? body.status ?? body.payload?.status;
-  if (ref && status) applyCallback(ref, status);
+  if (ref && status) applyCallback(ref, status).catch(() => {});
   res.status(200).json({ ok: true });
 });
 

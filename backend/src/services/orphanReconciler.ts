@@ -1,38 +1,43 @@
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
-import { db } from '../db/client.js';
 import { carretLive } from '../config/env.js';
+import { getOfframpOrder, mapCarretStatus } from './carret.js';
+import { appendEvent, listInFlight, updateStatus } from './offrampStore.js';
 
 /**
- * Orphan-order reconciler (PAT-78).
+ * Off-ramp reconciler (D4 / T2).
  *
- * Runs every 60s. Scans off-ramp sessions in `pending`/`unknown` state that
- * are older than 30s and, for each one, asks Carret whether the order
- * actually landed via `GET /offramp/orders/?account_id=<id>`. Matches by
- * (amount, created_at ±5min) and marks the session `reconciled` (with the
- * Carret order id) or `failed` accordingly.
+ * Runs every N seconds. Scans persisted off-ramp sessions in a non-terminal
+ * state that haven't received an update recently, asks Carret what the
+ * current order status is, and — when they disagree — writes an
+ * `off_ramp_status_events` row (source: `reconciler`) and updates the
+ * session's status to match.
  *
- * Why we need this: if `POST /offramp/place_order/` times out mid-flight we
- * don't know whether Carret actually created the order. Blindly retrying
- * risks a double-charge. Blindly failing loses money we might have already
- * moved. The reconciler is the second read-side check that eventually
- * converges the two systems.
+ * Why: if Carret's webhook drops (network blip, our process restarts
+ * mid-flight, the signature verification rejects a legit event) the
+ * session never leaves its interim status. The reconciler is a
+ * self-healing second-source-of-truth that closes the loop on the next
+ * pass — the timing gap is bounded by the interval (default 60s) and
+ * the healing event is auditable in `off_ramp_status_events`.
  *
- * Kicks off automatically on server boot via `startOrphanReconciler()`.
- * Set `CARRET_RECONCILER_INTERVAL_MS` to override the default 60s cadence.
+ * Set `CARRET_RECONCILER_INTERVAL_MS` to override the cadence. Set
+ * `CARRET_RECONCILER_MIN_AGE_S` to change the minimum session age
+ * before a sweep touches it (default 30s so a fresh place_order isn't
+ * immediately re-checked).
  */
 
 const INTERVAL_MS = Number(process.env.CARRET_RECONCILER_INTERVAL_MS ?? 60_000);
+const MIN_AGE_S = Number(process.env.CARRET_RECONCILER_MIN_AGE_S ?? 30);
 let timer: NodeJS.Timeout | null = null;
 
 export function startOrphanReconciler(): void {
   if (timer) return;
   if (!env.databaseUrl) {
-    logger.info('orphan reconciler disabled: DATABASE_URL not set');
+    logger.info('offramp reconciler disabled: DATABASE_URL not set');
     return;
   }
   if (!carretLive) {
-    logger.info('orphan reconciler disabled: CARRET credentials not configured');
+    logger.info('offramp reconciler disabled: CARRET credentials not configured');
     return;
   }
   timer = setInterval(() => {
@@ -40,7 +45,7 @@ export function startOrphanReconciler(): void {
   }, INTERVAL_MS);
   // Unref so this doesn't hold the process open in tests / short-lived runs.
   timer.unref?.();
-  logger.info({ intervalMs: INTERVAL_MS }, 'orphan reconciler started');
+  logger.info({ intervalMs: INTERVAL_MS, minAgeSeconds: MIN_AGE_S }, 'offramp reconciler started');
 }
 
 export function stopOrphanReconciler(): void {
@@ -50,65 +55,102 @@ export function stopOrphanReconciler(): void {
   }
 }
 
-/**
- * One reconciliation pass. Exposed so tests / cron entrypoints can trigger
- * a single sweep instead of relying on the interval.
- *
- * The actual off-ramp session table schema lives in `services/offramp.ts`;
- * we intentionally join lazily via raw SQL so this file has no import
- * dependency on the offramp service (avoids circulars in the reconciler
- * unit tests).
- */
-export async function reconcileOnce(): Promise<{ scanned: number; reconciled: number; failed: number }> {
-  if (!env.databaseUrl) return { scanned: 0, reconciled: 0, failed: 0 };
+export interface ReconcileResult {
+  scanned: number;
+  healed: number;
+  unchanged: number;
+  failed: number;
+  details: Array<{
+    sessionId: string;
+    carretOrderId: string;
+    from: string;
+    to: string | null;
+    settlementBatchId?: string | null;
+    outcome: 'healed' | 'unchanged' | 'failed';
+    error?: string;
+  }>;
+}
 
-  const orphans = await db().query<{
-    id: string;
-    carret_account_id: string | null;
-    amount: string;
-    created_at: Date;
-  }>(
-    `select s.id,
-            sub.carret_account_id,
-            s.amount,
-            s.created_at
-     from off_ramp_sessions s
-     left join carret_subaccounts sub on sub.user_id = s.user_id
-     where s.status in ('pending', 'unknown', 'processing')
-       and s.created_at < now() - interval '30 seconds'
-       and s.created_at > now() - interval '24 hours'
-     limit 100`,
-  ).catch((e) => {
-    // Table may not exist yet in early deploys — reconciler is best-effort.
-    logger.debug({ err: e }, 'reconcile query skipped');
-    return { rows: [] as never[] };
-  });
+export async function reconcileOnce(): Promise<ReconcileResult> {
+  const out: ReconcileResult = { scanned: 0, healed: 0, unchanged: 0, failed: 0, details: [] };
+  if (!env.databaseUrl) return out;
 
-  let reconciled = 0;
-  let failed = 0;
+  const inflight = await listInFlight(MIN_AGE_S, 100);
+  out.scanned = inflight.length;
+  if (!inflight.length) return out;
 
-  for (const row of orphans.rows) {
-    if (!row.carret_account_id) continue;
+  for (const s of inflight) {
+    // Sessions without a Carret order id are provider-native (Ramp) or
+    // haven't reached place_order yet — nothing to reconcile against Carret.
+    if (!s.carretOrderId) continue;
+
     try {
-      // v1: log-only so the reconciler is observable in production before
-      // it's trusted to flip status. Once the ops team confirms the log
-      // stream shows real orphans matching real Carret orders, wire
-      // `getOfframpOrder(id)` here to flip session status accordingly.
-      logger.info(
-        { sessionId: row.id, carretAccountId: row.carret_account_id, amount: row.amount },
-        'orphan session detected — manual review required (auto-flip disabled in v1)',
-      );
+      if (!carretLive) {
+        // No credentials — still record we scanned but couldn't act.
+        await appendEvent(s.id, 'reconciler', null, null, { note: 'carret-not-live' });
+        out.unchanged += 1;
+        out.details.push({
+          sessionId: s.id, carretOrderId: String(s.carretOrderId),
+          from: s.status, to: null, settlementBatchId: s.settlementBatchId ?? null,
+          outcome: 'unchanged',
+        });
+        continue;
+      }
+
+      const order = await getOfframpOrder(s.carretOrderId);
+      const mapped = mapCarretStatus(order.status);
+
+      if (mapped && mapped !== s.status) {
+        await updateStatus(s.id, mapped);
+        await appendEvent(s.id, 'reconciler', order.status, mapped, {
+          carretOrderId: order.id,
+          settlementBatchId: s.settlementBatchId,
+          heal: `${s.status} -> ${mapped}`,
+        });
+        out.healed += 1;
+        out.details.push({
+          sessionId: s.id, carretOrderId: String(s.carretOrderId),
+          from: s.status, to: mapped, settlementBatchId: s.settlementBatchId ?? null,
+          outcome: 'healed',
+        });
+        logger.info(
+          {
+            sessionId: s.id,
+            carretOrderId: order.id,
+            from: s.status,
+            to: mapped,
+            settlementBatchId: s.settlementBatchId,
+          },
+          'reconciler healed drifted session',
+        );
+      } else {
+        // Confirmed still in-flight (Carret agrees with us). Skip event
+        // spam — only log convergence and the healing case.
+        out.unchanged += 1;
+        out.details.push({
+          sessionId: s.id, carretOrderId: String(s.carretOrderId),
+          from: s.status, to: mapped ?? null,
+          settlementBatchId: s.settlementBatchId ?? null,
+          outcome: 'unchanged',
+        });
+      }
     } catch (e) {
-      failed += 1;
-      logger.warn({ err: e, sessionId: row.id }, 'orphan reconcile call failed');
+      out.failed += 1;
+      out.details.push({
+        sessionId: s.id, carretOrderId: String(s.carretOrderId),
+        from: s.status, to: null,
+        settlementBatchId: s.settlementBatchId ?? null,
+        outcome: 'failed', error: (e as Error).message,
+      });
+      logger.warn({ err: e, sessionId: s.id }, 'reconcile call failed');
     }
   }
 
-  if (orphans.rows.length > 0) {
+  if (out.scanned > 0) {
     logger.info(
-      { scanned: orphans.rows.length, reconciled, failed },
-      'orphan reconciler pass complete',
+      { scanned: out.scanned, healed: out.healed, unchanged: out.unchanged, failed: out.failed },
+      'offramp reconciler pass complete',
     );
   }
-  return { scanned: orphans.rows.length, reconciled, failed };
+  return out;
 }
