@@ -47,7 +47,7 @@ export async function upsertSession(s: PersistedSession, raw?: unknown): Promise
     throw new Error(`offramp session ${s.id} has no ppUserId; refusing to persist`);
   }
   await db().query(
-    `insert into off_ramp_sessions (
+    `insert into pp_off_ramp_sessions (
        id, user_id, provider, sandbox, status,
        amount, asset_code, asset_issuer,
        fiat_currency, fiat_amount_estimate,
@@ -61,16 +61,16 @@ export async function upsertSession(s: PersistedSession, raw?: unknown): Promise
      )
      on conflict (id) do update set
        status                  = excluded.status,
-       fiat_amount_estimate    = coalesce(excluded.fiat_amount_estimate, off_ramp_sessions.fiat_amount_estimate),
-       interactive_url         = coalesce(excluded.interactive_url, off_ramp_sessions.interactive_url),
-       anchor_account          = coalesce(excluded.anchor_account, off_ramp_sessions.anchor_account),
-       merchant_transaction_id = coalesce(excluded.merchant_transaction_id, off_ramp_sessions.merchant_transaction_id),
-       carret_order_id         = coalesce(excluded.carret_order_id, off_ramp_sessions.carret_order_id),
-       carret_quote_id         = coalesce(excluded.carret_quote_id, off_ramp_sessions.carret_quote_id),
-       carret_deposit_memo     = coalesce(excluded.carret_deposit_memo, off_ramp_sessions.carret_deposit_memo),
-       network                 = coalesce(excluded.network, off_ramp_sessions.network),
-       tx_hash                 = coalesce(excluded.tx_hash, off_ramp_sessions.tx_hash),
-       raw                     = coalesce(excluded.raw, off_ramp_sessions.raw),
+       fiat_amount_estimate    = coalesce(excluded.fiat_amount_estimate, pp_off_ramp_sessions.fiat_amount_estimate),
+       interactive_url         = coalesce(excluded.interactive_url, pp_off_ramp_sessions.interactive_url),
+       anchor_account          = coalesce(excluded.anchor_account, pp_off_ramp_sessions.anchor_account),
+       merchant_transaction_id = coalesce(excluded.merchant_transaction_id, pp_off_ramp_sessions.merchant_transaction_id),
+       carret_order_id         = coalesce(excluded.carret_order_id, pp_off_ramp_sessions.carret_order_id),
+       carret_quote_id         = coalesce(excluded.carret_quote_id, pp_off_ramp_sessions.carret_quote_id),
+       carret_deposit_memo     = coalesce(excluded.carret_deposit_memo, pp_off_ramp_sessions.carret_deposit_memo),
+       network                 = coalesce(excluded.network, pp_off_ramp_sessions.network),
+       tx_hash                 = coalesce(excluded.tx_hash, pp_off_ramp_sessions.tx_hash),
+       raw                     = coalesce(excluded.raw, pp_off_ramp_sessions.raw),
        updated_at              = excluded.updated_at`,
     [
       s.id,
@@ -106,7 +106,7 @@ export async function updateStatus(
 ): Promise<void> {
   if (!haveDb()) return;
   await db().query(
-    `update off_ramp_sessions
+    `update pp_off_ramp_sessions
        set status = $2,
            tx_hash = coalesce($3, tx_hash),
            network = coalesce($4, network),
@@ -125,7 +125,7 @@ export async function appendEvent(
 ): Promise<void> {
   if (!haveDb()) return;
   await db().query(
-    `insert into off_ramp_status_events (session_id, source, carret_status, mapped_status, payload)
+    `insert into pp_off_ramp_status_events (session_id, source, carret_status, mapped_status, payload)
      values ($1, $2, $3, $4, $5)`,
     [sessionId, source, carretStatus, mappedStatus, payload !== undefined ? JSON.stringify(payload) : null],
   );
@@ -133,14 +133,14 @@ export async function appendEvent(
 
 export async function getSession(id: string): Promise<PersistedSession | null> {
   if (!haveDb()) return null;
-  const { rows } = await db().query(`select * from off_ramp_sessions where id = $1`, [id]);
+  const { rows } = await db().query(`select * from pp_off_ramp_sessions where id = $1`, [id]);
   return rows[0] ? rowToSession(rows[0]) : null;
 }
 
 export async function findByCarretOrder(orderId: string | number): Promise<PersistedSession | null> {
   if (!haveDb()) return null;
   const { rows } = await db().query(
-    `select * from off_ramp_sessions where carret_order_id = $1 limit 1`,
+    `select * from pp_off_ramp_sessions where carret_order_id = $1 limit 1`,
     [String(orderId)],
   );
   return rows[0] ? rowToSession(rows[0]) : null;
@@ -149,7 +149,7 @@ export async function findByCarretOrder(orderId: string | number): Promise<Persi
 export async function listByUser(userId: string, limit = 100): Promise<PersistedSession[]> {
   if (!haveDb()) return [];
   const { rows } = await db().query(
-    `select * from off_ramp_sessions where user_id = $1 order by created_at desc limit $2`,
+    `select * from pp_off_ramp_sessions where user_id = $1 order by created_at desc limit $2`,
     [userId, limit],
   );
   return rows.map(rowToSession);
@@ -163,7 +163,7 @@ export async function listByUser(userId: string, limit = 100): Promise<Persisted
 export async function listInFlight(minAgeSeconds = 30, hardLimit = 200): Promise<PersistedSession[]> {
   if (!haveDb()) return [];
   const { rows } = await db().query(
-    `select * from off_ramp_sessions
+    `select * from pp_off_ramp_sessions
       where status not in ('completed', 'error')
         and updated_at < now() - ($1::text || ' seconds')::interval
         and created_at > now() - interval '48 hours'
@@ -184,7 +184,7 @@ export async function listEvents(sessionId: string): Promise<Array<{
   if (!haveDb()) return [];
   const { rows } = await db().query(
     `select id, source, carret_status, mapped_status, received_at
-       from off_ramp_status_events
+       from pp_off_ramp_status_events
       where session_id = $1
       order by id`,
     [sessionId],
@@ -207,7 +207,7 @@ export async function listEvents(sessionId: string): Promise<Array<{
 export async function hydrateAll(): Promise<PersistedSession[]> {
   if (!haveDb()) return [];
   const { rows } = await db().query(
-    `select * from off_ramp_sessions
+    `select * from pp_off_ramp_sessions
       where created_at > now() - interval '72 hours'
       order by created_at desc
       limit 500`,

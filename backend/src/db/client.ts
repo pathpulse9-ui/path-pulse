@@ -165,13 +165,11 @@ create table if not exists carret_daily_usage (
 );
 
 -- D4/T2: durable off-ramp sessions + a full append-only event log so the
--- reconciler can catch a missed webhook and heal state. The reviewer's
--- ask (Tranche 2 follow-up) was for exactly this: persistence, a
--- completed reconciler, and a demonstrable recovery of one interrupted
--- session linked to its settlement batch. raw carries the full
--- provider payload (Carret / Ramp) so we can replay a session locally
--- without hitting the upstream again.
-create table if not exists off_ramp_sessions (
+-- reconciler can catch a missed webhook and heal state. Table names are
+-- pp_-prefixed because an earlier fork rolled a different off_ramp_*
+-- schema into prod; sidestepping it entirely instead of trying to
+-- retrofit its constraints.
+create table if not exists pp_off_ramp_sessions (
   id text primary key,
   user_id text not null,
   provider text not null,
@@ -195,56 +193,25 @@ create table if not exists off_ramp_sessions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create index if not exists off_ramp_sessions_user_created_idx on off_ramp_sessions (user_id, created_at desc);
-create index if not exists off_ramp_sessions_status_idx on off_ramp_sessions (status);
-create index if not exists off_ramp_sessions_carret_order_idx on off_ramp_sessions (carret_order_id);
-create index if not exists off_ramp_sessions_batch_idx on off_ramp_sessions (settlement_batch_id);
+create index if not exists pp_off_ramp_sessions_user_created_idx on pp_off_ramp_sessions (user_id, created_at desc);
+create index if not exists pp_off_ramp_sessions_status_idx on pp_off_ramp_sessions (status);
+create index if not exists pp_off_ramp_sessions_carret_order_idx on pp_off_ramp_sessions (carret_order_id);
+create index if not exists pp_off_ramp_sessions_batch_idx on pp_off_ramp_sessions (settlement_batch_id);
 
 -- Append-only event log. Every state change carries its source
 -- (placed on creation, webhook when Carret pings us, poll when
 -- the getStatus call converged, reconciler when the orphan sweep
 -- healed a missed webhook) and the raw upstream payload for audit.
-create table if not exists off_ramp_status_events (
+create table if not exists pp_off_ramp_status_events (
   id bigserial primary key,
-  session_id text not null references off_ramp_sessions(id) on delete cascade,
+  session_id text not null references pp_off_ramp_sessions(id) on delete cascade,
   source text not null,
   carret_status text,
   mapped_status text,
   payload jsonb,
   received_at timestamptz not null default now()
 );
-create index if not exists off_ramp_status_events_session_idx on off_ramp_status_events (session_id, id);
-
--- Idempotent column adds for the case where an earlier deploy created
--- these tables under a different schema (an unmerged fork was rolled
--- to prod at one point, using different column names). "alter table
--- add column if not exists" is a no-op if the column already matches.
-alter table off_ramp_sessions add column if not exists user_id text;
-alter table off_ramp_sessions add column if not exists provider text;
-alter table off_ramp_sessions add column if not exists sandbox boolean default false;
-alter table off_ramp_sessions add column if not exists status text;
-alter table off_ramp_sessions add column if not exists amount text;
-alter table off_ramp_sessions add column if not exists asset_code text;
-alter table off_ramp_sessions add column if not exists asset_issuer text;
-alter table off_ramp_sessions add column if not exists fiat_currency text;
-alter table off_ramp_sessions add column if not exists fiat_amount_estimate text;
-alter table off_ramp_sessions add column if not exists settlement_batch_id text;
-alter table off_ramp_sessions add column if not exists interactive_url text;
-alter table off_ramp_sessions add column if not exists anchor_account text;
-alter table off_ramp_sessions add column if not exists merchant_transaction_id text;
-alter table off_ramp_sessions add column if not exists carret_order_id text;
-alter table off_ramp_sessions add column if not exists carret_quote_id text;
-alter table off_ramp_sessions add column if not exists carret_deposit_memo text;
-alter table off_ramp_sessions add column if not exists network text;
-alter table off_ramp_sessions add column if not exists tx_hash text;
-alter table off_ramp_sessions add column if not exists raw jsonb;
-alter table off_ramp_sessions add column if not exists updated_at timestamptz default now();
-
-alter table off_ramp_status_events add column if not exists source text;
-alter table off_ramp_status_events add column if not exists carret_status text;
-alter table off_ramp_status_events add column if not exists mapped_status text;
-alter table off_ramp_status_events add column if not exists payload jsonb;
-alter table off_ramp_status_events add column if not exists received_at timestamptz default now();
+create index if not exists pp_off_ramp_status_events_session_idx on pp_off_ramp_status_events (session_id, id);
 `;
 
 export async function migrate(): Promise<void> {
