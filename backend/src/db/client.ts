@@ -110,7 +110,7 @@ create index if not exists settlement_batches_network_idx on settlement_batches 
 create index if not exists settlement_batches_asset_idx on settlement_batches (asset_code);
 
 -- PAT-75: per-driver Carret sub-account mapping. Replaces the shared audit
--- account 48559 with a one-to-one link between a PathPulse user (userId from
+-- account with a one-to-one link between a PathPulse user (userId from
 -- session) and their own Carret sub-account.
 create table if not exists carret_subaccounts (
   user_id text primary key,

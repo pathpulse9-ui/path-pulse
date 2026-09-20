@@ -651,7 +651,10 @@ router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
 });
 
 // SCOUT reputation assets (D6): config, assign an existing driver the tier their PulseGen score maps to, look up on-chain tier.
-const assignScoutSchema = z.object({ driverId: z.string().min(1) });
+// .strict() so a caller that sends a score gets an explicit 400 rather than
+// having it silently stripped — the guarantee "you cannot supply a score" has
+// to be demonstrable, not merely true.
+const assignScoutSchema = z.object({ driverId: z.string().min(1) }).strict();
 
 router.get('/v1/scout', async (_req, res, next) => {
   try {

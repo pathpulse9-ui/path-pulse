@@ -126,7 +126,7 @@ struct ProfileSheetView: View {
 
 #Preview("Google") {
     ProfileSheetView(
-        user: SessionUser(userId: "u", method: "google", email: "aditya@pathpulse.ai",
+        user: SessionUser(userId: "u", method: "google", email: "driver@example.com",
                           address: "GDABC1234567890XYZLMNOPQRSTUVWXYZ0987654321"),
         onSignOut: {}
     )

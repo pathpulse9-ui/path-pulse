@@ -10,9 +10,9 @@ import { _resetInMemoryForTests } from './scoreStore.js';
  * Live score-feed client (D6). Until now this path had no coverage at all,
  * because exercising it needs an endpoint. These tests stand one up.
  *
- * What is under test is *our client* — request shape, bearer auth, error
- * handling and the fallback to the interim feed. Nothing here says anything
- * about PulseGen itself, which is PathPulse.ai's system and does not exist yet.
+ * What is under test is the client — request shape, bearer auth, error
+ * handling and the fallback to the interim feed — against a local server
+ * stood up by the test itself.
  */
 
 let server: Server;

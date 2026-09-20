@@ -257,9 +257,9 @@ test('off-ramp session reads reject anonymous callers', async () => {
 });
 
 test('carret KYC/PII endpoints reject anonymous callers', async () => {
-  assert.equal((await get('/v1/carret/kyc/status/48559')).status, 401);
-  assert.equal((await postJson('/v1/carret/kyc/initiate', { account_id: 48559 })).status, 401);
-  assert.equal((await postJson('/v1/carret/kyc/cleanup', { account_id: 48559 })).status, 401);
+  assert.equal((await get('/v1/carret/kyc/status/99999')).status, 401);
+  assert.equal((await postJson('/v1/carret/kyc/initiate', { account_id: 99999 })).status, 401);
+  assert.equal((await postJson('/v1/carret/kyc/cleanup', { account_id: 99999 })).status, 401);
 });
 
 test("one driver cannot read another driver's off-ramp sessions", async () => {

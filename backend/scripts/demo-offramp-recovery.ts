@@ -18,7 +18,7 @@
  *                  placed on Carret and no funds move.
  *
  *   pnpm --filter @pathpulse/backend exec tsx scripts/demo-offramp-recovery.ts \
- *     --batch stl_1789491082569_c75c7b27 [--order 1279] [--keep]
+ *     --batch <settlement-batch-id> [--order <carret-order-id>] [--keep]
  */
 import { randomBytes } from 'node:crypto';
 import { env } from '../src/config/env.js';

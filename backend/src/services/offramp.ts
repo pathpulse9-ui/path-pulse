@@ -220,9 +220,6 @@ const carretLiveProvider: OffRampProvider = {
     }
 
     const order = await placeOfframpOrder({ quoteId: quote.id, bankId });
-    s.carretQuoteId = quote.id;
-    s.carretOrderId = order.id;
-    const order = await placeOfframpOrder({ quoteId: quote.id, bankId: env.carret.bankId });
     s.carretQuoteId = String(quote.id);
     s.carretOrderId = String(order.id);
     session.fiatAmountEstimate = fiatInr.toFixed(2);

@@ -265,7 +265,7 @@ export type ScoreFeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'synthetic';
 
 export interface ScoreFeedStatus {
   pulseGenLive: boolean;
-  /** Host the live feed points at — a localhost value means a stub, not the real feed. */
+  /** Host the configured live feed points at. */
   endpointHost: string | null;
   mode: ScoreFeedMode;
   scoredDrivers: number;

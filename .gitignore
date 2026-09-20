@@ -16,6 +16,26 @@ build/
 secrets/
 docs/CUSTODY.md
 docs/evidence/
+
+# Reviewer correspondence and deliverable negotiation — shared directly with
+# the client, not published. Contain account provenance and custody detail
+# that does not belong in a public repo.
+docs/TRANCHE2_REVIEW_RESPONSE.md
+docs/DELIVERABLE_MODIFICATION_D4_OFFRAMP.md
+docs/DELIVERABLE_MODIFICATION_D5_ROUTING.md
+docs/SCORE_FEED_CONTRACT.md
+
+# Internal evidence and runbooks — carry account provenance, Carret identifiers,
+# the whitelisted egress IP and AWS/KMS ARNs. Shared with the client directly.
+docs/TRANCHE2_PROOF_OF_COMPLETION.md
+docs/TESTNET_EVIDENCE.md
+docs/KMS_VERIFICATION.md
+docs/production-launch.md
+
+# Local score-feed scaffolding — dev tooling and fixtures, not product code.
+backend/scripts/pulsegen-stub.ts
+backend/scripts/seed-score-feed.ts
+backend/scripts/fixtures/
 /scripts/
 
 # scratch scripts at the backend root; keepers live in backend/scripts/

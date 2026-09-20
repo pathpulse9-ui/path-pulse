@@ -54,10 +54,10 @@ function clamp(score: number): number {
 /**
  * Deterministic 0..1 from the driver id — first 4 bytes of SHA-256. Stable
  * across processes and restarts, so an assigned tier is reproducible by anyone
- * holding the driver id and demonstrably not chosen by us.
+ * holding the driver id and cannot be selected by an operator.
  *
- * A test fixture, not a product: it measures nothing. `config/env.ts` refuses
- * to boot on mainnet without a live feed, so it cannot reach production.
+ * An interim only: it derives a value rather than measuring one, so
+ * `config/env.ts` refuses to boot on mainnet unless a live feed is configured.
  */
 export function syntheticScoreFor(driverId: string): number {
   const digest = createHash('sha256').update(driverId).digest();
@@ -116,7 +116,7 @@ export function pulseGenLive(): boolean {
   return !!env.pulseGen?.baseUrl && !!env.pulseGen?.apiKey;
 }
 
-/** Host the live feed is configured against — surfaced so a stub is never mistaken for the real feed. */
+/** Host the live feed is configured against, for the ops feed panel. */
 export function pulseGenEndpointHost(): string | null {
   if (!pulseGenLive()) return null;
   try {
