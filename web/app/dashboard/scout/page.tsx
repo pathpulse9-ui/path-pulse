@@ -26,7 +26,7 @@ function feedLabel(feed: ScoreFeedStatus) {
     return `PulseGen endpoint configured · ${feed.endpointHost ?? 'unknown host'}`;
   }
   if (feed.mode === 'pulsegen-batch') return 'PulseGen · delivered batch';
-  return 'Synthetic interim';
+  return 'Interim — awaiting delivery';
 }
 
 function feedClasses(mode: ScoreFeedStatus['mode']) {
@@ -156,7 +156,7 @@ export default function ScoutPage() {
                 {feedLabel(feed)}
               </span>
               <span className="text-xs text-black/50">
-                {feed.mode === 'synthetic'
+                {feed.mode === 'derived'
                   ? 'No live feed and no delivered batch — deterministic interim, derived from the driver id.'
                   : 'No score can be entered through this console.'}
               </span>

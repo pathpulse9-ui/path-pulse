@@ -410,16 +410,21 @@ export default function SettlementPage() {
                     </td>
                     <td className="py-2 font-mono text-xs">
                       {d.assignmentTx ? (
-                        <a
-                          href={explorerTx(d.assignmentTx)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline text-blue-600"
-                        >
-                          {short(d.assignmentTx)}
-                        </a>
+                        <>
+                          <a
+                            href={explorerTx(d.assignmentTx)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline text-blue-600"
+                          >
+                            {short(d.assignmentTx)}
+                          </a>
+                          {!d.assignedNow && (
+                            <span className="text-black/40"> · issued earlier</span>
+                          )}
+                        </>
                       ) : (
-                        <span className="text-black/40">already held</span>
+                        <span className="text-black/40">no assignment on record</span>
                       )}
                     </td>
                   </tr>

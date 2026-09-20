@@ -109,12 +109,12 @@ test('a malformed body is an error, not a silent zero', async () => {
 test('an upstream failure falls through to the interim rather than stranding a settlement', async () => {
   behaviour = () => ({ status: 503, body: { error: 'ServiceUnavailable' } });
   const v = await resolveScore('drv-fallback-1');
-  assert.equal(v.source, 'synthetic', 'a PulseGen outage must not fail the score lookup');
+  assert.equal(v.source, 'derived', 'a PulseGen outage must not fail the score lookup');
   assert.ok(v.score >= 0 && v.score <= 1);
 });
 
 test('an unknown driver falls through rather than erroring', async () => {
   behaviour = () => ({ status: 404, body: { error: 'NotFound' } });
   const v = await resolveScore('drv-unknown-1');
-  assert.equal(v.source, 'synthetic');
+  assert.equal(v.source, 'derived');
 });

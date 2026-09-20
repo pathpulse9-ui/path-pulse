@@ -5,7 +5,7 @@ import { migrate, db, closeDb } from '../db/client.js';
 import {
   parseScoreCsv,
   resolveScore,
-  syntheticScoreFor,
+  derivedScoreFor,
   validateScoreBatch,
 } from './pulsegen.js';
 import {
@@ -18,7 +18,7 @@ import {
 
 /**
  * D6 score feed: a delivered PulseGen result must be traceable to the batch
- * that delivered it, must beat the synthetic interim, and a malformed batch
+ * that delivered it, must beat the interim fallback, and a malformed batch
  * must land nothing at all.
  *
  * Mirrors `payoutAttempts.test.ts`: needs Postgres at DATABASE_URL and
@@ -54,10 +54,10 @@ after(async () => {
   await closeDb();
 });
 
-test('synthetic scores are deterministic and independently reproducible', () => {
-  assert.equal(syntheticScoreFor('drv-pulsegen-demo-006'), syntheticScoreFor('drv-pulsegen-demo-006'));
-  assert.ok(Math.abs(syntheticScoreFor('drv-pulsegen-demo-006') - 0.8329505575431861) < 1e-12);
-  assert.notEqual(syntheticScoreFor('a'), syntheticScoreFor('b'));
+test('interim scores are deterministic and independently reproducible', () => {
+  assert.equal(derivedScoreFor('drv-pulsegen-demo-006'), derivedScoreFor('drv-pulsegen-demo-006'));
+  assert.ok(Math.abs(derivedScoreFor('drv-pulsegen-demo-006') - 0.8329505575431861) < 1e-12);
+  assert.notEqual(derivedScoreFor('a'), derivedScoreFor('b'));
 });
 
 test('a batch is rejected whole when any row is bad', () => {
@@ -95,12 +95,12 @@ test('payload hash is stable and content-addressed', () => {
   assert.match(hashPayload('x'), /^[0-9a-f]{64}$/);
 });
 
-test('an imported score carries its provenance and beats the synthetic interim', async (t) => {
+test('an imported score carries its provenance and beats the interim fallback', async (t) => {
   if (!dbAvailable) return t.skip('DATABASE_URL unreachable');
 
   const id = driver('imported');
-  const synthetic = await resolveScore(id);
-  assert.equal(synthetic.source, 'synthetic', 'unscored driver falls back to synthetic');
+  const interim = await resolveScore(id);
+  assert.equal(interim.source, 'derived', 'unscored driver falls back to the interim');
 
   const { scores } = validateScoreBatch([
     { driverId: id, score: 0.91, scoredAt: '2026-09-18T10:00:00Z' },
@@ -121,7 +121,7 @@ test('an imported score carries its provenance and beats the synthetic interim',
   assert.equal(record.supplier, 'test-fixture-supplier');
 
   const resolved = await resolveScore(id);
-  assert.equal(resolved.source, 'pulsegen', 'delivered score wins over synthetic');
+  assert.equal(resolved.source, 'pulsegen', 'delivered score wins over the interim');
   assert.equal(resolved.score, 0.91);
   assert.equal(resolved.scoredAt, '2026-09-18T10:00:00.000Z');
 

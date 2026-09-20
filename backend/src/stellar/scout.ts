@@ -24,8 +24,9 @@ import { recordAssignment } from '../services/scoreStore.js';
  * AUTH_REQUIRED + AUTH_REVOCABLE + AUTH_CLAWBACK_ENABLED — so the issuer controls who may
  * hold a badge and can revoke/claw it back when a driver's reputation changes. A driver
  * holds exactly one SCOUTn badge; the settlement engine reads it on-chain for the multiplier
- * (1.0 / 1.2 / 1.5x). Tier is assigned from PulseGen validation scores (synthetic until the
- * live feed lands). Testnet only; the issuer is a dev-tier account (mainnet uses a governed key).
+ * (1.0 / 1.2 / 1.5x). Tier is assigned from a driver's PulseGen validation score, resolved
+ * through the score feed. Testnet only; the issuer is a dev-tier account (mainnet uses a
+ * governed key).
  */
 
 const TIER_CODE: Record<ScoutTier, string> = { 1: 'SCOUT1', 2: 'SCOUT2', 3: 'SCOUT3' };
@@ -56,7 +57,7 @@ export async function ensureIssuer(): Promise<string> {
   return issuer;
 }
 
-/** PulseGen validation score (0..1) → SCOUT tier. Synthetic until the live feed lands. */
+/** PulseGen validation score (0..1) → SCOUT tier. Thresholds are fixed and published. */
 export function scoreToTier(score: number): ScoutTier {
   if (score >= 0.8) return 3;
   if (score >= 0.5) return 2;

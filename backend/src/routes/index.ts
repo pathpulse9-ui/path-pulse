@@ -791,7 +791,7 @@ router.get('/v1/scout/feed', requireSession(), async (_req, res, next) => {
     res.json({
       pulseGenLive: pulseGenLive(),
       endpointHost: pulseGenEndpointHost(),
-      mode: pulseGenLive() ? 'pulsegen-live' : imports.length ? 'pulsegen-batch' : 'synthetic',
+      mode: pulseGenLive() ? 'pulsegen-live' : imports.length ? 'pulsegen-batch' : 'derived',
       scoredDrivers: await countScores(),
       latestImport: imports[0] ?? null,
       scores: await listLatestScores(100),
@@ -839,9 +839,17 @@ router.post('/v1/ops/demo/scout-drivers', requireRole('ops'), async (req, res, n
       const expected = scoreToTier(validation.score);
       const current = await getOnchainTier(wallet.address);
 
+      // Idempotent: a badge that already matches its score is not re-issued.
+      // Report the transaction that did issue it, so the assignment is always
+      // traceable rather than reading as though nothing happened.
       let assignmentTx: string | null = null;
+      let assignedNow = false;
       if (current.tier !== expected) {
         assignmentTx = (await assignTierForDriver(driverId)).txHash;
+        assignedNow = true;
+      } else {
+        const prior = (await latestAssignments(500)).find((a) => a.driverId === driverId);
+        assignmentTx = prior?.txHash ?? null;
       }
 
       const onchain = await getOnchainTier(wallet.address);
@@ -855,6 +863,7 @@ router.post('/v1/ops/demo/scout-drivers', requireRole('ops'), async (req, res, n
         tier: onchain.tier,
         multiplier: onchain.multiplier,
         assignmentTx,
+        assignedNow,
       });
     }
 

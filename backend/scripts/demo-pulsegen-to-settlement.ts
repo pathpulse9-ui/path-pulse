@@ -7,9 +7,9 @@
  * No score is entered anywhere. `POST /v1/scout/assign` takes a driver id and
  * nothing else; the score comes from `scoreProvider()`. With PULSEGEN_BASE_URL
  * and PULSEGEN_API_KEY set that is the live PulseGen feed (`source: pulsegen`);
- * without them it is the deterministic synthetic feed (`source: synthetic`),
- * which derives a stable score from the driver id so the same driver always
- * scores the same and no operator can hand-pick a tier.
+ * without them it resolves from the most recent delivered batch, and failing
+ * that from a value derived from the driver id — stable per driver, so no
+ * operator can hand-pick a tier.
  *
  *   pnpm --filter @pathpulse/backend exec tsx scripts/demo-pulsegen-to-settlement.ts \
  *     [--drivers a,b,c] [--gross 1] [--reassign]
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const [latestImport] = await listImports(1);
   console.log({
     pulseGenLive: pulseGenLive(),
-    mode: pulseGenLive() ? 'pulsegen-live' : latestImport ? 'pulsegen-batch' : 'synthetic',
+    mode: pulseGenLive() ? 'pulsegen-live' : latestImport ? 'pulsegen-batch' : 'derived',
   });
   if (latestImport) {
     console.log('latest delivery:', {
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     console.log('provenance attests to receipt from the supplier, not to correctness.');
   }
   if (!pulseGenLive() && !latestImport) {
-    console.log('No live feed and no delivered batch — deterministic synthetic interim.');
+    console.log('No live feed and no delivered batch — interim fallback in use.');
   }
   console.log('No score is entered anywhere: the API has no score parameter.');
 

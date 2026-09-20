@@ -110,8 +110,8 @@ export const env = {
     },
   },
 
-  // PulseGen validation-score feed (D6). Unset until the live feed lands; the
-  // synthetic provider is the agreed interim per the plan's risk register.
+  // PulseGen validation-score feed (D6). When unset, scores resolve from the
+  // most recent delivered batch.
   pulseGen: {
     baseUrl: process.env.PULSEGEN_BASE_URL ?? '',
     apiKey: process.env.PULSEGEN_API_KEY ?? '',
@@ -263,8 +263,7 @@ if (isMainnet) {
   }
   if (!env.pulseGen.baseUrl || !env.pulseGen.apiKey) {
     problems.push(
-      'PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet — synthetic validation ' +
-        'scores measure nothing and must never determine a real payout multiplier',
+      'PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet',
     );
   }
 

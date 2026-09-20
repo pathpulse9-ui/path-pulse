@@ -337,6 +337,7 @@ export interface DemoScoutDriver {
   tier: 1 | 2 | 3 | null;
   multiplier: number;
   assignmentTx: string | null;
+  assignedNow: boolean;
 }
 
 export function prepareScoutDemoDrivers() {

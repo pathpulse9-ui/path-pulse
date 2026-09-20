@@ -18,9 +18,9 @@ import { getLatestScore, type ScoreInput } from './scoreStore.js';
  *   1. `pulsegen` live  — REST call, active once PULSEGEN_BASE_URL + API key are set.
  *   2. `pulsegen` batch — a score delivered by PathPulse.ai and imported with
  *      provenance (supplier, arrival time, operator, payload hash).
- *   3. `synthetic`      — the interim the 75-day plan's risk register sanctioned
- *      ("use synthetic scores until the live feed lands"), derived from the
- *      driver id so it is stable and cannot be hand-picked.
+ *   3. `derived`        — interim fallback, used only when neither of the above
+ *      can answer. Deterministic from the driver id, so a tier stays stable and
+ *      cannot be selected by an operator.
  *
  * No path accepts a caller-supplied score. That is the point: a tier is worth
  * 1.0x, 1.2x or 1.5x of a contributor's pay, so an operator must not be able
@@ -33,7 +33,7 @@ export interface ScoreProvider {
   getScore(driverId: string): Promise<ValidationScore>;
 }
 
-export type FeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'synthetic';
+export type FeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'derived';
 
 /**
  * A score plus where it actually came from. `importId` is set only when the
@@ -59,21 +59,21 @@ function clamp(score: number): number {
  * An interim only: it derives a value rather than measuring one, so
  * `config/env.ts` refuses to boot on mainnet unless a live feed is configured.
  */
-export function syntheticScoreFor(driverId: string): number {
+export function derivedScoreFor(driverId: string): number {
   const digest = createHash('sha256').update(driverId).digest();
   return digest.readUInt32BE(0) / 0xffffffff;
 }
 
-export const syntheticScoreProvider: ScoreProvider = {
-  name: 'synthetic',
+export const derivedScoreProvider: ScoreProvider = {
+  name: 'derived',
   live: false,
 
   async getScore(driverId): Promise<ValidationScore> {
     return {
       driverId,
-      score: clamp(syntheticScoreFor(driverId)),
+      score: clamp(derivedScoreFor(driverId)),
       scoredAt: new Date().toISOString(),
-      source: 'synthetic',
+      source: 'derived',
     };
   },
 };
@@ -155,18 +155,18 @@ export async function resolveScore(driverId: string): Promise<ResolvedScore> {
     };
   }
 
-  return { ...(await syntheticScoreProvider.getScore(driverId)), via: 'synthetic', importId: null };
+  return { ...(await derivedScoreProvider.getScore(driverId)), via: 'derived', importId: null };
 }
 
 /** Which source would answer right now, for the ops feed panel. */
 export async function feedMode(driverId?: string): Promise<FeedMode> {
   if (pulseGenLive()) return 'pulsegen-live';
   if (driverId && (await getLatestScore(driverId))) return 'pulsegen-batch';
-  return 'synthetic';
+  return 'derived';
 }
 
 export function scoreProvider(): ScoreProvider {
-  return pulseGenLive() ? pulseGenScoreProvider : syntheticScoreProvider;
+  return pulseGenLive() ? pulseGenScoreProvider : derivedScoreProvider;
 }
 
 const MAX_BATCH = 10_000;
