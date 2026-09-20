@@ -315,18 +315,22 @@ export async function placeOfframpOrder(params: {
  * on accounts with many orders but works today; a targeted endpoint would be
  * nice-to-have.
  */
-export async function getOfframpOrder(orderId: number | string): Promise<CarretOrder> {
-  if (!env.carret.accountId) {
-    throw new Error('CARRET_ACCOUNT_ID required to fetch order status');
+export async function getOfframpOrder(
+  orderId: number | string,
+  accountId?: number | string,
+): Promise<CarretOrder> {
+  const acct = accountId ?? env.carret.accountId;
+  if (!acct) {
+    throw new Error('accountId (or CARRET_ACCOUNT_ID) required to fetch order status');
   }
   const page = await carretFetch<CarretPage<CarretOrder & { order_type?: string; side?: string }>>(
     'GET',
     '/offramp/orders/',
-    { query: { account_id: env.carret.accountId } },
+    { query: { account_id: String(acct) } },
   );
   const match = (page.results ?? []).find((o) => String(o.id) === String(orderId));
   if (!match) {
-    throw new Error(`Carret order ${orderId} not found for account ${env.carret.accountId}`);
+    throw new Error(`Carret order ${orderId} not found for account ${acct}`);
   }
   return match;
 }

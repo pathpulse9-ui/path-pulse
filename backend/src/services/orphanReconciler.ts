@@ -3,6 +3,7 @@ import { logger } from '../config/logger.js';
 import { carretLive } from '../config/env.js';
 import { getOfframpOrder, mapCarretStatus } from './carret.js';
 import { appendEvent, listInFlight, updateStatus } from './offrampStore.js';
+import { getMapping } from './carretSubAccountStore.js';
 
 /**
  * Off-ramp reconciler (D4 / T2).
@@ -97,7 +98,13 @@ export async function reconcileOnce(): Promise<ReconcileResult> {
         continue;
       }
 
-      const order = await getOfframpOrder(s.carretOrderId);
+      // Resolve the driver's own Carret account_id — env.carret.accountId
+      // is a shared-dev fallback, and Carret's /offramp/orders/?account_id=X
+      // only surfaces orders under X, so we MUST pass the account that
+      // owns this session's order.
+      const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
+      const orderAccountId = mapping?.carretAccountId;
+      const order = await getOfframpOrder(s.carretOrderId, orderAccountId);
       const mapped = mapCarretStatus(order.status);
 
       if (mapped && mapped !== s.status) {
