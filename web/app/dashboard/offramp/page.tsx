@@ -1,8 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { CarretLimits, CarretResumeResponse, CarretBank, CarretWalletBalance } from '../../lib/api';
-import { getCarretLimits, resumeCarretKyc, listCarretBanks, registerCarretBank, listCarretWallets } from '../../lib/api';
+import type {
+  CarretLimits, CarretResumeResponse, CarretBank, CarretWalletBalance,
+  OffRampSessionEvents, ReconcileResult,
+} from '../../lib/api';
+import {
+  getCarretLimits, resumeCarretKyc, listCarretBanks, registerCarretBank, listCarretWallets,
+  getOffRampSessionEvents, reconcileOfframpOnce,
+} from '../../lib/api';
 import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
 import {
   listOffRampSessions,
@@ -398,6 +404,10 @@ export default function OffRampPage() {
         </div>
       )}
 
+      {selected && (
+        <ReconcilerEvidence sessionId={selected.id} />
+      )}
+
       {sessions.length > 0 && (
         <div className="rounded-2xl bg-white p-6">
           <h2 className="text-black text-lg font-medium tracking-[-0.02em] mb-3">
@@ -433,6 +443,160 @@ export default function OffRampPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Reconciler evidence panel (D4 / T2) ─────────────────────────────
+//
+// For the selected off-ramp session, shows the full status-event log
+// (placed → webhook* → poll* → reconciler*) and a "Force reconcile
+// now" button so a reviewer can watch a missed webhook get healed
+// live. This is the on-screen evidence for the reviewer's ask.
+
+function ReconcilerEvidence({ sessionId }: { sessionId: string }) {
+  const [data, setData] = useState<OffRampSessionEvents | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
+  const [lastResult, setLastResult] = useState<ReconcileResult | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      setData(await getOffRampSessionEvents(sessionId));
+    } catch (e) {
+      setError(e ?? 'Failed to load events');
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function reconcile() {
+    setReconciling(true); setError(null);
+    try {
+      const r = await reconcileOfframpOnce();
+      setLastResult(r);
+      await load();
+    } catch (e) {
+      setError(e ?? 'Reconcile failed');
+    } finally {
+      setReconciling(false);
+    }
+  }
+
+  const badge = (s: string) => {
+    switch (s) {
+      case 'placed':     return 'bg-black/5 text-black/80';
+      case 'webhook':    return 'bg-blue-100 text-blue-700';
+      case 'poll':       return 'bg-amber-100 text-amber-800';
+      case 'reconciler': return 'bg-emerald-100 text-emerald-800';
+      default:           return 'bg-black/5 text-black/60';
+    }
+  };
+
+  const myDetail = lastResult?.details?.find((d) => d.sessionId === sessionId);
+
+  return (
+    <div className="rounded-2xl bg-white p-6 space-y-4 border border-emerald-100">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
+            Reconciler evidence
+          </h2>
+          <p className="text-xs text-black/50 mt-1">
+            D4 / T2 — durable status-event log for this session.
+            {' '}<span className="font-mono">{sessionId}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={load}
+            disabled={loading}
+            className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 disabled:opacity-50"
+          >
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <button
+            onClick={reconcile}
+            disabled={reconciling}
+            className="rounded-full bg-emerald-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {reconciling ? 'Reconciling…' : 'Force reconcile now'}
+          </button>
+        </div>
+      </div>
+
+      {lastResult && (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-900 space-y-1">
+          <div>
+            Last pass — scanned <b>{lastResult.scanned}</b>, healed <b>{lastResult.healed}</b>,
+            unchanged <b>{lastResult.unchanged}</b>, failed <b>{lastResult.failed}</b>.
+          </div>
+          {myDetail && (
+            <div>
+              This session — {myDetail.outcome}
+              {myDetail.from && myDetail.to && myDetail.from !== myDetail.to
+                ? ` (${myDetail.from} → ${myDetail.to})`
+                : ''}
+              {myDetail.settlementBatchId ? ` · batch ${short(myDetail.settlementBatchId)}` : ''}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error != null && <ErrorNotice error={error} />}
+
+      {data && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            <div>
+              <div className="text-black/40 text-xs">Session status</div>
+              <div className="font-medium">{data.session.status}</div>
+            </div>
+            <div>
+              <div className="text-black/40 text-xs">Provider</div>
+              <div>{data.session.provider}</div>
+            </div>
+            <div>
+              <div className="text-black/40 text-xs">Settlement batch</div>
+              <div className="font-mono text-xs">
+                {data.session.settlementBatchId ? short(data.session.settlementBatchId) : '—'}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-black/[0.02] border border-black/5 p-4">
+            <div className="text-xs text-black/50 mb-2">
+              Status events ({data.events.length}) — append-only, source-tagged
+            </div>
+            {data.events.length === 0 ? (
+              <div className="text-sm text-black/40">No events yet.</div>
+            ) : (
+              <ol className="space-y-2">
+                {data.events.map((e, i) => (
+                  <li key={e.id} className="flex items-start gap-3 text-sm">
+                    <span className="text-black/30 tabular-nums w-6 text-right">{i + 1}.</span>
+                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge(e.source)}`}>
+                      {e.source}
+                    </span>
+                    <span className="text-black/80 font-mono text-xs">
+                      {e.mappedStatus ?? '(no status change)'}
+                    </span>
+                    {e.carretStatus && (
+                      <span className="text-black/40 text-xs">← {e.carretStatus}</span>
+                    )}
+                    <span className="ml-auto text-black/40 text-xs">
+                      {new Date(e.receivedAt).toLocaleTimeString()}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -292,6 +292,45 @@ export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest) {
   });
 }
 
+// D4 / T2 evidence: durable status-event log + reconciler.
+
+export interface OffRampStatusEvent {
+  id: string;
+  source: 'placed' | 'webhook' | 'poll' | 'reconciler' | 'client';
+  carretStatus: string | null;
+  mappedStatus: string | null;
+  receivedAt: string;
+}
+
+export interface OffRampSessionEvents {
+  session: { id: string; status: string; settlementBatchId?: string | null; provider: string };
+  events: OffRampStatusEvent[];
+}
+
+export function getOffRampSessionEvents(id: string) {
+  return apiFetch<OffRampSessionEvents>(`/v1/offramp/sessions/${id}/events`);
+}
+
+export interface ReconcileResult {
+  scanned: number;
+  healed: number;
+  unchanged: number;
+  failed: number;
+  details: Array<{
+    sessionId: string;
+    carretOrderId: string;
+    from: string;
+    to: string | null;
+    settlementBatchId?: string | null;
+    outcome: 'healed' | 'unchanged' | 'failed';
+    error?: string;
+  }>;
+}
+
+export function reconcileOfframpOnce() {
+  return apiFetch<ReconcileResult>('/v1/ops/offramp/reconcile-once', { method: 'POST' });
+}
+
 // ── SCOUT reputation assets (D6) ──────────────────────────────────────
 
 export function getScoutConfig() {
