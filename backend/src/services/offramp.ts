@@ -197,25 +197,25 @@ const carretLiveProvider: OffRampProvider = {
     session.anchorAccount = deposit.address;
     s.carretDepositMemo = deposit.memo_label;
 
+    // Resolve the driver's own Carret account_id up front — every
+    // downstream call (quote, listBanks, place_order) must use the SAME
+    // account_id or Carret rejects with "Bank does not belong to this
+    // account." The env-configured account is only a shared-dev fallback.
+    const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
+    const accountId: number | string | undefined = mapping?.carretAccountId ?? env.carret.accountId;
+
     const routeId = await resolveOfframpRouteId();
-    const quote = await createOfframpQuote({ routeId, amount: session.amount });
+    const quote = await createOfframpQuote({ routeId, amount: session.amount, accountId });
 
     // PAT-80: refuse upfront if this order would push the driver's Carret
-    // sub-account over the ₹30K/day withdraw_inr cap. The check runs after
-    // the quote (so we know the exact INR amount) but before place_order
-    // (so we don't waste a Carret order slot). If we don't have a
-    // per-driver mapping yet (legacy or shared-account paths), skip the
-    // pre-check — Carret's own 400 is the backstop.
+    // sub-account over the ₹30K/day withdraw_inr cap.
     const fiatInr = Number(quote.output_amount.amount);
-    const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
     if (mapping) {
       await assertUnderLimit(mapping.carretAccountId, 'withdraw_inr', fiatInr);
     }
 
     // Prefer the driver's own registered + verified bank; fall back to
     // the env shared test bank when they haven't added one (dev/legacy).
-    // Prod launch flips this so a missing driver bank blocks the order
-    // instead of silently paying out to the platform's shared bank.
     let bankId: number | string | undefined = env.carret.bankId || undefined;
     if (mapping) {
       try {
@@ -233,7 +233,7 @@ const carretLiveProvider: OffRampProvider = {
       );
     }
 
-    const order = await placeOfframpOrder({ quoteId: quote.id, bankId });
+    const order = await placeOfframpOrder({ quoteId: quote.id, bankId, accountId });
     s.carretQuoteId = quote.id;
     s.carretOrderId = order.id;
     session.fiatAmountEstimate = fiatInr.toFixed(2);

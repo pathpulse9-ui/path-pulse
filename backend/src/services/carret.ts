@@ -273,28 +273,35 @@ export function toCarretAmount(amount: string): string {
   return `${whole || '0'}.${truncated}`;
 }
 
-/** POST /offramp/quote/ — locks a rate for 10 minutes; returns quote_id. */
+/** POST /offramp/quote/ — locks a rate for 10 minutes; returns quote_id.
+ *  Prefer the driver's own Carret account_id (from the mapping table); fall
+ *  back to env for the shared-account dev path. */
 export async function createOfframpQuote(params: {
   routeId: number | string;
   amount: string;
+  accountId?: number | string;
 }): Promise<CarretQuote> {
   return carretFetch<CarretQuote>('POST', '/offramp/quote/', {
     body: {
-      account_id: env.carret.accountId,
+      account_id: params.accountId ?? env.carret.accountId,
       route_id: params.routeId,
       amount: toCarretAmount(params.amount),
     },
   });
 }
 
-/** POST /offramp/place_order/ — commits the quote against a registered bank_id. */
+/** POST /offramp/place_order/ — commits the quote against a registered bank_id.
+ *  The bank_id must belong to the same account_id — passing env.carret.accountId
+ *  here would mismatch the driver's bank_id and Carret returns "Bank does not
+ *  belong to this account." */
 export async function placeOfframpOrder(params: {
   quoteId: number | string;
   bankId: number | string;
+  accountId?: number | string;
 }): Promise<CarretOrder> {
   return carretFetch<CarretOrder>('POST', '/offramp/place_order/', {
     body: {
-      account_id: env.carret.accountId,
+      account_id: params.accountId ?? env.carret.accountId,
       quote_id: params.quoteId,
       bank_id: params.bankId,
       payment_method: 'bank_transfer',
@@ -356,24 +363,28 @@ export async function resolveOnrampRouteId(): Promise<number | string> {
 export async function createOnrampQuote(params: {
   routeId: number | string;
   amount: string;  // INR
+  accountId?: number | string;
 }): Promise<CarretQuote> {
   return carretFetch<CarretQuote>('POST', '/onramp/quote/', {
     body: {
-      account_id: env.carret.accountId,
+      account_id: params.accountId ?? env.carret.accountId,
       route_id: params.routeId,
       amount: params.amount,
     },
   });
 }
 
-/** POST /onramp/place_order/ — commits the quote; INR debits the bank_id. */
+/** POST /onramp/place_order/ — commits the quote; INR debits the bank_id.
+ *  Same account/bank matching rule as off-ramp — bank_id must live under
+ *  the account_id we pass. */
 export async function placeOnrampOrder(params: {
   quoteId: number | string;
   bankId: number | string;
+  accountId?: number | string;
 }): Promise<CarretOrder> {
   return carretFetch<CarretOrder>('POST', '/onramp/place_order/', {
     body: {
-      account_id: env.carret.accountId,
+      account_id: params.accountId ?? env.carret.accountId,
       quote_id: params.quoteId,
       bank_id: params.bankId,
       payment_method: 'bank_transfer',

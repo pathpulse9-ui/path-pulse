@@ -151,13 +151,18 @@ export async function createDeposit(
     );
   }
 
+  const accountId = mapping.carretAccountId;
   const routeId = await resolveOnrampRouteId();
-  const quote = await createOnrampQuote({ routeId, amount: input.amount }) as {
+  const quote = await createOnrampQuote({
+    routeId,
+    amount: input.amount,
+    accountId,
+  }) as {
     id?: number | string;
     output_amount?: { amount?: number };
   };
   if (!quote.id) throw httpError('Carret did not return a quote id', 502, 'BadUpstream');
-  const order = await placeOnrampOrder({ quoteId: quote.id, bankId: verified.id });
+  const order = await placeOnrampOrder({ quoteId: quote.id, bankId: verified.id, accountId });
 
   const cryptoAmount =
     quote.output_amount?.amount !== undefined ? String(quote.output_amount.amount) : undefined;
