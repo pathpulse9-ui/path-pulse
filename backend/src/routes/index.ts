@@ -949,6 +949,57 @@ router.get('/v1/carret/resume', async (req, res, next) => {
 });
 
 /**
+ * "Claim an existing Carret sub-account by id."
+ *
+ * Real drivers can end up with multiple Carret sub-accounts when a
+ * verified account was minted for them out-of-band (Carret operator
+ * created it before we had find-or-create in place, or the driver's
+ * KYC was re-run on a different email). The mapping table lives on our
+ * side — this endpoint lets an authenticated driver point their userId
+ * at a specific Carret account_id, provided the account actually
+ * exists on Carret's side and is reachable with our API key.
+ *
+ * Uses the same upsertMapping used by provision-subaccount, so the
+ * KYC status snapshot + email/phone come straight from Carret.
+ */
+router.post('/v1/carret/claim-account', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const parsed = z
+      .object({ account_id: z.union([z.string().min(1), z.number()]) })
+      .parse(req.body);
+    const accountId = String(parsed.account_id);
+
+    // Verify with Carret that the account exists + fetch the source-of-truth
+    // fields so we don't persist a mapping the upstream doesn't back.
+    const acc = await getSubAccount(accountId);
+    if (!acc?.id) {
+      res.status(404).json({ error: 'NotFound', message: `Carret account ${accountId} not found` });
+      return;
+    }
+
+    const mapping = await upsertMapping({
+      userId: session.userId,
+      carretAccountId: String(acc.id),
+      referenceId: acc.reference_id ?? undefined,
+      kycStatus: (acc.kyc_status as 'verified' | 'pending' | 'rejected' | 'manual_review') ?? 'pending',
+      email: acc.user?.email ?? undefined,
+      phone: acc.phone_number ? String(acc.phone_number) : undefined,
+    });
+
+    res.json({
+      claimed: true,
+      carretAccountId: mapping.carretAccountId,
+      kycStatus: mapping.kycStatus,
+      email: mapping.email,
+      referenceId: mapping.referenceId,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
  * "Hard reset" for the wizard's Start-fresh affordance.
  *   1. Cleans up any pending KYC session on Carret for the current mapping
  *      (best-effort — network / no-session errors don't fail the whole reset)

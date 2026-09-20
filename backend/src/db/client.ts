@@ -214,6 +214,37 @@ create table if not exists off_ramp_status_events (
   received_at timestamptz not null default now()
 );
 create index if not exists off_ramp_status_events_session_idx on off_ramp_status_events (session_id, id);
+
+-- Idempotent column adds for the case where an earlier deploy created
+-- these tables under a different schema (an unmerged fork was rolled
+-- to prod at one point, using different column names). "alter table
+-- add column if not exists" is a no-op if the column already matches.
+alter table off_ramp_sessions add column if not exists user_id text;
+alter table off_ramp_sessions add column if not exists provider text;
+alter table off_ramp_sessions add column if not exists sandbox boolean default false;
+alter table off_ramp_sessions add column if not exists status text;
+alter table off_ramp_sessions add column if not exists amount text;
+alter table off_ramp_sessions add column if not exists asset_code text;
+alter table off_ramp_sessions add column if not exists asset_issuer text;
+alter table off_ramp_sessions add column if not exists fiat_currency text;
+alter table off_ramp_sessions add column if not exists fiat_amount_estimate text;
+alter table off_ramp_sessions add column if not exists settlement_batch_id text;
+alter table off_ramp_sessions add column if not exists interactive_url text;
+alter table off_ramp_sessions add column if not exists anchor_account text;
+alter table off_ramp_sessions add column if not exists merchant_transaction_id text;
+alter table off_ramp_sessions add column if not exists carret_order_id text;
+alter table off_ramp_sessions add column if not exists carret_quote_id text;
+alter table off_ramp_sessions add column if not exists carret_deposit_memo text;
+alter table off_ramp_sessions add column if not exists network text;
+alter table off_ramp_sessions add column if not exists tx_hash text;
+alter table off_ramp_sessions add column if not exists raw jsonb;
+alter table off_ramp_sessions add column if not exists updated_at timestamptz default now();
+
+alter table off_ramp_status_events add column if not exists source text;
+alter table off_ramp_status_events add column if not exists carret_status text;
+alter table off_ramp_status_events add column if not exists mapped_status text;
+alter table off_ramp_status_events add column if not exists payload jsonb;
+alter table off_ramp_status_events add column if not exists received_at timestamptz default now();
 `;
 
 export async function migrate(): Promise<void> {
