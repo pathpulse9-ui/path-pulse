@@ -51,7 +51,7 @@ import {
   activeProvider,
   quoteWithdrawal,
 } from '../services/offramp.js';
-import { listEvents } from '../services/offRampStore.js';
+import { listAllSessions, listEvents } from '../services/offRampStore.js';
 import {
   parseScoreCsv,
   pulseGenEndpointHost,
@@ -64,6 +64,7 @@ import {
   getImport,
   hashPayload,
   listImports,
+  latestAssignments,
   listLatestScores,
   listScores,
   saveImport,
@@ -591,6 +592,33 @@ router.get('/v1/offramp/sessions/:id/events', requireSession(), async (req, res,
   }
 });
 
+/**
+ * Operator view of off-ramp sessions. The driver-facing endpoints are scoped
+ * to the caller, so this is the only way an operator can inspect a withdrawal
+ * that is not their own — including one seeded or stuck mid-flight.
+ */
+router.get('/v1/ops/offramp/sessions', requireRole('ops'), async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json({ items: await listAllSessions(limit) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/offramp/sessions/:id/events', requireRole('ops'), async (req, res, next) => {
+  try {
+    const events = await listEvents(req.params.id);
+    if (!events.length) {
+      const known = (await listAllSessions(500)).some((s) => s.id === req.params.id);
+      if (!known) throw notFound(`Off-ramp session ${req.params.id} not found`);
+    }
+    res.json({ sessionId: req.params.id, events });
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.post('/v1/ops/offramp/reconcile', requireRole('ops'), async (_req, res, next) => {
   try {
     res.json(await reconcileOnce());
@@ -767,6 +795,7 @@ router.get('/v1/scout/feed', requireSession(), async (_req, res, next) => {
       scoredDrivers: await countScores(),
       latestImport: imports[0] ?? null,
       scores: await listLatestScores(100),
+      assignments: await latestAssignments(100),
     });
   } catch (e) {
     next(e);

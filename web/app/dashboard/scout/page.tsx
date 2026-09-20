@@ -187,6 +187,7 @@ export default function ScoutPage() {
                     <th className="py-2 font-medium">Scored at</th>
                     <th className="py-2 font-medium">Source</th>
                     <th className="py-2 font-medium">Tier it maps to</th>
+                    <th className="py-2 font-medium">Badge issued by</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -202,6 +203,22 @@ export default function ScoutPage() {
                         <span className={`text-xs rounded-full border px-2 py-0.5 ${tierClasses(tierFor(s.score))}`}>
                           SCOUT{tierFor(s.score)}
                         </span>
+                      </td>
+                      <td className="py-2 font-mono text-xs">
+                        {(() => {
+                          const a = feed.assignments.find((x) => x.driverId === s.driverId);
+                          if (!a) return <span className="text-black/35">not assigned</span>;
+                          return (
+                            <a
+                              href={explorerTx(a.txHash)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-blue-600"
+                            >
+                              {short(a.txHash)}
+                            </a>
+                          );
+                        })()}
                       </td>
                     </tr>
                   ))}

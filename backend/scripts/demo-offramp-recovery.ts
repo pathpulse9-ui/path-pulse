@@ -7,6 +7,11 @@
  * carrying amount, final status, timestamps, the PathPulse session and the
  * settlement batch id.
  *
+ * The session is seeded directly rather than through `createWithdrawal`, so no
+ * Carret order is placed by running this. The `create` event it records is the
+ * same one the live path writes, so the timeline matches what a real withdrawal
+ * produces.
+ *
  * Two modes:
  *
  *   --order <id>   Live. Reads the real Carret order from `GET /offramp/orders/`
@@ -24,9 +29,9 @@ import { randomBytes } from 'node:crypto';
 import { env } from '../src/config/env.js';
 import { migrate, db, closeDb } from '../src/db/client.js';
 import { getSettlementBatch } from '../src/stellar/settlement.js';
-import { saveSession, getSession, listEvents } from '../src/services/offRampStore.js';
+import { saveSession, getSession, listEvents, recordEvent } from '../src/services/offRampStore.js';
 import { reconcileOnce, type ReconcileDeps } from '../src/services/orphanReconciler.js';
-import { listOfframpOrders, type CarretOrder } from '../src/services/carret.js';
+import { carretTimestampMs, listOfframpOrders, type CarretOrder } from '../src/services/carret.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -34,14 +39,20 @@ function arg(name: string): string | undefined {
 }
 const flag = (name: string): boolean => process.argv.includes(`--${name}`);
 
+function iso(v: string | number | undefined): string | null {
+  const ms = carretTimestampMs(v);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
 function redactOrder(o: CarretOrder, sessionId: string, batchId: string) {
   return {
     carret_order_id: String(o.id),
     asked_quantity: o.asked_quantity,
     payment_method: o.payment_method,
     status: o.status,
-    created_at: o.created_at ?? null,
-    updated_at: o.updated_at ?? null,
+    created_at: iso(o.created_at),
+    filled_at: iso(o.filled_time),
+    updated_at: iso(o.updated_at),
     bank_id: o.bank_id === undefined ? null : '[redacted]',
     quote_id: o.quote_id === undefined ? null : String(o.quote_id),
     pathpulse_session_id: sessionId,
@@ -81,6 +92,7 @@ async function main(): Promise<void> {
       asked_quantity: '10',
       payment_method: 'bank_transfer',
       created_at: placedAt,
+      filled_time: new Date(Date.parse(placedAt) + 1500).toISOString(),
       updated_at: new Date().toISOString(),
     };
     console.log('\nmode: OFFLINE — Carret order list supplied as a fixture, nothing placed');
@@ -103,6 +115,15 @@ async function main(): Promise<void> {
     carretOrderId: String(order.id),
     createdAt,
     updatedAt: createdAt,
+  });
+
+  await recordEvent({
+    sessionId,
+    previousStatus: null,
+    status: 'pending_anchor',
+    source: 'create',
+    detail: { provider: 'carret', settlementBatchId: batchId, carretOrderId: String(order.id) },
+    createdAt,
   });
 
   console.log('\n── 1. session persisted, webhook deliberately never delivered ──');

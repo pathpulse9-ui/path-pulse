@@ -22,6 +22,9 @@ import type {
   ScoutConfig,
   ScoutAssignment,
   ScoreFeedStatus,
+  OpsOffRampSession,
+  OffRampStatusEventRecord,
+  ReconcileReportRecord,
   ScoutRevocation,
   ScoutTierLookup,
   RoutingQuote,
@@ -294,6 +297,20 @@ export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest) {
 }
 
 // ── SCOUT reputation assets (D6) ──────────────────────────────────────
+
+export function listOpsOffRampSessions() {
+  return apiFetch<{ items: OpsOffRampSession[] }>('/v1/ops/offramp/sessions');
+}
+
+export function getOpsOffRampEvents(id: string) {
+  return apiFetch<{ sessionId: string; events: OffRampStatusEventRecord[] }>(
+    `/v1/ops/offramp/sessions/${encodeURIComponent(id)}/events`,
+  );
+}
+
+export function runOffRampReconcile() {
+  return apiFetch<ReconcileReportRecord>('/v1/ops/offramp/reconcile', { method: 'POST' });
+}
 
 export function getScoutConfig() {
   return apiFetch<ScoutConfig>('/v1/scout');

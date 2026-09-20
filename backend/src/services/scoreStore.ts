@@ -190,11 +190,86 @@ export async function countScores(): Promise<number> {
   return Number(res.rows[0]?.n ?? 0);
 }
 
+export interface AssignmentRecord {
+  driverId: string;
+  address: string;
+  tier: number;
+  multiplier: number;
+  score: number | null;
+  scoreSource: string | null;
+  scoreImportId: string | null;
+  assetCode: string;
+  issuer: string;
+  txHash: string;
+  horizonUrl: string | null;
+  createdAt: string;
+}
+
+const memAssignments: AssignmentRecord[] = [];
+
+export async function recordAssignment(a: AssignmentRecord): Promise<void> {
+  if (!hasDb()) {
+    memAssignments.unshift(a);
+    return;
+  }
+  await db().query(
+    `insert into scout_assignments
+       (driver_id, address, tier, multiplier, score, score_source, score_import_id,
+        asset_code, issuer, tx_hash, horizon_url, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [a.driverId, a.address, a.tier, a.multiplier, a.score, a.scoreSource, a.scoreImportId,
+     a.assetCode, a.issuer, a.txHash, a.horizonUrl, a.createdAt],
+  );
+}
+
+/** Newest assignment per driver — the current badge and the tx that issued it. */
+export async function latestAssignments(limit = 100): Promise<AssignmentRecord[]> {
+  if (!hasDb()) {
+    const seen = new Set<string>();
+    return memAssignments.filter((a) => !seen.has(a.driverId) && seen.add(a.driverId)).slice(0, limit);
+  }
+  const res = await db().query<AssignRow>(
+    `select distinct on (driver_id) * from scout_assignments
+     order by driver_id, created_at desc limit $1`,
+    [Math.min(Math.max(1, limit), 500)],
+  );
+  return res.rows.map((r) => ({
+    driverId: r.driver_id,
+    address: r.address,
+    tier: r.tier,
+    multiplier: Number(r.multiplier),
+    score: r.score === null ? null : Number(r.score),
+    scoreSource: r.score_source,
+    scoreImportId: r.score_import_id,
+    assetCode: r.asset_code,
+    issuer: r.issuer,
+    txHash: r.tx_hash,
+    horizonUrl: r.horizon_url,
+    createdAt: r.created_at.toISOString(),
+  }));
+}
+
 /** Only called by test fixtures — never in prod. */
 export function _resetInMemoryForTests(): void {
   memImports.length = 0;
   memScores.length = 0;
+  memAssignments.length = 0;
 }
+
+type AssignRow = {
+  driver_id: string;
+  address: string;
+  tier: number;
+  multiplier: string;
+  score: string | null;
+  score_source: string | null;
+  score_import_id: string | null;
+  asset_code: string;
+  issuer: string;
+  tx_hash: string;
+  horizon_url: string | null;
+  created_at: Date;
+};
 
 type ImportRow = {
   id: string;

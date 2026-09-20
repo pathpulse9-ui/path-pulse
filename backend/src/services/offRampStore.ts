@@ -236,6 +236,76 @@ export async function listOrphanCandidates(
   }));
 }
 
+export interface OpsSessionRow {
+  id: string;
+  userId: string;
+  provider: string;
+  status: OffRampStatus;
+  amount: string;
+  assetCode: string;
+  fiatCurrency: string;
+  settlementBatchId: string | null;
+  carretOrderId: string | null;
+  eventCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Every off-ramp session, newest first — the operator view. The per-driver
+ * endpoints are scoped to the caller, so without this an operator has no way
+ * to inspect a stuck withdrawal that is not their own.
+ */
+export async function listAllSessions(limit = 100): Promise<OpsSessionRow[]> {
+  const size = Math.min(Math.max(1, limit), 500);
+
+  if (!hasDb()) {
+    return [...memSessions.values()]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, size)
+      .map((s) => ({
+        id: s.id,
+        userId: s.ppUserId,
+        provider: s.provider,
+        status: s.status,
+        amount: s.amount,
+        assetCode: s.asset.code,
+        fiatCurrency: s.fiatCurrency,
+        settlementBatchId: s.settlementBatchId ?? null,
+        carretOrderId: s.carretOrderId ?? null,
+        eventCount: memEvents.filter((e) => e.sessionId === s.id).length,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      }));
+  }
+
+  const res = await db().query<OpsRow>(
+    `select s.id, s.user_id, s.provider, s.status, s.amount, s.asset_code,
+            s.fiat_currency, s.settlement_batch_id, s.carret_order_id,
+            s.created_at, s.updated_at,
+            (select count(*) from off_ramp_status_events e where e.session_id = s.id) as event_count
+     from off_ramp_sessions s
+     order by s.created_at desc
+     limit $1`,
+    [size],
+  );
+
+  return res.rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    provider: r.provider,
+    status: r.status as OffRampStatus,
+    amount: r.amount,
+    assetCode: r.asset_code,
+    fiatCurrency: r.fiat_currency,
+    settlementBatchId: r.settlement_batch_id,
+    carretOrderId: r.carret_order_id,
+    eventCount: Number(r.event_count),
+    createdAt: r.created_at.toISOString(),
+    updatedAt: r.updated_at.toISOString(),
+  }));
+}
+
 /** Only called by test fixtures — never in prod. */
 export function _resetInMemoryForTests(): void {
   memSessions.clear();
@@ -263,6 +333,21 @@ type Row = {
   carret_deposit_memo: string | null;
   created_at: Date;
   updated_at: Date;
+};
+
+type OpsRow = {
+  id: string;
+  user_id: string;
+  provider: string;
+  status: string;
+  amount: string;
+  asset_code: string;
+  fiat_currency: string;
+  settlement_batch_id: string | null;
+  carret_order_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+  event_count: string;
 };
 
 type EventRow = {

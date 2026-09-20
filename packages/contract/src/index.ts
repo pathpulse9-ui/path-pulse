@@ -263,6 +263,21 @@ export interface ScoreImportRecord {
 
 export type ScoreFeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'synthetic';
 
+export interface ScoutAssignmentRecord {
+  driverId: string;
+  address: string;
+  tier: number;
+  multiplier: number;
+  score: number | null;
+  scoreSource: string | null;
+  scoreImportId: string | null;
+  assetCode: string;
+  issuer: string;
+  txHash: string;
+  horizonUrl: string | null;
+  createdAt: string;
+}
+
 export interface ScoreFeedStatus {
   pulseGenLive: boolean;
   /** Host the configured live feed points at. */
@@ -271,6 +286,7 @@ export interface ScoreFeedStatus {
   scoredDrivers: number;
   latestImport: ScoreImportRecord | null;
   scores: (ValidationScore & { importId: string | null })[];
+  assignments: ScoutAssignmentRecord[];
 }
 
 /**
@@ -395,6 +411,51 @@ export interface OffRampSession {
   stellarTxHash?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OpsOffRampSession {
+  id: string;
+  userId: string;
+  provider: string;
+  status: OffRampStatus;
+  amount: string;
+  assetCode: string;
+  fiatCurrency: string;
+  settlementBatchId: string | null;
+  carretOrderId: string | null;
+  eventCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type OffRampEventSource = 'create' | 'poll' | 'webhook' | 'reconciler';
+
+export interface OffRampStatusEventRecord {
+  sessionId: string;
+  previousStatus: OffRampStatus | null;
+  status: OffRampStatus;
+  source: OffRampEventSource;
+  detail?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ReconcileOutcomeRecord {
+  sessionId: string;
+  settlementBatchId: string | null;
+  carretOrderId: string | null;
+  matchedBy: 'order_id' | 'amount_and_time' | null;
+  from: string;
+  to: string | null;
+  action: 'recovered' | 'unchanged' | 'unmatched' | 'failed';
+  error?: string;
+}
+
+export interface ReconcileReportRecord {
+  scanned: number;
+  recovered: number;
+  unmatched: number;
+  failed: number;
+  outcomes: ReconcileOutcomeRecord[];
 }
 
 export interface OffRampSessionPage {

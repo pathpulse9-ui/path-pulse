@@ -15,6 +15,7 @@ import { horizon, fundWithFriendbot, accountExists } from './network.js';
 import { provisionManagedWallet, getManagedWallet, getManagedSigner } from './managed.js';
 import { resolveScore } from '../services/pulsegen.js';
 import { logger } from '../config/logger.js';
+import { recordAssignment } from '../services/scoreStore.js';
 
 /**
  * SCOUT reputation assets (D6).
@@ -151,6 +152,21 @@ export async function assignTierForDriver(driverId: string): Promise<ScoutAssign
     { driverId, address, tier, score: validation.score, source: validation.source, txHash: res.hash },
     'SCOUT tier assigned from validation score',
   );
+
+  await recordAssignment({
+    driverId,
+    address,
+    tier,
+    multiplier: SCOUT_MULTIPLIER[tier],
+    score: validation.score,
+    scoreSource: validation.source,
+    scoreImportId: validation.importId,
+    assetCode: TIER_CODE[tier],
+    issuer,
+    txHash: res.hash,
+    horizonUrl: horizonTxUrl(res.hash),
+    createdAt: new Date().toISOString(),
+  });
 
   return {
     userId: driverId,

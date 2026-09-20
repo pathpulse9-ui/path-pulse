@@ -236,6 +236,29 @@ create table if not exists driver_scores (
 
 create unique index if not exists driver_scores_unique_idx on driver_scores (driver_id, scored_at, source);
 create index if not exists driver_scores_latest_idx on driver_scores (driver_id, scored_at desc);
+
+-- D6 audit trail: which transaction gave a driver their badge, and the score
+-- that justified it. Without this the assignment tx exists only in the API
+-- response and is lost on reload, so "why does this driver earn 1.5x" has no
+-- durable answer.
+create table if not exists scout_assignments (
+  id bigserial primary key,
+  driver_id text not null,
+  address text not null,
+  tier int not null,
+  multiplier numeric(4, 2) not null,
+  score numeric(9, 8),
+  score_source text,
+  score_import_id text,
+  asset_code text not null,
+  issuer text not null,
+  tx_hash text not null,
+  horizon_url text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists scout_assignments_driver_idx on scout_assignments (driver_id, created_at desc);
+create index if not exists scout_assignments_created_idx on scout_assignments (created_at desc);
 `;
 
 export async function migrate(): Promise<void> {
