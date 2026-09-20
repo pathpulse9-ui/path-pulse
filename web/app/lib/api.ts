@@ -331,6 +331,13 @@ export function reconcileOfframpOnce() {
   return apiFetch<ReconcileResult>('/v1/ops/offramp/reconcile-once', { method: 'POST' });
 }
 
+export function simulateMissedWebhook(sessionId: string) {
+  return apiFetch<{ ok: boolean; sessionId: string; rolledTo: string }>(
+    `/v1/ops/offramp/sessions/${sessionId}/simulate-missed-webhook`,
+    { method: 'POST' },
+  );
+}
+
 // ── SCOUT reputation assets (D6) ──────────────────────────────────────
 
 export function getScoutConfig() {

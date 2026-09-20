@@ -58,7 +58,25 @@ import {
   getSession as onrampGetSession,
 } from '../services/onramp.js';
 import { reconcileOnce } from '../services/orphanReconciler.js';
-import { listEvents as offrampListEvents } from '../services/offrampStore.js';
+import {
+  listEvents as offrampListEvents,
+  appendEvent as offrampStoreAppendEvent,
+  updateStatus as offrampStoreUpdateStatus,
+} from '../services/offrampStore.js';
+import { db as offrampDb } from '../db/client.js';
+
+/**
+ * D4/T2 demo helper: mark a session pending (rolling back the effect of a
+ * webhook that "never arrived") and shove updated_at into the past so the
+ * reconciler picks it up on the very next pass instead of waiting 30s.
+ */
+async function offrampMarkPending(id: string): Promise<void> {
+  await offrampStoreUpdateStatus(id, 'pending_user_transfer_start');
+  await offrampDb().query(
+    `update pp_off_ramp_sessions set updated_at = now() - interval '2 minutes' where id = $1`,
+    [id],
+  );
+}
 import { verifyRampWebhook } from '../services/ramp.js';
 import {
   verifyCarretWebhook,
@@ -633,6 +651,30 @@ router.post('/v1/ops/offramp/reconcile-once', requireSession(), async (_req, res
   try {
     const result = await reconcileOnce();
     res.json(result);
+  } catch (e) { next(e); }
+});
+
+/**
+ * D4 / T2 demo helper — simulate a lost webhook on the given session.
+ *
+ * Sets the session status back to `pending_user_transfer_start` and
+ * writes an audit event tagged `client` explaining that a webhook was
+ * artificially dropped. The next reconciler pass will call Carret,
+ * see that the real order status is `filled`, and write a `reconciler`
+ * event that heals the session back to `completed`. That heal is the
+ * exact evidence Stellar asked for.
+ *
+ * Only touches the caller's own sessions.
+ */
+router.post('/v1/ops/offramp/sessions/:id/simulate-missed-webhook', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const s = await getWithdrawal(req.params.id, session.userId);
+    await offrampMarkPending(s.id);
+    await offrampStoreAppendEvent(s.id, 'client', null, 'pending_user_transfer_start', {
+      note: 'simulated missed webhook — reconciler will heal on next pass',
+    });
+    res.json({ ok: true, sessionId: s.id, rolledTo: 'pending_user_transfer_start' });
   } catch (e) { next(e); }
 });
 // Alias for the earlier operator-panel deploy that hit /reconcile.

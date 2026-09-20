@@ -7,7 +7,7 @@ import type {
 } from '../../lib/api';
 import {
   getCarretLimits, resumeCarretKyc, listCarretBanks, registerCarretBank, listCarretWallets,
-  getOffRampSessionEvents, reconcileOfframpOnce,
+  getOffRampSessionEvents, reconcileOfframpOnce, simulateMissedWebhook,
 } from '../../lib/api';
 import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
 import {
@@ -461,6 +461,7 @@ function ReconcilerEvidence({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  const [simulating, setSimulating] = useState(false);
   const [lastResult, setLastResult] = useState<ReconcileResult | null>(null);
 
   const load = useCallback(async () => {
@@ -485,6 +486,18 @@ function ReconcilerEvidence({ sessionId }: { sessionId: string }) {
       setError(e ?? 'Reconcile failed');
     } finally {
       setReconciling(false);
+    }
+  }
+
+  async function simulate() {
+    setSimulating(true); setError(null);
+    try {
+      await simulateMissedWebhook(sessionId);
+      await load();
+    } catch (e) {
+      setError(e ?? 'Could not simulate missed webhook');
+    } finally {
+      setSimulating(false);
     }
   }
 
@@ -519,6 +532,14 @@ function ReconcilerEvidence({ sessionId }: { sessionId: string }) {
             className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 disabled:opacity-50"
           >
             {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <button
+            onClick={simulate}
+            disabled={simulating}
+            className="rounded-full border border-amber-300 bg-amber-50 text-amber-800 px-4 py-1.5 text-sm font-medium hover:bg-amber-100 disabled:opacity-50"
+            title="Roll this session back to pending — simulates a webhook Carret sent but we never received."
+          >
+            {simulating ? 'Simulating…' : 'Simulate missed webhook'}
           </button>
           <button
             onClick={reconcile}
