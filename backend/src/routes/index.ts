@@ -635,6 +635,13 @@ router.post('/v1/ops/offramp/reconcile-once', requireSession(), async (_req, res
     res.json(result);
   } catch (e) { next(e); }
 });
+// Alias for the earlier operator-panel deploy that hit /reconcile.
+// Both paths funnel into the same handler so no client sees "Cannot POST".
+router.post('/v1/ops/offramp/reconcile', requireSession(), async (_req, res, next) => {
+  try {
+    res.json(await reconcileOnce());
+  } catch (e) { next(e); }
+});
 
 // Cross-asset routing (D5): quote across active routers, then execute the best route.
 const routableSchema = z.string().min(1);
