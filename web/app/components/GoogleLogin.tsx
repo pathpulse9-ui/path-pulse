@@ -18,7 +18,12 @@ interface GoogleAccountsId {
   }) => void;
   renderButton: (
     parent: HTMLElement,
-    options: { theme: string; size: string },
+    options: {
+      theme: string;
+      size: string;
+      type?: 'standard' | 'icon';
+      width?: number;
+    },
   ) => void;
   prompt: (
     listener?: (notification: {

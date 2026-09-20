@@ -45,6 +45,7 @@ export default function SignInPanel() {
   const [unfundedAddress, setUnfundedAddress] = useState<string | null>(null);
   const [funding, setFunding] = useState(false);
   const googleInitialized = useRef(false);
+  const googleHiddenRef = useRef<HTMLDivElement>(null);
   const [googleReady, setGoogleReady] = useState(false);
 
   useEffect(() => {
@@ -112,7 +113,7 @@ export default function SignInPanel() {
 
   const initGoogle = useCallback(() => {
     if (googleInitialized.current || !GOOGLE_CLIENT_ID) return;
-    if (!window.google) return;
+    if (!window.google || !googleHiddenRef.current) return;
     googleInitialized.current = true;
     window.google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
@@ -120,21 +121,34 @@ export default function SignInPanel() {
       auto_select: false,
       cancel_on_tap_outside: true,
     });
+    // Render Google's real button off-screen. We keep it in the DOM
+    // (accessibility + the account-chooser popup it triggers is the
+    // reliable path — One Tap's `prompt()` silently no-ops after a
+    // few dismissals) and click it programmatically from our own
+    // styled button. That way the visible button matches the other
+    // two, but the underlying flow is the officially-supported one.
+    window.google.accounts.id.renderButton(googleHiddenRef.current, {
+      theme: 'outline',
+      size: 'large',
+      type: 'standard',
+      width: 240,
+    });
     setGoogleReady(true);
   }, [handleCredential]);
 
   const startGoogle = useCallback(() => {
-    if (!googleReady || !window.google) return;
-    setPending('google');
+    if (!googleReady) return;
     setError(null);
-    // One Tap prompt — the Google iframe overlays the button so styling
-    // stays in our hands. On dismiss/skip, clear the pending state.
-    window.google.accounts.id.prompt((notification: unknown) => {
-      const n = notification as { isNotDisplayed?: () => boolean; isSkippedMoment?: () => boolean; isDismissedMoment?: () => boolean };
-      if (n.isNotDisplayed?.() || n.isSkippedMoment?.() || n.isDismissedMoment?.()) {
-        setPending((cur) => (cur === 'google' ? null : cur));
-      }
-    });
+    // Google's rendered button lives inside an iframe. Traverse the
+    // shadow container to find the actual clickable role="button"
+    // element and forward the click. Fallback: click the container.
+    const host = googleHiddenRef.current;
+    if (!host) return;
+    const clickable =
+      host.querySelector('div[role="button"]') as HTMLElement | null
+      ?? (host.querySelector('div > div > div') as HTMLElement | null)
+      ?? host;
+    clickable.click();
   }, [googleReady]);
 
   const startGuest = useCallback(async () => {
@@ -209,6 +223,24 @@ export default function SignInPanel() {
                   <GoogleGlyph />
                   {pending === 'google' ? 'Signing in…' : 'Continue with Google'}
                 </button>
+                {/* Google's rendered iframe button — kept off-screen but
+                    functional. Our styled button above forwards clicks
+                    to it. Do NOT display:none; Google's iframe won't
+                    hydrate a hidden host. */}
+                <div
+                  ref={googleHiddenRef}
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    left: -9999,
+                    top: -9999,
+                    width: 1,
+                    height: 1,
+                    overflow: 'hidden',
+                    opacity: 0,
+                    pointerEvents: 'none',
+                  }}
+                />
               </>
             ) : (
               <button
