@@ -25,6 +25,10 @@ struct AppRootView: View {
         .background(PathPulseColor.background.ignoresSafeArea())
         .environmentObject(state)
         .task { await state.loadInitialSession() }
+        .onChange(of: state.user?.userId) { _, userId in
+            guard userId != nil else { return }
+            Task { await PushRegistrar.shared.userSignedIn() }
+        }
     }
 }
 
@@ -58,6 +62,7 @@ final class AppState: ObservableObject {
     }
 
     func signOut() async {
+        await PushRegistrar.shared.userSigningOut()
         await auth.logout()
         user = nil
         showLanding = true

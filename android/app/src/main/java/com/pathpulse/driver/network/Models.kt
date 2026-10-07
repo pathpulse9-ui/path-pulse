@@ -292,3 +292,85 @@ data class DistributionAccount(
     val multisig: Boolean,
     val network: String,
 )
+
+@Serializable
+data class OffRampQuoteFee(
+    val label: String,
+    val amount: String,
+    val currency: String,
+)
+
+@Serializable
+data class OffRampQuote(
+    val provider: String,
+    val live: Boolean,
+    val asset: String,
+    val fiatCurrency: String,
+    val amount: String,
+    val fiatAmount: String,
+    val rate: String,
+    val fees: List<OffRampQuoteFee> = emptyList(),
+)
+
+@Serializable
+data class CreateOffRampRequest(
+    val amount: String,
+)
+
+@Serializable
+data class CarretBank(
+    val id: Int,
+    val status: String,
+    val bank_account_no: String,
+    val bank_ifsc: String,
+    val bank_account_name: String,
+    val bank_name: String,
+) {
+    val isVerified: Boolean get() = status == "verified"
+    val maskedAccount: String get() = "••" + bank_account_no.takeLast(4)
+}
+
+@Serializable
+data class CarretBankList(
+    val items: List<CarretBank> = emptyList(),
+)
+
+@Serializable
+data class RegisterCarretBankRequest(
+    val bank_account_no: String,
+    val bank_ifsc: String,
+    val bank_account_name: String,
+    val bank_name: String,
+)
+
+@Serializable
+data class RewardBalance(
+    val asset: AssetRef,
+    val balance: String,
+)
+
+@Serializable
+data class RewardPayout(
+    val id: String,
+    val cursor: String,
+    val createdAt: String,
+    val amount: String,
+    val asset: AssetRef,
+    val from: String,
+    val txHash: String,
+    val explorerUrl: String,
+)
+
+@Serializable
+data class RewardsResponse(
+    val address: String? = null,
+    val balances: List<RewardBalance> = emptyList(),
+    val items: List<RewardPayout> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+@Serializable
+data class RegisterPushDeviceRequest(
+    val token: String,
+    val platform: String = "android",
+)

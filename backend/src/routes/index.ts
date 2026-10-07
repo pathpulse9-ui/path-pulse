@@ -91,6 +91,8 @@ import {
   upsertMapping, deleteMapping, updateKycStatus, markWalletWhitelisted,
 } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
+import { getRewards } from '../services/payoutHistory.js';
+import { registerDevice, unregisterDevice } from '../services/push.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
 import multer from 'multer';
@@ -313,6 +315,44 @@ router.get('/v1/auth/me', (req, res) => {
       : null,
   };
   res.json(body);
+});
+
+const rewardsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().min(1).optional(),
+});
+
+router.get('/v1/me/payouts', requireSession(), async (req, res, next) => {
+  try {
+    const { limit, cursor } = rewardsQuerySchema.parse(req.query);
+    res.json(await getRewards(getSessionFromRequest(req)!, limit, cursor));
+  } catch (e) {
+    next(e);
+  }
+});
+
+const pushDeviceSchema = z.object({
+  token: z.string().min(16).max(4096),
+  platform: z.enum(['ios', 'android']),
+});
+
+router.post('/v1/me/devices', requireSession(), async (req, res, next) => {
+  try {
+    const { token, platform } = pushDeviceSchema.parse(req.body);
+    await registerDevice(getSessionFromRequest(req)!.userId, token, platform);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.delete('/v1/me/devices/:token', requireSession(), async (req, res, next) => {
+  try {
+    await unregisterDevice(getSessionFromRequest(req)!.userId, req.params.token);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post('/v1/auth/logout', (_req, res) => {
@@ -654,14 +694,8 @@ router.get('/v1/routing/quote', async (req, res, next) => {
   }
 });
 
-router.post('/v1/routing/swap', async (req, res, next) => {
+router.post('/v1/routing/swap', requireSession(), idempotency(), async (req, res, next) => {
   try {
-    if (!getSessionFromRequest(req)) {
-      const denied = new Error('Sign in to execute a conversion') as Error & { status: number };
-      denied.name = 'Unauthorized';
-      denied.status = 401;
-      throw denied;
-    }
     const { from, to, amount } = routingSwapSchema.parse(req.body);
     res.status(201).json(await executeSwap(from, to, amount));
   } catch (e) {

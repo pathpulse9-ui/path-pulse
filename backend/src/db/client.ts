@@ -147,6 +147,26 @@ create table if not exists idempotency_keys (
 );
 create index if not exists idempotency_keys_created_at_idx on idempotency_keys (created_at);
 
+create table if not exists idempotency_requests (
+  user_id text not null,
+  key text not null,
+  request_hash text not null,
+  status_code int,
+  response_json jsonb,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz,
+  primary key (user_id, key)
+);
+create index if not exists idempotency_requests_created_at_idx on idempotency_requests (created_at);
+
+create table if not exists push_devices (
+  token text primary key,
+  user_id text not null,
+  platform text not null,
+  updated_at timestamptz not null default now()
+);
+create index if not exists push_devices_user_idx on push_devices (user_id);
+
 -- PAT-80: per-Carret-sub-account daily usage counter. Carret caps every
 -- activity type at ₹30K/day per sub-account (deposit INR, withdraw INR,
 -- deposit crypto, withdraw crypto). We track usage in IST buckets so:

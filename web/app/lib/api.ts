@@ -37,10 +37,11 @@ import type {
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const { headers, ...rest } = init ?? {};
   const res = await fetch(`${API_BASE_URL}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
+    ...rest,
+    headers: { 'Content-Type': 'application/json', ...(headers as Record<string, string> | undefined) },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -255,9 +256,10 @@ export function getCarretLimits() {
   return apiFetch<CarretLimits>('/v1/carret/limits');
 }
 
-export function createSettlementBatch(req: CreateSettlementBatchRequest) {
+export function createSettlementBatch(req: CreateSettlementBatchRequest, idempotencyKey: string) {
   return apiFetch<SettlementBatch>('/v1/settlement/batches', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(req),
   });
 }
@@ -272,9 +274,10 @@ export function getGroupPayout(id: string) {
   return apiFetch<GroupPayoutBatch>(`/v1/settlement/group-payouts/${id}`);
 }
 
-export function createGroupPayout(req: CreateGroupPayoutRequest) {
+export function createGroupPayout(req: CreateGroupPayoutRequest, idempotencyKey: string) {
   return apiFetch<GroupPayoutBatch>('/v1/settlement/group-payouts', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(req),
   });
 }
@@ -289,9 +292,10 @@ export function getOffRampSession(id: string) {
   return apiFetch<OffRampSession>(`/v1/offramp/sessions/${id}`);
 }
 
-export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest) {
+export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest, idempotencyKey: string) {
   return apiFetch<OffRampSession>('/v1/offramp/sessions', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(req),
   });
 }
@@ -371,9 +375,10 @@ export function getRoutingQuote(from: string, to: string, amount: string) {
   return apiFetch<RoutingQuote>(`/v1/routing/quote?${q}`);
 }
 
-export function executeRoutingSwap(req: RoutingSwapRequest) {
+export function executeRoutingSwap(req: RoutingSwapRequest, idempotencyKey: string) {
   return apiFetch<RoutingSwapResult>('/v1/routing/swap', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(req),
   });
 }
@@ -410,9 +415,10 @@ export function listPayoutAttempts(batchId: string) {
   );
 }
 
-export function createPayoutBatch(settlementBatchId: string) {
+export function createPayoutBatch(settlementBatchId: string, idempotencyKey: string) {
   return apiFetch<PayoutBatch>('/v1/ops/payouts/batches', {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ settlementBatchId }),
   });
 }

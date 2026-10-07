@@ -9,6 +9,7 @@ import {
   listPayoutAttempts,
   type PayoutAttempt,
 } from '../../lib/api';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
@@ -31,6 +32,7 @@ function receiptClasses(s: PayoutReceiptStatus) {
 
 export default function PayoutsPage() {
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
+  const runPayout = useIdempotencyKey();
   const [settlements, setSettlements] = useState<SettlementBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -82,7 +84,7 @@ export default function PayoutsPage() {
       setCreating(true);
       setError(null);
       try {
-        await createPayoutBatch(settlementBatchId);
+        await runPayout({ settlementBatchId }, (key) => createPayoutBatch(settlementBatchId, key));
         await load();
       } catch (e) {
         setError(e ?? 'Disbursement failed');
@@ -90,7 +92,7 @@ export default function PayoutsPage() {
         setCreating(false);
       }
     },
-    [load],
+    [load, runPayout],
   );
 
   const undisbursed = settlements.filter(

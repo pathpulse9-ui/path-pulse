@@ -580,3 +580,33 @@ export interface OffRampQuote {
   rate: string;
   fees: OffRampQuoteFee[];
 }
+
+export interface RewardBalance {
+  asset: AssetRef;
+  balance: string;
+}
+
+export interface RewardPayout {
+  id: string;
+  cursor: string;
+  createdAt: string;
+  amount: string;
+  asset: AssetRef;
+  from: string;
+  txHash: string;
+  explorerUrl: string;
+}
+
+export interface RewardsResponse {
+  address: string | null;
+  balances: RewardBalance[];
+  items: RewardPayout[];
+  nextCursor: string | null;
+}
+
+export type PushPlatform = 'ios' | 'android';
+
+export interface RegisterPushDeviceRequest {
+  token: string;
+  platform: PushPlatform;
+}

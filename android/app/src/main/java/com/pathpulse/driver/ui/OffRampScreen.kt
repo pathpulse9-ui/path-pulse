@@ -21,9 +21,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.pathpulse.driver.network.CarretBank
 import com.pathpulse.driver.network.CarretLimits
 import com.pathpulse.driver.network.DataRepository
 import com.pathpulse.driver.network.OffRampSession
@@ -59,9 +61,20 @@ fun OffRampScreen(
 ) {
     // PAT-80: Carret daily-limit chip.
     var limits by remember { mutableStateOf<CarretLimits?>(null) }
-    LaunchedEffect(Unit) {
+    var kycStatus by remember { mutableStateOf<String?>(null) }
+    var banks by remember { mutableStateOf<List<CarretBank>?>(null) }
+    var bankSheetOpen by remember { mutableStateOf(false) }
+    var withdrawSheetOpen by remember { mutableStateOf(false) }
+    var reloadKey by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(reloadKey) {
         limits = runCatching { dataRepository.carretLimits() }.getOrNull()
+        kycStatus = runCatching { dataRepository.resumeCarretKyc() }.getOrNull()?.kycStatus
+        banks = if (kycStatus == "verified") runCatching { dataRepository.carretBanks() }.getOrDefault(emptyList()) else null
     }
+
+    val kycVerified = kycStatus == "verified"
+    val verifiedBank = banks?.firstOrNull { it.isVerified }
 
     Column(
         modifier = modifier
@@ -70,7 +83,14 @@ fun OffRampScreen(
             .padding(bottom = PpSpace.xxl),
         verticalArrangement = Arrangement.spacedBy(PpSpace.md),
     ) {
-        PpTabHeader(title = "Off-ramp", loading = loading, onRefresh = onRefresh)
+        PpTabHeader(
+            title = "Off-ramp",
+            loading = loading,
+            onRefresh = {
+                reloadKey++
+                onRefresh()
+            },
+        )
 
         if (error != null) {
             PpCard {
@@ -78,25 +98,32 @@ fun OffRampScreen(
             }
         }
 
-        // PAT-79: KYC entry banner.
-        PpCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Verify your identity", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "A quick one-time check before your first withdrawal.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = PpBlack70,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-                com.pathpulse.driver.ui.components.PpPrimaryButton(
-                    text = "Start",
-                    onClick = onOpenKyc,
-                    fillWidth = false,
-                    modifier = Modifier.padding(start = PpSpace.md),
-                )
-            }
+        when {
+            !kycVerified -> ActionBanner(
+                title = "Verify your identity",
+                subtitle = "A quick one-time check before your first withdrawal.",
+                action = if (kycStatus == "rejected" || kycStatus == "re_kyc") "Retry" else "Start",
+                enabled = kycStatus != "manual_review",
+                onAction = onOpenKyc,
+            )
+            verifiedBank != null -> ActionBanner(
+                title = "You're verified",
+                subtitle = "${verifiedBank.bank_name} · ${verifiedBank.bank_ifsc} · ${verifiedBank.maskedAccount}",
+                action = "New withdrawal",
+                onAction = { withdrawSheetOpen = true },
+            )
+            banks?.isEmpty() == true -> ActionBanner(
+                title = "Add your bank",
+                subtitle = "INR from your withdrawals is paid to this account.",
+                action = "Add bank",
+                onAction = { bankSheetOpen = true },
+            )
+            banks != null -> ActionBanner(
+                title = "Bank pending verification",
+                subtitle = "Carret is running a ₹1 penny-drop. Usually clears within a minute.",
+                action = "Check again",
+                onAction = { reloadKey++ },
+            )
         }
 
         limits?.let { l ->
@@ -132,7 +159,11 @@ fun OffRampScreen(
             if (sessions.isEmpty() && !loading) {
                 PpEmptyState(
                     title = "No withdrawals yet",
-                    message = "Your withdrawals will appear here.",
+                    message = when {
+                        !kycVerified -> "Verify your identity to start withdrawing."
+                        verifiedBank == null -> "Add a verified bank to start withdrawing."
+                        else -> "Tap New withdrawal to send your first payout."
+                    },
                 )
             } else {
                 Column(modifier = Modifier.padding(top = PpSpace.sm)) {
@@ -142,6 +173,59 @@ fun OffRampScreen(
                     }
                 }
             }
+        }
+    }
+
+    if (bankSheetOpen) {
+        BankRegistrationSheet(
+            dataRepository = dataRepository,
+            onDismiss = {
+                bankSheetOpen = false
+                reloadKey++
+            },
+            onRegistered = { bank -> banks = banks.orEmpty() + bank },
+        )
+    }
+
+    if (withdrawSheetOpen) {
+        WithdrawSheet(
+            dataRepository = dataRepository,
+            limits = limits,
+            onDismiss = {
+                withdrawSheetOpen = false
+                reloadKey++
+                onRefresh()
+            },
+        )
+    }
+}
+
+@Composable
+private fun ActionBanner(
+    title: String,
+    subtitle: String,
+    action: String,
+    onAction: () -> Unit,
+    enabled: Boolean = true,
+) {
+    PpCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PpBlack70,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            com.pathpulse.driver.ui.components.PpPrimaryButton(
+                text = action,
+                onClick = onAction,
+                enabled = enabled,
+                fillWidth = false,
+                modifier = Modifier.padding(start = PpSpace.md),
+            )
         }
     }
 }

@@ -42,6 +42,10 @@ targets:
     resources:
       - path: PathPulse/Resources
         optional: true
+    entitlements:
+      path: PathPulse/PathPulse.entitlements
+      properties:
+        aps-environment: development
     info:
       path: PathPulse/Info.plist
       properties:

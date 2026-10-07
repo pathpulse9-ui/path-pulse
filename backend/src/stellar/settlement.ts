@@ -17,6 +17,7 @@ import { createPayoutBatch } from '../services/payouts.js';
 import { saveBatch, attachPayoutBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
 import { assertMainnetAllowed } from './networkGuard.js';
 import { logger } from '../config/logger.js';
+import { notifyUserInBackground } from '../services/push.js';
 import { resolveScore } from '../services/pulsegen.js';
 
 /**
@@ -212,6 +213,13 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     const payoutBatch = await createPayoutBatch(driverPayouts, ref, { settlementBatchId: batchId });
     batch.payoutBatchId = payoutBatch.id;
     await attachPayoutBatch(batchId, payoutBatch.id);
+    for (const p of driverPayouts) {
+      notifyUserInBackground(p.userId, {
+        title: 'Reward on its way',
+        body: `${p.amount} ${ref.code} from settlement ${batchId} is being paid to your wallet.`,
+        data: { kind: 'settlement_payout', settlementBatchId: batchId },
+      });
+    }
   } catch (e) {
     logger.error(
       { err: e, batchId, txHash: res.hash },

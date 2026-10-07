@@ -31,6 +31,7 @@ docs/TRANCHE2_PROOF_OF_COMPLETION.md
 docs/TESTNET_EVIDENCE.md
 docs/KMS_VERIFICATION.md
 docs/production-launch.md
+docs/CARDANO_MIGRATION_RESEARCH.md
 
 # Local score-feed scaffolding — dev tooling and fixtures, not product code.
 backend/scripts/pulsegen-stub.ts

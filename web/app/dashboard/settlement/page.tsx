@@ -10,6 +10,7 @@ import {
   prepareScoutDemoDrivers,
   type DemoScoutDriver,
 } from '../../lib/api';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { parseRecipientsFile, type ParsedRecipient } from '../../lib/parseRecipients';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 
@@ -27,6 +28,8 @@ const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
 export default function SettlementPage() {
   const [batches, setBatches] = useState<SettlementBatch[]>([]);
+  const runSettlement = useIdempotencyKey();
+  const runGroupPayout = useIdempotencyKey();
   const [selected, setSelected] = useState<SettlementBatch | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -78,11 +81,14 @@ export default function SettlementPage() {
       setDemoDrivers(drivers);
 
       setStatus('Executing 50/30/20 settlement…');
-      const batch = await createSettlementBatch({
+      const settlementRequest = {
         grossAmount: settlementAsset === 'USDC' ? '1' : '100',
         drivers: drivers.map((d) => ({ userId: d.userId, address: d.address })),
-        asset: settlementAsset === 'USDC' ? { code: 'USDC', issuer: USDC_ISSUER } : undefined,
-      }).catch(async (e: unknown) => {
+        asset: settlementAsset === 'USDC' ? { code: 'USDC' as const, issuer: USDC_ISSUER } : undefined,
+      };
+      const batch = await runSettlement(settlementRequest, (key) =>
+        createSettlementBatch(settlementRequest, key),
+      ).catch(async (e: unknown) => {
         // The split is irreversible on-chain before the driver fan-out is
         // attempted, so a payout-provider outage must not be reported as a
         // failed settlement. Recover the persisted batch and warn instead.
@@ -105,7 +111,7 @@ export default function SettlementPage() {
     } finally {
       setRunning(false);
     }
-  }, [load, settlementAsset]);
+  }, [load, settlementAsset, runSettlement]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -150,23 +156,24 @@ export default function SettlementPage() {
     setPayingGroup(true);
     setGroupError(null);
     try {
-      const batch = await createGroupPayout({
+      const groupRequest = {
         memo: memo.trim() || undefined,
-        asset: payoutAsset === 'USDC' ? { code: 'USDC', issuer: USDC_ISSUER } : undefined,
+        asset: payoutAsset === 'USDC' ? { code: 'USDC' as const, issuer: USDC_ISSUER } : undefined,
         recipients: validRecipients.map((r) => ({
           name: r.name,
           address: r.address,
           amount: r.amount,
           remark: r.remark.trim() || undefined,
         })),
-      });
+      };
+      const batch = await runGroupPayout(groupRequest, (key) => createGroupPayout(groupRequest, key));
       setGroupResult(batch);
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : 'Group payout failed');
     } finally {
       setPayingGroup(false);
     }
-  }, [validRecipients, memo, payoutAsset]);
+  }, [validRecipients, memo, payoutAsset, runGroupPayout]);
 
   return (
     <div className="space-y-6">

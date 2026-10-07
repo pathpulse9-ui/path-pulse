@@ -36,6 +36,7 @@ import {
 } from './carret.js';
 import { getMapping } from './carretSubAccountStore.js';
 import { assertUnderLimit, recordUsage } from './carretLimits.js';
+import { notifyUserInBackground } from './push.js';
 import {
   findSessionByCarretOrderId,
   getSession,
@@ -339,6 +340,19 @@ async function applyStatus(
     detail,
     createdAt: session.updatedAt,
   });
+  if (next === 'completed') {
+    notifyUserInBackground(session.ppUserId, {
+      title: 'Withdrawal paid',
+      body: `${session.amount} ${session.asset.code} → ${session.fiatCurrency} has been paid to your bank.`,
+      data: { kind: 'offramp_completed', sessionId: session.id },
+    });
+  } else if (next === 'error') {
+    notifyUserInBackground(session.ppUserId, {
+      title: "Withdrawal didn't complete",
+      body: 'Your withdrawal was cancelled. Any blocked funds are released back to your account.',
+      data: { kind: 'offramp_error', sessionId: session.id },
+    });
+  }
   return session;
 }
 

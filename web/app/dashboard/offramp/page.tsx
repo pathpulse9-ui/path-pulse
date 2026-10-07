@@ -20,6 +20,7 @@ import {
   createOffRampWithdrawal,
   getOffRampQuote,
 } from '../../lib/api';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 import Link from 'next/link';
 
@@ -41,6 +42,7 @@ function statusClasses(s: OffRampStatus) {
 
 export default function OffRampPage() {
   const [sessions, setSessions] = useState<OffRampSession[]>([]);
+  const runWithdrawal = useIdempotencyKey();
   const [selected, setSelected] = useState<OffRampSession | null>(null);
   const [amount, setAmount] = useState('10');
   const [batchId, setBatchId] = useState('');
@@ -151,10 +153,8 @@ export default function OffRampPage() {
     setBusy(true);
     setError(null);
     try {
-      const session = await createOffRampWithdrawal({
-        amount,
-        settlementBatchId: batchId.trim(),
-      });
+      const withdrawal = { amount, settlementBatchId: batchId.trim() };
+      const session = await runWithdrawal(withdrawal, (key) => createOffRampWithdrawal(withdrawal, key));
       setSelected(session);
       await load();
     } catch (e) {

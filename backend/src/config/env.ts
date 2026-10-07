@@ -204,7 +204,27 @@ export const env = {
     verificationField: process.env.SDP_VERIFICATION_FIELD ?? 'DATE_OF_BIRTH',
     contactDomain: process.env.SDP_CONTACT_DOMAIN ?? 'pathpulse.local',
   },
+
+  push: {
+    apns: {
+      keyId: process.env.APNS_KEY_ID ?? '',
+      teamId: process.env.APNS_TEAM_ID ?? '',
+      bundleId: process.env.APNS_BUNDLE_ID ?? '',
+      privateKey: (process.env.APNS_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+      production: process.env.APNS_ENV === 'production',
+    },
+    fcm: {
+      projectId: process.env.FIREBASE_PROJECT_ID ?? '',
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',
+      privateKey: (process.env.FIREBASE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+    },
+  },
 } as const;
+
+export const apnsLive =
+  !!env.push.apns.keyId && !!env.push.apns.teamId && !!env.push.apns.bundleId && !!env.push.apns.privateKey;
+
+export const fcmLive = !!env.push.fcm.projectId && !!env.push.fcm.clientEmail && !!env.push.fcm.privateKey;
 
 /** Live Ramp requires a host API key; otherwise the sandbox stub runs. */
 export const rampLive = !!process.env.RAMP_API_KEY;

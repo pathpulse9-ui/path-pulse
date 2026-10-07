@@ -27,9 +27,9 @@ struct DataRepository: Sendable {
     /// the amount (7-decimal string) and, optionally, an asset override. On
     /// success the returned OffRampSession id is what the receipt / status
     /// polling calls key on.
-    func createOffRampSession(amount: String) async throws -> OffRampSession {
+    func createOffRampSession(amount: String, idempotencyKey: String) async throws -> OffRampSession {
         struct Body: Codable { let amount: String }
-        return try await client.post("v1/offramp/sessions", body: Body(amount: amount))
+        return try await client.post("v1/offramp/sessions", body: Body(amount: amount), idempotencyKey: idempotencyKey)
     }
 
     /// GET /v1/offramp/sessions/{id} — poll a single session for the
@@ -143,5 +143,36 @@ struct DataRepository: Sendable {
     func cleanupCarretKyc(accountId: String) async throws {
         struct Body: Codable { let account_id: String }
         _ = try await client.postDiscardingBody("v1/carret/kyc/cleanup", body: Body(account_id: accountId))
+    }
+
+    // MARK: - Banks
+
+    func carretBanks() async throws -> [CarretBank] {
+        let list: CarretBankList = try await client.get("v1/carret/banks")
+        return list.items
+    }
+
+    func registerCarretBank(_ request: RegisterCarretBankRequest) async throws -> CarretBank {
+        try await client.post("v1/carret/banks", body: request)
+    }
+
+    // MARK: - Rewards
+
+    func rewards(limit: Int = 50, cursor: String? = nil) async throws -> RewardsResponse {
+        var query = ["limit": String(limit)]
+        if let cursor { query["cursor"] = cursor }
+        return try await client.get("v1/me/payouts", query: query)
+    }
+
+    // MARK: - Push
+
+    func registerPushDevice(token: String) async throws {
+        struct Body: Codable { let token: String; let platform: String }
+        let status = try await client.postDiscardingBody("v1/me/devices", body: Body(token: token, platform: "ios"))
+        guard (200..<300).contains(status) else { throw APIError.http(status: status, payload: nil) }
+    }
+
+    func unregisterPushDevice(token: String) async throws {
+        _ = try await client.deleteDiscardingBody("v1/me/devices/\(token)")
     }
 }

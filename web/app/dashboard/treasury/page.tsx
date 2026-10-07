@@ -13,6 +13,7 @@ import {
   executeRoutingSwap,
   getRoutableAssets,
 } from '../../lib/api';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
 
@@ -31,6 +32,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 function ConversionPanel() {
   const [routable, setRoutable] = useState<string[]>(FALLBACK_ROUTABLE);
+  const runSwap = useIdempotencyKey();
   const [from, setFrom] = useState('XLM');
   const [to, setTo] = useState('USDC');
   const [amount, setAmount] = useState('100');
@@ -92,13 +94,13 @@ function ConversionPanel() {
     setConvertError(null);
     setResult(null);
     try {
-      setResult(await executeRoutingSwap({ from, to, amount }));
+      setResult(await runSwap({ from, to, amount }, (key) => executeRoutingSwap({ from, to, amount }, key)));
     } catch (e) {
       setConvertError(e instanceof Error ? e.message : 'Conversion failed');
     } finally {
       setConverting(false);
     }
-  }, [from, to, amount]);
+  }, [from, to, amount, runSwap]);
 
   return (
     <div className="rounded-2xl bg-white p-6 space-y-5">

@@ -14,10 +14,13 @@ struct OffRampView: View {
     @State private var resume: CarretResumeResponse? = nil
     @State private var kycSheetOpen = false
     @State private var withdrawSheetOpen = false
+    @State private var banks: [CarretBank]? = nil
+    @State private var bankSheetOpen = false
 
     private let data = DataRepository()
 
     private var kycVerified: Bool { resume?.kycStatus == "verified" }
+    private var verifiedBank: CarretBank? { banks?.first(where: \.isVerified) }
 
     var body: some View {
         ScrollView {
@@ -25,10 +28,14 @@ struct OffRampView: View {
                 PpTabHeader(title: "Off-ramp", refreshing: loading, onRefresh: { Task { await refresh() } })
                 if let errorMessage { PpErrorBanner(message: errorMessage) }
 
-                if kycVerified {
-                    verifiedHeader
-                } else {
+                if !kycVerified {
                     kycBanner
+                } else if let bank = verifiedBank {
+                    verifiedHeader(bank)
+                } else if let banks, banks.isEmpty {
+                    addBankBanner
+                } else if banks != nil {
+                    bankPendingBanner
                 }
 
                 if let l = limits {
@@ -44,9 +51,11 @@ struct OffRampView: View {
                     if sessions.isEmpty && !loading {
                         PpEmptyState(
                             title: "No withdrawals yet",
-                            message: kycVerified
-                                ? "Tap New withdrawal to send your first payout."
-                                : "Verify your identity to start withdrawing."
+                            message: !kycVerified
+                                ? "Verify your identity to start withdrawing."
+                                : (verifiedBank == nil
+                                    ? "Add a verified bank to start withdrawing."
+                                    : "Tap New withdrawal to send your first payout.")
                         )
                     } else {
                         VStack(spacing: 0) {
@@ -66,6 +75,9 @@ struct OffRampView: View {
         .task { await refresh() }
         .refreshable { await refresh() }
         .sheet(isPresented: $kycSheetOpen) { KycView() }
+        .sheet(isPresented: $bankSheetOpen, onDismiss: { Task { await refresh() } }) {
+            BankRegistrationSheet(data: data) { bank in banks = (banks ?? []) + [bank] }
+        }
         .sheet(isPresented: $withdrawSheetOpen, onDismiss: { Task { await refresh() } }) {
             WithdrawSheet(data: data, limits: limits)
         }
@@ -73,25 +85,67 @@ struct OffRampView: View {
 
     // MARK: - Header variants
 
-    @ViewBuilder private var verifiedHeader: some View {
+    @ViewBuilder private func verifiedHeader(_ bank: CarretBank) -> some View {
+        PpCard {
+            VStack(alignment: .leading, spacing: PpSpace.md) {
+                HStack(spacing: PpSpace.md) {
+                    ZStack {
+                        Circle().fill(PathPulseColor.mint26).frame(width: 40, height: 40)
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(PathPulseColor.mint)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("You're verified")
+                            .font(PathPulseFont.titleMedium)
+                            .foregroundStyle(PathPulseColor.black)
+                        Text("Withdraw USDC to your registered bank in INR.")
+                            .font(PathPulseFont.bodySmall)
+                            .foregroundStyle(PathPulseColor.black60)
+                    }
+                    Spacer()
+                    Button(action: { withdrawSheetOpen = true }) {
+                        Text("New withdrawal")
+                            .font(PathPulseFont.labelMedium)
+                            .foregroundStyle(PathPulseColor.white)
+                            .padding(.horizontal, PpSpace.md)
+                            .padding(.vertical, PpSpace.sm)
+                            .background(PathPulseColor.black)
+                            .clipShape(Capsule())
+                    }
+                }
+                PpDivider()
+                HStack(spacing: PpSpace.md) {
+                    Image(systemName: "building.columns")
+                        .foregroundStyle(PathPulseColor.black60)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(bank.bank_name)
+                            .font(PathPulseFont.bodyMedium)
+                            .foregroundStyle(PathPulseColor.black)
+                        Text("\(bank.bank_ifsc) · \(bank.maskedAccount)")
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(PathPulseColor.black50)
+                    }
+                    Spacer()
+                    PpStatusPill(text: "verified", color: PathPulseColor.mint)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var addBankBanner: some View {
         PpCard {
             HStack(spacing: PpSpace.md) {
-                ZStack {
-                    Circle().fill(PathPulseColor.mint26).frame(width: 40, height: 40)
-                    Image(systemName: "checkmark.seal.fill")
-                        .foregroundStyle(PathPulseColor.mint)
-                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("You're verified")
+                    Text("Add your bank")
                         .font(PathPulseFont.titleMedium)
                         .foregroundStyle(PathPulseColor.black)
-                    Text("Withdraw USDC to your registered bank in INR.")
+                    Text("INR from your withdrawals is paid to this account.")
                         .font(PathPulseFont.bodySmall)
                         .foregroundStyle(PathPulseColor.black60)
                 }
                 Spacer()
-                Button(action: { withdrawSheetOpen = true }) {
-                    Text("New withdrawal")
+                Button(action: { bankSheetOpen = true }) {
+                    Text("Add bank")
                         .font(PathPulseFont.labelMedium)
                         .foregroundStyle(PathPulseColor.white)
                         .padding(.horizontal, PpSpace.md)
@@ -99,6 +153,36 @@ struct OffRampView: View {
                         .background(PathPulseColor.black)
                         .clipShape(Capsule())
                 }
+            }
+        }
+    }
+
+    @ViewBuilder private var bankPendingBanner: some View {
+        PpCard {
+            HStack(spacing: PpSpace.md) {
+                ZStack {
+                    Circle().fill(PathPulseColor.accentAmber.opacity(0.15)).frame(width: 40, height: 40)
+                    Image(systemName: "clock")
+                        .foregroundStyle(PathPulseColor.accentAmber)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bank pending verification")
+                        .font(PathPulseFont.titleMedium)
+                        .foregroundStyle(PathPulseColor.black)
+                    Text("Carret is running a ₹1 penny-drop. Usually clears within a minute.")
+                        .font(PathPulseFont.bodySmall)
+                        .foregroundStyle(PathPulseColor.black60)
+                }
+                Spacer()
+                Button(action: { Task { await refresh() } }) {
+                    Text("Check again")
+                        .font(PathPulseFont.labelMedium)
+                        .foregroundStyle(PathPulseColor.black)
+                        .padding(.horizontal, PpSpace.md)
+                        .padding(.vertical, PpSpace.sm)
+                        .overlay(Capsule().stroke(PathPulseColor.black15, lineWidth: 1))
+                }
+                .disabled(loading)
             }
         }
     }
@@ -161,6 +245,7 @@ struct OffRampView: View {
             // Both are best-effort — missing sub-account etc. leaves them hidden.
             limits = (try? await l)
             resume = (try? await r) ?? nil
+            banks = kycVerified ? ((try? await data.carretBanks()) ?? []) : nil
         } catch {
             errorMessage = UserErrors.message(error)
         }
@@ -179,6 +264,7 @@ private struct WithdrawSheet: View {
     @State private var quoting = false
     @State private var placing = false
     @State private var placedSession: OffRampSession? = nil
+    @State private var pendingWithdrawal: (amount: String, key: String)? = nil
     @State private var error: String? = nil
     @State private var quoteTask: Task<Void, Never>? = nil
     @State private var pollTask: Task<Void, Never>? = nil
@@ -506,11 +592,25 @@ private struct WithdrawSheet: View {
         guard canPlace else { return }
         placing = true; error = nil
         defer { placing = false }
+        if pendingWithdrawal?.amount != amount {
+            pendingWithdrawal = (amount, UUID().uuidString)
+        }
+        let key = pendingWithdrawal!.key
         do {
-            let s = try await data.createOffRampSession(amount: amount)
+            let s = try await data.createOffRampSession(amount: amount, idempotencyKey: key)
+            pendingWithdrawal = nil
             placedSession = s
         } catch {
+            if !Self.isRetryable(error) { pendingWithdrawal = nil }
             self.error = UserErrors.message(error)
+        }
+    }
+
+    private static func isRetryable(_ error: Error) -> Bool {
+        switch error as? APIError {
+        case .transport: return true
+        case .http(let status, _): return status == 409 || status == 503
+        default: return false
         }
     }
 

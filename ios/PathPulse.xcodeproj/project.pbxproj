@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7E1931B79F9D0EB5962A7D15 /* PushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A09129777D99018D03AC40A /* PushRegistrar.swift */; };
+		8D5FABB0BABEFD2004796775 /* RewardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F9333469147C5EC58A29985 /* RewardsView.swift */; };
+		A3358ED1E7617396E58D51C4 /* BankRegistrationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6AB69F0F50DF725F751B7A9 /* BankRegistrationSheet.swift */; };
 		079547AEB2629BBC49FB70D4 /* OffRampView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB05BD931E30AEAA17860A5A /* OffRampView.swift */; };
 		0CB9AB46A81552E1C62CAD5E /* SettlementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A474ADBFDE0C3BC325773D /* SettlementView.swift */; };
 		1B92B7FE240B32E3FD552985 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0D5505235ECA863605185A /* Models.swift */; };
@@ -36,6 +39,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A04CC6FD201B158A03FA901D /* PathPulse.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PathPulse.entitlements; sourceTree = "<group>"; };
+		4A09129777D99018D03AC40A /* PushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistrar.swift; sourceTree = "<group>"; };
+		7F9333469147C5EC58A29985 /* RewardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardsView.swift; sourceTree = "<group>"; };
+		A6AB69F0F50DF725F751B7A9 /* BankRegistrationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankRegistrationSheet.swift; sourceTree = "<group>"; };
 		09AB2C446A4AA66498EA8C80 /* PathPulseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathPulseApp.swift; sourceTree = "<group>"; };
 		32C1BD9D37E488E18C0209CA /* ScoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoutView.swift; sourceTree = "<group>"; };
 		391DFEBB9B5C6CC0FC891C48 /* CommonComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonComponents.swift; sourceTree = "<group>"; };
@@ -83,6 +90,7 @@
 				6038E6FF167CD047FE31B378 /* AppRoot.swift */,
 				6FE7B8E1F0BE2A2286B125D6 /* Config.swift */,
 				BFB0BE5074A5D8196E86F0CD /* Info.plist */,
+				A04CC6FD201B158A03FA901D /* PathPulse.entitlements */,
 				09AB2C446A4AA66498EA8C80 /* PathPulseApp.swift */,
 				E3E7DB4A84B16C15FE395F3B /* Network */,
 				8384435AE061CEB7DC866C8D /* Resources */,
@@ -122,6 +130,8 @@
 				B7A474ADBFDE0C3BC325773D /* SettlementView.swift */,
 				FE1FF9C89B7D2E88C064F6E3 /* SignInView.swift */,
 				6717D5F8CB36B8E9E2451772 /* TreasuryView.swift */,
+				7F9333469147C5EC58A29985 /* RewardsView.swift */,
+				A6AB69F0F50DF725F751B7A9 /* BankRegistrationSheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -143,6 +153,7 @@
 				B04E1BBD6896203F9E55DEAC /* APIClient.swift */,
 				83B205B9366499699E91160F /* AuthRepository.swift */,
 				472FA53AC87B37FFBB4796DB /* DataRepository.swift */,
+				4A09129777D99018D03AC40A /* PushRegistrar.swift */,
 				4F0D5505235ECA863605185A /* Models.swift */,
 				F5BAEFF83553485C7D9A9E60 /* UserErrors.swift */,
 			);
@@ -242,6 +253,9 @@
 				D9F92151B745D18BC67EF667 /* Config.swift in Sources */,
 				EC74AF7D4FF2711736EC5E85 /* DashboardView.swift in Sources */,
 				BAF9DA6F6A0CD924EDC822EC /* DataRepository.swift in Sources */,
+				7E1931B79F9D0EB5962A7D15 /* PushRegistrar.swift in Sources */,
+				8D5FABB0BABEFD2004796775 /* RewardsView.swift in Sources */,
+				A3358ED1E7617396E58D51C4 /* BankRegistrationSheet.swift in Sources */,
 				F11A5A9023BFA41D0114FB83 /* Font+PathPulse.swift in Sources */,
 				E342688C6E65F05B1752996D /* KycView.swift in Sources */,
 				22AD8B1A15AC2EAB530FFDA5 /* LandingView.swift in Sources */,
@@ -269,6 +283,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
+				CODE_SIGN_ENTITLEMENTS = PathPulse/PathPulse.entitlements;
 				INFOPLIST_FILE = PathPulse/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -414,6 +429,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
+				CODE_SIGN_ENTITLEMENTS = PathPulse/PathPulse.entitlements;
 				INFOPLIST_FILE = PathPulse/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
