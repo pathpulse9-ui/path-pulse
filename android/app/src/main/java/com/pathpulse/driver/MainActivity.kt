@@ -34,6 +34,7 @@ import androidx.credentials.CredentialManager
 import com.pathpulse.driver.network.ApiException
 import com.pathpulse.driver.network.AuthRepository
 import com.pathpulse.driver.network.DataRepository
+import com.pathpulse.driver.network.SessionCookieStorage
 import com.pathpulse.driver.network.DistributionAccount
 import com.pathpulse.driver.network.HealthResponse
 import com.pathpulse.driver.network.OffRampSession
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        SessionCookieStorage.init(applicationContext)
         PushRegistration.init(applicationContext)
         setContent {
             PathPulseTheme {

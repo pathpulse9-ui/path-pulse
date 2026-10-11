@@ -114,6 +114,13 @@ data class OffRampSession(
     val asset: AssetRef,
     val fiatCurrency: String,
     val createdAt: String,
+    val updatedAt: String? = null,
+    val sandbox: Boolean? = null,
+    val fiatAmountEstimate: String? = null,
+    val merchantTransactionId: String? = null,
+    val settlementBatchId: String? = null,
+    val stellarTxHash: String? = null,
+    val stellarTxUrl: String? = null,
 )
 
 @Serializable

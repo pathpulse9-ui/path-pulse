@@ -24,6 +24,11 @@ android {
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${prop("pathpulse.firebase.projectId")}\"")
         buildConfigField("String", "FIREBASE_API_KEY", "\"${prop("pathpulse.firebase.apiKey")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${prop("pathpulse.firebase.senderId")}\"")
+
+        val network = providers.gradleProperty("pathpulse.network").getOrElse("testnet")
+        require(network == "testnet" || network == "mainnet") { "pathpulse.network must be testnet or mainnet, got $network" }
+        buildConfigField("String", "STELLAR_NETWORK", "\"$network\"")
+        buildConfigField("String", "SENTRY_DSN", "\"${prop("pathpulse.sentryDsn")}\"")
     }
 
     buildTypes {
@@ -32,7 +37,10 @@ android {
             buildConfigField("String", "API_BASE", "\"$apiBase\"")
         }
         release {
-            buildConfigField("String", "API_BASE", "\"https://TBD\"")
+            val network = providers.gradleProperty("pathpulse.network").getOrElse("testnet")
+            val apiBase = providers.gradleProperty("pathpulse.apiBase").orNull
+                ?: if (network == "mainnet") "" else "https://demo-api.pathpulse.ai"
+            buildConfigField("String", "API_BASE", "\"$apiBase\"")
             optimization {
                 enable = false
             }
@@ -41,6 +49,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+    gradle.taskGraph.whenReady {
+        val releasing = allTasks.any { it.project == project && it.name.contains("Release") }
+        val network = providers.gradleProperty("pathpulse.network").getOrElse("testnet")
+        val apiBase = providers.gradleProperty("pathpulse.apiBase").getOrElse("")
+        if (releasing && network == "mainnet" && !apiBase.startsWith("https://")) {
+            throw GradleException("A mainnet release needs -Ppathpulse.apiBase=https://…")
+        }
     }
     buildFeatures {
         compose = true
@@ -68,6 +84,7 @@ dependencies {
     implementation(libs.googleid)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+    implementation(libs.sentry.android.core)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
