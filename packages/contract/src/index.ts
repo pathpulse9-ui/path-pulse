@@ -43,6 +43,7 @@ export interface ManagedWallet {
 export interface SessionUser {
   userId: string;
   method: 'google' | 'wallet' | 'guest' | 'partner' | 'ops';
+  role?: 'ops' | 'partner';
   email?: string;
   address?: string;
 }
@@ -167,6 +168,14 @@ export interface CreateSettlementBatchRequest {
   /** Defaults to native XLM on testnet. */
   asset?: AssetRef;
   drivers: SettlementDriverInput[];
+  depositTxHash?: string;
+}
+
+export interface SettlementDeposit {
+  txHash: string;
+  from: string;
+  amount: string;
+  receivedAt: string;
 }
 
 /** The deterministic 50 / 30 / 20 split, as 7-decimal strings summing to gross. */
@@ -194,6 +203,8 @@ export interface SettlementDriverPayout {
 
 export interface SettlementBatch {
   id: string;
+  createdBy?: string;
+  deposit?: SettlementDeposit;
   createdAt: string;
   network: StellarNetwork;
   grossAmount: string;
@@ -345,6 +356,7 @@ export interface GroupPayoutReceipt {
 
 export interface GroupPayoutBatch {
   id: string;
+  createdBy?: string;
   createdAt: string;
   network: StellarNetwork;
   asset: AssetRef;
@@ -409,6 +421,7 @@ export interface OffRampSession {
   settlementBatchId?: string;
   /** Stellar tx of the user's transfer to the anchor, once known. */
   stellarTxHash?: string;
+  stellarTxUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -480,6 +493,7 @@ export interface PayoutReceipt {
 
 export interface PayoutBatch {
   id: string;
+  createdBy?: string;
   provider: 'sdp';
   sandbox: boolean;
   status: PayoutBatchStatus;
@@ -534,9 +548,11 @@ export interface RoutingSwapResult {
   sourceAmount: string;
   estimatedDestinationAmount: string;
   minDestinationAmount: string;
+  destinationAmount?: string;
   hops: number;
   pools: string[];
   txHash: string;
+  txHashes?: string[];
   horizonUrl: string;
 }
 
@@ -560,6 +576,21 @@ export interface TreasuryRoutingPlan {
   heldSettlementAsset: string;
   conversions: TreasuryConversion[];
   projectedSettlementAsset: string;
+}
+
+export interface TreasuryConversionTx {
+  treasury: string;
+  network: StellarNetwork;
+  from: AssetRef;
+  to: AssetRef;
+  sendAmount: string;
+  estimatedDestinationAmount: string;
+  minDestinationAmount: string;
+  path: AssetRef[];
+  xdr: string;
+  hash: string;
+  expiresAt: string;
+  signaturesRequired: number;
 }
 
 export interface OffRampQuoteFee {
@@ -609,4 +640,35 @@ export type PushPlatform = 'ios' | 'android';
 export interface RegisterPushDeviceRequest {
   token: string;
   platform: PushPlatform;
+}
+
+export interface StatusCheck {
+  name: string;
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+}
+
+export interface StatusReport {
+  ok: boolean;
+  network: StellarNetwork;
+  checkedAt: string;
+  checks: StatusCheck[];
+}
+
+export interface StatusAlert {
+  key: string;
+  severity: 'critical' | 'warning' | 'resolved';
+  title: string;
+  detail?: string;
+  at: string;
+  delivery: 'sent' | 'deduped' | 'disabled' | 'failed';
+}
+
+export interface OpsStatusResponse {
+  version: string;
+  startedAt: string;
+  monitor: { intervalMs: number; report: StatusReport | null };
+  alerting: { webhookConfigured: boolean; dedupeWindowMinutes: number };
+  alerts: StatusAlert[];
 }

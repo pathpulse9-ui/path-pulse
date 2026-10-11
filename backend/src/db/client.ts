@@ -43,6 +43,7 @@ alter table payout_batches add column if not exists status text;
 alter table payout_batches add column if not exists total_amount text;
 alter table payout_batches add column if not exists receipts jsonb;
 alter table payout_batches add column if not exists updated_at timestamptz;
+alter table payout_batches add column if not exists created_by text;
 
 create table if not exists group_payout_batches (
   id text primary key,
@@ -104,6 +105,14 @@ create table if not exists settlement_batches (
   payout_batch_id text,
   driver_payouts jsonb not null default '[]'::jsonb
 );
+
+alter table settlement_batches add column if not exists created_by text;
+alter table settlement_batches add column if not exists deposit_tx_hash text;
+alter table settlement_batches add column if not exists deposit_from text;
+alter table settlement_batches add column if not exists deposit_amount text;
+alter table settlement_batches add column if not exists deposit_at timestamptz;
+create index if not exists settlement_batches_deposit_idx on settlement_batches (deposit_tx_hash);
+alter table group_payout_batches add column if not exists created_by text;
 
 create index if not exists settlement_batches_created_at_idx on settlement_batches (created_at desc);
 create index if not exists settlement_batches_network_idx on settlement_batches (network);

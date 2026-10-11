@@ -1,5 +1,5 @@
 import { KMSClient, GetPublicKeyCommand, SignCommand, DecryptCommand } from '@aws-sdk/client-kms';
-import { StrKey, type Transaction } from '@stellar/stellar-sdk';
+import { StrKey, type FeeBumpTransaction, type Transaction } from '@stellar/stellar-sdk';
 import type { Signer } from './signing.js';
 
 const SPKI_ED25519_LENGTH = 44;
@@ -75,7 +75,7 @@ export class AwsKmsSigner implements Signer {
     return new AwsKmsSigner(keyId, kms, addressFromSpki(await kms.getPublicKey(keyId)));
   }
 
-  async sign(tx: Transaction): Promise<Transaction> {
+  async sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T> {
     const signature = await this.kms.sign(this.keyId, tx.hash());
     tx.addSignature(this.publicKey, Buffer.from(signature).toString('base64'));
     return tx;

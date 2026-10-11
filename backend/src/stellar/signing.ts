@@ -1,4 +1,4 @@
-import { Keypair, Transaction } from '@stellar/stellar-sdk';
+import { Keypair, type FeeBumpTransaction, type Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 
 /**
@@ -11,7 +11,7 @@ import { env } from '../config/env.js';
 export interface Signer {
   /** Public key this signer can sign for. */
   readonly publicKey: string;
-  sign(tx: Transaction): Promise<Transaction>;
+  sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T>;
 }
 
 /** Dev-tier signer: holds a testnet keypair in memory. NEVER for mainnet. */
@@ -29,7 +29,22 @@ export class DevSigner implements Signer {
     this.publicKey = keypair.publicKey();
   }
 
-  async sign(tx: Transaction): Promise<Transaction> {
+  async sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T> {
+    tx.sign(this.keypair);
+    return tx;
+  }
+}
+
+export class CustodialSigner implements Signer {
+  private readonly keypair: Keypair;
+  readonly publicKey: string;
+
+  constructor(keypair: Keypair) {
+    this.keypair = keypair;
+    this.publicKey = keypair.publicKey();
+  }
+
+  async sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T> {
     tx.sign(this.keypair);
     return tx;
   }

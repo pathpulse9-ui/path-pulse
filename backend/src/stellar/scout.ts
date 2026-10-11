@@ -11,8 +11,9 @@ import {
 } from '@stellar/stellar-sdk';
 import { SCOUT_MULTIPLIER, type ScoutTier, type ScoutAssignment, type ScoutRevocation } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
-import { horizon, fundWithFriendbot, accountExists } from './network.js';
-import { provisionManagedWallet, getManagedWallet, getManagedSigner } from './managed.js';
+import { horizon, fundWithFriendbot, accountExists, submitToHorizon } from './network.js';
+import { provisionManagedWallet, getManagedWallet, getManagedSigner, getReserveSponsor } from './managed.js';
+import { addSponsoredTrustline } from './sponsorship.js';
 import { resolveScore } from '../services/pulsegen.js';
 import { logger } from '../config/logger.js';
 import { recordAssignment } from '../services/scoreStore.js';
@@ -50,7 +51,7 @@ export async function ensureIssuer(): Promise<string> {
       .setTimeout(120)
       .build();
     await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(tx);
-    await horizon.submitTransaction(tx);
+    await submitToHorizon(tx, 'SCOUT issuer flags');
     logger.info({ issuer, flags: AUTH_FLAGS }, 'SCOUT issuer flags set');
   }
   issuerAddress = issuer;
@@ -131,13 +132,15 @@ export async function assignTierForDriver(driverId: string): Promise<ScoutAssign
   const hasTrustline = (driverAcct.balances as CreditBalance[]).some(
     (b) => b.asset_code === TIER_CODE[tier] && b.asset_issuer === issuer,
   );
-  if (!hasTrustline) {
+  if (!hasTrustline && env.accountFunding === 'sponsor') {
+    await addSponsoredTrustline(await getReserveSponsor(), await getManagedSigner(driverId), asset);
+  } else if (!hasTrustline) {
     const trustTx = new TransactionBuilder(driverAcct, { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
       .addOperation(Operation.changeTrust({ asset }))
       .setTimeout(120)
       .build();
     await (await getManagedSigner(driverId)).sign(trustTx);
-    await horizon.submitTransaction(trustTx);
+    await submitToHorizon(trustTx, 'SCOUT driver trustline');
   }
 
   const issuerAcct = await horizon.loadAccount(issuer);
@@ -147,7 +150,7 @@ export async function assignTierForDriver(driverId: string): Promise<ScoutAssign
     .setTimeout(120)
     .build();
   await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(grantTx);
-  const res = await horizon.submitTransaction(grantTx);
+  const res = await submitToHorizon(grantTx, 'SCOUT badge grant');
 
   logger.info(
     { driverId, address, tier, score: validation.score, source: validation.source, txHash: res.hash },
@@ -219,7 +222,7 @@ export async function revokeTier(address: string): Promise<ScoutRevocation> {
   const tx = builder.setTimeout(120).build();
 
   await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(tx);
-  const res = await horizon.submitTransaction(tx);
+  const res = await submitToHorizon(tx, 'SCOUT badge revocation');
   logger.info({ address, tier, amount }, 'SCOUT tier revoked');
 
   return {
