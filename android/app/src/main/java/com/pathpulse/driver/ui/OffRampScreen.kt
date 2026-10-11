@@ -5,43 +5,32 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.pathpulse.driver.network.CarretBank
-import com.pathpulse.driver.network.CarretBankRegistrationInput
 import com.pathpulse.driver.network.CarretLimits
-import com.pathpulse.driver.network.CarretResumeResponse
 import com.pathpulse.driver.network.CarretWalletBalance
 import com.pathpulse.driver.network.DataRepository
 import com.pathpulse.driver.network.OffRampSession
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import com.pathpulse.driver.ui.theme.PpMint26
 import com.pathpulse.driver.ui.theme.PpMintInk
 import com.pathpulse.driver.ui.theme.PpRed100
@@ -74,24 +63,28 @@ fun OffRampScreen(
 ) {
     // PAT-80: Carret daily-limit chip.
     var limits by remember { mutableStateOf<CarretLimits?>(null) }
-    var resume by remember { mutableStateOf<CarretResumeResponse?>(null) }
+    var kycStatus by remember { mutableStateOf<String?>(null) }
     var banks by remember { mutableStateOf<List<CarretBank>?>(null) }
     var wallets by remember { mutableStateOf<List<CarretWalletBalance>?>(null) }
-    var showRegisterBank by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    var bankSheetOpen by remember { mutableStateOf(false) }
+    var withdrawSheetOpen by remember { mutableStateOf(false) }
+    var reloadKey by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reloadKey) {
         limits = runCatching { dataRepository.carretLimits() }.getOrNull()
-        resume = runCatching { dataRepository.resumeCarretKyc() }.getOrNull()
-        if (resume?.kycStatus == "verified") {
-            banks   = runCatching { dataRepository.listCarretBanks() }.getOrNull()
+        kycStatus = runCatching { dataRepository.resumeCarretKyc() }.getOrNull()?.kycStatus
+        if (kycStatus == "verified") {
+            banks   = runCatching { dataRepository.carretBanks() }.getOrDefault(emptyList())
             wallets = runCatching { dataRepository.carretWallets() }.getOrNull()
+        } else {
+            banks = null
+            wallets = null
         }
     }
 
-    val kycVerified = resume?.kycStatus == "verified"
-    val hasVerifiedBank = banks?.any { it.status.equals("verified", true) } == true
-    val hasPendingBank  = banks?.any { it.status.equals("pending",  true) } == true
+    val kycVerified = kycStatus == "verified"
+    val verifiedBank = banks?.firstOrNull { it.isVerified }
+    val hasPendingBank = banks?.any { it.status.equals("pending", true) } == true
     val usdc = wallets?.firstOrNull { it.asset.uppercase() == "USDC" }
     val usdcAvailable = (usdc?.available ?: usdc?.balance)?.toDoubleOrNull()
 
@@ -102,7 +95,14 @@ fun OffRampScreen(
             .padding(bottom = PpSpace.xxl),
         verticalArrangement = Arrangement.spacedBy(PpSpace.md),
     ) {
-        PpTabHeader(title = "Off-ramp", loading = loading, onRefresh = onRefresh)
+        PpTabHeader(
+            title = "Off-ramp",
+            loading = loading,
+            onRefresh = {
+                reloadKey++
+                onRefresh()
+            },
+        )
 
         if (error != null) {
             PpCard {
@@ -110,62 +110,49 @@ fun OffRampScreen(
             }
         }
 
-        if (!kycVerified) {
-            // PAT-79: KYC entry banner.
-            PpCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Verify your identity", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "A quick one-time check before your first withdrawal.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = PpBlack70,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                    }
-                    com.pathpulse.driver.ui.components.PpPrimaryButton(
-                        text = "Start",
-                        onClick = onOpenKyc,
-                        fillWidth = false,
-                        modifier = Modifier.padding(start = PpSpace.md),
+        when {
+            !kycVerified -> ActionBanner(
+                title = "Verify your identity",
+                subtitle = "A quick one-time check before your first withdrawal.",
+                action = if (kycStatus == "rejected" || kycStatus == "re_kyc") "Retry" else "Start",
+                enabled = kycStatus != "manual_review",
+                onAction = onOpenKyc,
+            )
+            verifiedBank != null -> ActionBanner(
+                title = "You're verified",
+                subtitle = "${verifiedBank.bank_name} · ${verifiedBank.bank_ifsc} · ${verifiedBank.maskedAccount}",
+                action = "New withdrawal",
+                onAction = { withdrawSheetOpen = true },
+            )
+            banks?.isEmpty() == true -> ActionBanner(
+                title = "Add your bank",
+                subtitle = "INR from your withdrawals is paid to this account.",
+                action = "Add bank",
+                onAction = { bankSheetOpen = true },
+            )
+            banks != null -> ActionBanner(
+                title = "Bank pending verification",
+                subtitle = "Carret is running a ₹1 penny-drop. Usually clears within a minute.",
+                action = "Check again",
+                onAction = { reloadKey++ },
+            )
+        }
+
+        // Balance chip once the trading wallet has a USDC entry.
+        usdcAvailable?.let { bal ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .clip(PpPillShape)
+                        .background(PpMint26)
+                        .padding(horizontal = PpSpace.md, vertical = 4.dp),
+                ) {
+                    Text(
+                        "%.2f USDC available".format(bal),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PpMintInk,
                     )
                 }
-            }
-        } else {
-            // Balance chip: "9.00 USDC available".
-            usdcAvailable?.let { bal ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .clip(PpPillShape)
-                            .background(PpMint26)
-                            .padding(horizontal = PpSpace.md, vertical = 4.dp),
-                    ) {
-                        Text(
-                            "%.2f USDC available".format(bal),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = PpMintInk,
-                        )
-                    }
-                    hasVerifiedBank.takeIf { it }?.let {
-                        banks?.firstOrNull { b -> b.status.equals("verified", true) }?.let { b ->
-                            Text(
-                                "→ ${b.bank_name} ••${b.last4}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = PpBlack70,
-                                modifier = Modifier.padding(start = PpSpace.sm),
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Bank card: empty → CTA; pending → status; verified → list handled below the chip.
-            when {
-                banks == null -> Unit
-                banks!!.isEmpty() -> BankCta(onAdd = { showRegisterBank = true })
-                !hasVerifiedBank && hasPendingBank -> PendingBankBanner()
-                else -> BanksList(banks = banks!!, onAdd = { showRegisterBank = true })
             }
         }
 
@@ -202,7 +189,11 @@ fun OffRampScreen(
             if (sessions.isEmpty() && !loading) {
                 PpEmptyState(
                     title = "No withdrawals yet",
-                    message = "Your withdrawals will appear here.",
+                    message = when {
+                        !kycVerified -> "Verify your identity to start withdrawing."
+                        verifiedBank == null -> "Add a verified bank to start withdrawing."
+                        else -> "Tap New withdrawal to send your first payout."
+                    },
                 )
             } else {
                 Column(modifier = Modifier.padding(top = PpSpace.sm)) {
@@ -220,30 +211,61 @@ fun OffRampScreen(
         if (!kycVerified) return@LaunchedEffect
         while (hasPendingBank) {
             delay(4_000)
-            runCatching { dataRepository.listCarretBanks() }.onSuccess { banks = it }
+            runCatching { dataRepository.carretBanks() }.onSuccess { banks = it }
         }
     }
 
-    if (showRegisterBank) {
-        var submitting by remember { mutableStateOf(false) }
-        var dialogError by remember { mutableStateOf<String?>(null) }
-        BankRegistrationDialog(
-            onDismiss = { if (!submitting) showRegisterBank = false },
-            submitting = submitting,
-            error = dialogError,
-            onSubmit = { input ->
-                submitting = true; dialogError = null
-                scope.launch {
-                    runCatching { dataRepository.registerCarretBank(input) }
-                        .onSuccess { bank ->
-                            banks = (banks ?: emptyList()).filter { it.id != bank.id } + bank
-                            showRegisterBank = false
-                        }
-                        .onFailure { dialogError = it.message ?: "Couldn't register bank" }
-                    submitting = false
-                }
+    if (bankSheetOpen) {
+        BankRegistrationSheet(
+            dataRepository = dataRepository,
+            onDismiss = {
+                bankSheetOpen = false
+                reloadKey++
+            },
+            onRegistered = { bank -> banks = banks.orEmpty() + bank },
+        )
+    }
+
+    if (withdrawSheetOpen) {
+        WithdrawSheet(
+            dataRepository = dataRepository,
+            limits = limits,
+            onDismiss = {
+                withdrawSheetOpen = false
+                reloadKey++
+                onRefresh()
             },
         )
+    }
+}
+
+@Composable
+private fun ActionBanner(
+    title: String,
+    subtitle: String,
+    action: String,
+    onAction: () -> Unit,
+    enabled: Boolean = true,
+) {
+    PpCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PpBlack70,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            com.pathpulse.driver.ui.components.PpPrimaryButton(
+                text = action,
+                onClick = onAction,
+                enabled = enabled,
+                fillWidth = false,
+                modifier = Modifier.padding(start = PpSpace.md),
+            )
+        }
     }
 }
 
@@ -314,170 +336,5 @@ private fun statusColor(status: String): Color {
         "fail" in s || "cancel" in s || "reject" in s -> PpRed500
         else -> PpAccentAmber
     }
-}
-
-@Composable
-private fun BankCta(onAdd: () -> Unit) {
-    PpCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Add your bank", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Carret runs a ₹1 penny-drop to verify ownership. Under a minute.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = PpBlack70,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-            com.pathpulse.driver.ui.components.PpPrimaryButton(
-                text = "Add",
-                onClick = onAdd,
-                fillWidth = false,
-                modifier = Modifier.padding(start = PpSpace.md),
-            )
-        }
-    }
-}
-
-@Composable
-private fun PendingBankBanner() {
-    PpCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(PpAccentAmber),
-            )
-            Spacer(modifier = Modifier.padding(start = PpSpace.sm))
-            Text(
-                "Verifying your bank with a ₹1 penny-drop — usually under a minute.",
-                style = MaterialTheme.typography.bodySmall,
-                color = PpBlack70,
-            )
-        }
-    }
-}
-
-@Composable
-private fun BanksList(banks: List<CarretBank>, onAdd: () -> Unit) {
-    PpCard {
-        PpCardHeader(
-            title = "Payout bank",
-            subtitle = if (banks.size == 1) "One bank on file." else "${banks.size} banks on file.",
-        )
-        Column(modifier = Modifier.padding(top = PpSpace.sm)) {
-            banks.forEachIndexed { i, b ->
-                if (i > 0) PpDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = PpSpace.sm),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "${b.bank_name} ••${b.last4}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            b.bank_ifsc,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = PpBlack40,
-                        )
-                    }
-                    StatusPill(status = b.status)
-                }
-            }
-            TextButton(onClick = onAdd) {
-                Text("Add another bank", style = MaterialTheme.typography.labelMedium)
-            }
-        }
-    }
-}
-
-@Composable
-private fun BankRegistrationDialog(
-    onDismiss: () -> Unit,
-    onSubmit: (CarretBankRegistrationInput) -> Unit,
-    submitting: Boolean,
-    error: String?,
-) {
-    var holder by remember { mutableStateOf("") }
-    var bankName by remember { mutableStateOf("") }
-    var ifsc by remember { mutableStateOf("") }
-    var accountNo by remember { mutableStateOf("") }
-    var confirmNo by remember { mutableStateOf("") }
-
-    val ifscValid = Regex("^[A-Z]{4}0[A-Z0-9]{6}$").matches(ifsc)
-    val accountValid = Regex("^[0-9]{9,18}$").matches(accountNo)
-    val match = accountNo == confirmNo && accountNo.isNotEmpty()
-    val canSubmit = !submitting && ifscValid && accountValid && match &&
-        holder.isNotBlank() && bankName.isNotBlank()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Register payout bank") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(PpSpace.sm)) {
-                Text(
-                    "Carret runs a ₹1 penny-drop to prove you own the account.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = PpBlack70,
-                )
-                if (error != null) {
-                    Text(error, style = MaterialTheme.typography.bodySmall, color = PpRed600)
-                }
-                OutlinedTextField(
-                    value = holder, onValueChange = { holder = it },
-                    label = { Text("Account holder name") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = bankName, onValueChange = { bankName = it },
-                    label = { Text("Bank name") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = ifsc,
-                    onValueChange = { v -> ifsc = v.uppercase().filter { it.isLetterOrDigit() } },
-                    label = { Text("IFSC (e.g. HDFC0001234)") },
-                    singleLine = true,
-                    isError = ifsc.isNotEmpty() && !ifscValid,
-                )
-                OutlinedTextField(
-                    value = accountNo,
-                    onValueChange = { v -> accountNo = v.filter { it.isDigit() } },
-                    label = { Text("Account number (9-18 digits)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = accountNo.isNotEmpty() && !accountValid,
-                )
-                OutlinedTextField(
-                    value = confirmNo,
-                    onValueChange = { v -> confirmNo = v.filter { it.isDigit() } },
-                    label = { Text("Re-enter account number") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = confirmNo.isNotEmpty() && !match,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = canSubmit,
-                onClick = {
-                    onSubmit(
-                        CarretBankRegistrationInput(
-                            bank_account_no  = accountNo,
-                            bank_ifsc        = ifsc,
-                            bank_account_name = holder.trim(),
-                            bank_name        = bankName.trim(),
-                        )
-                    )
-                },
-            ) { Text(if (submitting) "Verifying…" else "Register") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        shape = RoundedCornerShape(20.dp),
-    )
 }
 

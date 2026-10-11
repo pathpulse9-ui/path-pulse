@@ -1,6 +1,13 @@
 package com.pathpulse.driver
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.pathpulse.driver.push.PushRegistration
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -59,6 +66,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        PushRegistration.init(applicationContext)
         setContent {
             PathPulseTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = PpBackground) {
@@ -139,8 +147,23 @@ fun AppRoot() {
 
     val current = user
 
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        scope.launch { PushRegistration.register(dataRepository) }
+    }
+
     LaunchedEffect(current?.userId) {
-        if (current != null) loadData()
+        if (current == null) return@LaunchedEffect
+        if (PushRegistration.isConfigured) {
+            val needsPrompt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            if (needsPrompt) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                scope.launch { PushRegistration.register(dataRepository) }
+            }
+        }
+        loadData()
     }
 
     when {
@@ -213,6 +236,7 @@ fun AppRoot() {
                     onSignOut = {
                         profileOpen = false
                         scope.launch {
+                            PushRegistration.unregister(dataRepository)
                             runCatching { authRepository.logout() }
                             user = null
                             selectedTab = PpTab.Dashboard

@@ -3,78 +3,91 @@ import type { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
+import { getSessionFromRequest } from './session.js';
 
-/**
- * Idempotency-Key middleware (PAT-77).
- *
- * Wraps any money-moving POST. When a client sends `Idempotency-Key: <uuid>`:
- *   1. Compute a stable request hash from method + path + body
- *   2. Look up the key in `idempotency_keys`
- *      - Hit + same request_hash → return cached response, don't re-execute
- *      - Hit + different hash → 409 IdempotencyConflict (client replayed with
- *        different body under the same key — a bug on their side)
- *      - Miss → let the handler run; capture the response and store it
- *
- * Cache TTL is 24h (enforced by a scheduled sweep, not a per-row expiry).
- *
- * With DATABASE_URL unset (local dev) the middleware becomes a no-op — every
- * request runs uncached. Fine for dev; production always has a DB.
- */
-
-const TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_KEY_LENGTH = 255;
 
 function hashRequest(req: Request): string {
   const body = req.body ? JSON.stringify(req.body) : '';
   return createHash('sha256').update(`${req.method}\n${req.path}\n${body}`).digest('hex');
 }
 
+function reject(res: Response, status: number, error: string, message: string): void {
+  res.status(status).json({ error, message });
+}
+
 export function idempotency() {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const key = (req.headers['idempotency-key'] as string | undefined)?.trim();
-    if (!key) return next();
+    if (!key) {
+      reject(res, 400, 'IdempotencyKeyRequired', 'This endpoint moves value and requires an Idempotency-Key header.');
+      return;
+    }
+    if (key.length > MAX_KEY_LENGTH) {
+      reject(res, 400, 'IdempotencyKeyInvalid', `Idempotency-Key must be at most ${MAX_KEY_LENGTH} characters.`);
+      return;
+    }
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      reject(res, 401, 'Unauthorized', 'session required');
+      return;
+    }
     if (!env.databaseUrl) return next();
 
+    const userId = session.userId;
     const requestHash = hashRequest(req);
 
     try {
-      const hit = await db().query(
-        'select request_hash, status_code, response_json from idempotency_keys where key = $1',
-        [key],
+      const claimed = await db().query(
+        `insert into idempotency_requests (user_id, key, request_hash)
+         values ($1, $2, $3)
+         on conflict (user_id, key) do nothing
+         returning key`,
+        [userId, key, requestHash],
       );
-      if (hit.rows.length > 0) {
-        const row = hit.rows[0];
-        if (row.request_hash !== requestHash) {
-          res.status(409).json({
-            error: 'IdempotencyConflict',
-            message: 'This idempotency key was previously used with a different request body.',
-          });
+
+      if (claimed.rowCount === 0) {
+        const existing = await db().query(
+          `select request_hash, status_code, response_json, completed_at
+           from idempotency_requests where user_id = $1 and key = $2`,
+          [userId, key],
+        );
+        const row = existing.rows[0];
+        if (!row) {
+          reject(res, 409, 'IdempotencyInProgress', 'A request with this Idempotency-Key is being processed. Retry shortly.');
           return;
         }
+        if (row.request_hash !== requestHash) {
+          reject(res, 409, 'IdempotencyConflict', 'This Idempotency-Key was already used with a different request.');
+          return;
+        }
+        if (!row.completed_at) {
+          reject(res, 409, 'IdempotencyInProgress', 'A request with this Idempotency-Key is being processed. Retry shortly.');
+          return;
+        }
+        res.setHeader('Idempotent-Replayed', 'true');
         res.status(row.status_code).json(row.response_json);
         return;
       }
     } catch (e) {
-      logger.warn({ err: e, key }, 'idempotency lookup failed, proceeding uncached');
-      return next();
+      logger.error({ err: e, userId, key }, 'idempotency claim failed');
+      reject(res, 503, 'IdempotencyUnavailable', 'Could not reserve the Idempotency-Key. Nothing was executed; retry with the same key.');
+      return;
     }
 
-    // Miss — capture the outgoing response.
     const origJson = res.json.bind(res);
     let captured = false;
     res.json = ((body: unknown) => {
-      if (captured) return res;
+      if (captured) return origJson(body);
       captured = true;
-      const status = res.statusCode || 200;
-      // Fire-and-forget insert. Best-effort caching — if this fails we still
-      // send the response, we just won't dedupe a replay.
       db()
         .query(
-          `insert into idempotency_keys (key, request_hash, status_code, response_json)
-           values ($1, $2, $3, $4)
-           on conflict (key) do nothing`,
-          [key, requestHash, status, JSON.stringify(body)],
+          `update idempotency_requests
+           set status_code = $3, response_json = $4, completed_at = now()
+           where user_id = $1 and key = $2`,
+          [userId, key, res.statusCode || 200, JSON.stringify(body ?? null)],
         )
-        .catch((e) => logger.warn({ err: e, key }, 'idempotency insert failed'));
+        .catch((e) => logger.error({ err: e, userId, key }, 'idempotency result store failed'));
       return origJson(body);
     }) as typeof res.json;
 
@@ -82,10 +95,7 @@ export function idempotency() {
   };
 }
 
-/** Sweep expired keys — called from a lightweight interval on backend boot. */
 export async function sweepExpiredKeys(): Promise<void> {
   if (!env.databaseUrl) return;
-  await db().query(
-    "delete from idempotency_keys where created_at < now() - interval '24 hours'",
-  );
+  await db().query("delete from idempotency_requests where created_at < now() - interval '24 hours'");
 }

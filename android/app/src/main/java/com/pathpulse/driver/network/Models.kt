@@ -293,31 +293,62 @@ data class DistributionAccount(
     val network: String,
 )
 
+// ── Off-ramp live quote + session (upstream D7) ────────────────────────
+
+@Serializable
+data class OffRampQuoteFee(
+    val label: String,
+    val amount: String,
+    val currency: String,
+)
+
+@Serializable
+data class OffRampQuote(
+    val provider: String,
+    val live: Boolean,
+    val asset: String,
+    val fiatCurrency: String,
+    val amount: String,
+    val fiatAmount: String,
+    val rate: String,
+    val fees: List<OffRampQuoteFee> = emptyList(),
+)
+
+@Serializable
+data class CreateOffRampRequest(
+    val amount: String,
+)
+
 // ── Carret banks + wallet (production off-ramp) ────────────────────────
 
 @Serializable
 data class CarretBank(
     val id: Int,
-    val account_id: Int,
-    val status: String,                // "verified" | "pending" | "failed"
+    val account_id: Int? = null,          // from local — Carret attaches it on list
+    val status: String,                   // "verified" | "pending" | "failed"
     val bank_account_no: String,
     val bank_ifsc: String,
     val bank_account_name: String,
     val bank_name: String,
 ) {
+    val isVerified: Boolean get() = status == "verified"
     val last4: String get() = bank_account_no.takeLast(4)
+    val maskedAccount: String get() = "••$last4"
 }
 
+// Upstream call sites use CarretBankList — keep that; alias our name for compat.
 @Serializable
-data class CarretBanksResponse(val items: List<CarretBank> = emptyList())
+data class CarretBankList(val items: List<CarretBank> = emptyList())
+typealias CarretBanksResponse = CarretBankList
 
 @Serializable
-data class CarretBankRegistrationInput(
+data class RegisterCarretBankRequest(
     val bank_account_no: String,
     val bank_ifsc: String,
     val bank_account_name: String,
     val bank_name: String,
 )
+typealias CarretBankRegistrationInput = RegisterCarretBankRequest
 
 @Serializable
 data class CarretWalletBalance(
@@ -329,3 +360,37 @@ data class CarretWalletBalance(
 
 @Serializable
 data class CarretWalletsResponse(val items: List<CarretWalletBalance> = emptyList())
+
+// ── Rewards (upstream) ─────────────────────────────────────────────────
+
+@Serializable
+data class RewardBalance(
+    val asset: AssetRef,
+    val balance: String,
+)
+
+@Serializable
+data class RewardPayout(
+    val id: String,
+    val cursor: String,
+    val createdAt: String,
+    val amount: String,
+    val asset: AssetRef,
+    val from: String,
+    val txHash: String,
+    val explorerUrl: String,
+)
+
+@Serializable
+data class RewardsResponse(
+    val address: String? = null,
+    val balances: List<RewardBalance> = emptyList(),
+    val items: List<RewardPayout> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+@Serializable
+data class RegisterPushDeviceRequest(
+    val token: String,
+    val platform: String = "android",
+)

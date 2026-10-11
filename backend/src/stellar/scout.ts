@@ -11,9 +11,12 @@ import {
 } from '@stellar/stellar-sdk';
 import { SCOUT_MULTIPLIER, type ScoutTier, type ScoutAssignment, type ScoutRevocation } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
-import { horizon, fundWithFriendbot, accountExists } from './network.js';
-import { provisionManagedWallet, getManagedSigner } from './managed.js';
+import { horizon, fundWithFriendbot, accountExists, submitToHorizon } from './network.js';
+import { provisionManagedWallet, getManagedWallet, getManagedSigner, getReserveSponsor } from './managed.js';
+import { addSponsoredTrustline } from './sponsorship.js';
+import { resolveScore } from '../services/pulsegen.js';
 import { logger } from '../config/logger.js';
+import { recordAssignment } from '../services/scoreStore.js';
 
 /**
  * SCOUT reputation assets (D6).
@@ -22,8 +25,9 @@ import { logger } from '../config/logger.js';
  * AUTH_REQUIRED + AUTH_REVOCABLE + AUTH_CLAWBACK_ENABLED — so the issuer controls who may
  * hold a badge and can revoke/claw it back when a driver's reputation changes. A driver
  * holds exactly one SCOUTn badge; the settlement engine reads it on-chain for the multiplier
- * (1.0 / 1.2 / 1.5x). Tier is assigned from PulseGen validation scores (synthetic until the
- * live feed lands). Testnet only; the issuer is a dev-tier account (mainnet uses a governed key).
+ * (1.0 / 1.2 / 1.5x). Tier is assigned from a driver's PulseGen validation score, resolved
+ * through the score feed. Testnet only; the issuer is a dev-tier account (mainnet uses a
+ * governed key).
  */
 
 const TIER_CODE: Record<ScoutTier, string> = { 1: 'SCOUT1', 2: 'SCOUT2', 3: 'SCOUT3' };
@@ -47,14 +51,14 @@ export async function ensureIssuer(): Promise<string> {
       .setTimeout(120)
       .build();
     await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(tx);
-    await horizon.submitTransaction(tx);
+    await submitToHorizon(tx, 'SCOUT issuer flags');
     logger.info({ issuer, flags: AUTH_FLAGS }, 'SCOUT issuer flags set');
   }
   issuerAddress = issuer;
   return issuer;
 }
 
-/** PulseGen validation score (0..1) → SCOUT tier. Synthetic until the live feed lands. */
+/** PulseGen validation score (0..1) → SCOUT tier. Thresholds are fixed and published. */
 export function scoreToTier(score: number): ScoutTier {
   if (score >= 0.8) return 3;
   if (score >= 0.5) return 2;
@@ -91,43 +95,92 @@ export async function getOnchainTier(address: string): Promise<{ tier: ScoutTier
 }
 
 /**
- * Demo assignment: provision a backend-controlled driver, then grant the tier its score maps to.
- * Flow: driver `changeTrust` (driver-signed) → issuer `setTrustLineFlags authorize` + `payment 1 SCOUTn`
- * (issuer-signed). The driver address can then be paid by the settlement engine.
+ * Assign the tier an existing driver's validation score maps to.
+ *
+ * The score is read from the active score provider for that driver id — it is
+ * never supplied by the caller, so an operator cannot hand-pick a tier. The
+ * driver must already exist as a PathPulse managed wallet; the badge is granted
+ * to the account they are already paid into, not to a fresh keypair.
+ *
+ * Flow: driver `changeTrust` (managed-signed, skipped when the trustline is
+ * already open) → issuer `setTrustLineFlags authorize` + `payment 1 SCOUTn`
+ * (one issuer-signed tx). A badge from a lower tier is revoked first, so a
+ * driver never holds two.
  */
-export async function assignSampleTier(score: number): Promise<ScoutAssignment> {
+export async function assignTierForDriver(driverId: string): Promise<ScoutAssignment> {
+  const wallet = await getManagedWallet(driverId);
+  if (!wallet) {
+    throw new Error(
+      `driver ${driverId} has no managed wallet — assign a tier only to a driver that already exists`,
+    );
+  }
+  const address = wallet.address;
+
+  const validation = await resolveScore(driverId);
+  const tier = scoreToTier(validation.score);
+
   const issuer = await ensureIssuer();
-  const tier = scoreToTier(score);
   const asset = assetFor(issuer, tier);
 
-  const driver = Keypair.random();
-  await fundWithFriendbot(driver.publicKey());
+  const existing = await getOnchainTier(address);
+  if (existing.tier === tier) {
+    throw new Error(`driver ${driverId} already holds ${TIER_CODE[tier]}`);
+  }
+  if (existing.tier) await revokeTier(address);
 
-  // 1. Driver establishes the trustline (their signature).
-  const driverAcct = await horizon.loadAccount(driver.publicKey());
-  const trustTx = new TransactionBuilder(driverAcct, { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
-    .addOperation(Operation.changeTrust({ asset }))
-    .setTimeout(120)
-    .build();
-  trustTx.sign(driver);
-  await horizon.submitTransaction(trustTx);
+  const driverAcct = await horizon.loadAccount(address);
+  const hasTrustline = (driverAcct.balances as CreditBalance[]).some(
+    (b) => b.asset_code === TIER_CODE[tier] && b.asset_issuer === issuer,
+  );
+  if (!hasTrustline && env.accountFunding === 'sponsor') {
+    await addSponsoredTrustline(await getReserveSponsor(), await getManagedSigner(driverId), asset);
+  } else if (!hasTrustline) {
+    const trustTx = new TransactionBuilder(driverAcct, { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
+      .addOperation(Operation.changeTrust({ asset }))
+      .setTimeout(120)
+      .build();
+    await (await getManagedSigner(driverId)).sign(trustTx);
+    await submitToHorizon(trustTx, 'SCOUT driver trustline');
+  }
 
-  // 2+3. Issuer authorizes the trustline and sends the badge (one issuer-signed tx).
   const issuerAcct = await horizon.loadAccount(issuer);
   const grantTx = new TransactionBuilder(issuerAcct, { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
-    .addOperation(Operation.setTrustLineFlags({ trustor: driver.publicKey(), asset, flags: { authorized: true } }))
-    .addOperation(Operation.payment({ destination: driver.publicKey(), asset, amount: '1' }))
+    .addOperation(Operation.setTrustLineFlags({ trustor: address, asset, flags: { authorized: true } }))
+    .addOperation(Operation.payment({ destination: address, asset, amount: '1' }))
     .setTimeout(120)
     .build();
   await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(grantTx);
-  const res = await horizon.submitTransaction(grantTx);
+  const res = await submitToHorizon(grantTx, 'SCOUT badge grant');
 
-  return {
-    userId: `scout-${driver.publicKey().slice(0, 8)}`,
-    address: driver.publicKey(),
+  logger.info(
+    { driverId, address, tier, score: validation.score, source: validation.source, txHash: res.hash },
+    'SCOUT tier assigned from validation score',
+  );
+
+  await recordAssignment({
+    driverId,
+    address,
     tier,
     multiplier: SCOUT_MULTIPLIER[tier],
-    score,
+    score: validation.score,
+    scoreSource: validation.source,
+    scoreImportId: validation.importId,
+    assetCode: TIER_CODE[tier],
+    issuer,
+    txHash: res.hash,
+    horizonUrl: horizonTxUrl(res.hash),
+    createdAt: new Date().toISOString(),
+  });
+
+  return {
+    userId: driverId,
+    address,
+    tier,
+    multiplier: SCOUT_MULTIPLIER[tier],
+    score: validation.score,
+    scoredAt: validation.scoredAt,
+    scoreSource: validation.source,
+    scoreImportId: validation.importId ?? undefined,
     issuer,
     assetCode: TIER_CODE[tier],
     txHash: res.hash,
@@ -169,7 +222,7 @@ export async function revokeTier(address: string): Promise<ScoutRevocation> {
   const tx = builder.setTimeout(120).build();
 
   await (await getManagedSigner(SCOUT_ISSUER_USER)).sign(tx);
-  const res = await horizon.submitTransaction(tx);
+  const res = await submitToHorizon(tx, 'SCOUT badge revocation');
   logger.info({ address, tier, amount }, 'SCOUT tier revoked');
 
   return {

@@ -14,6 +14,8 @@ struct DashboardView: View {
     @State private var loading = false
     @State private var errorMessage: String? = nil
     @State private var selectedDay: Int? = nil
+    @State private var rewards: RewardsResponse? = nil
+    @State private var rewardsHistoryOpen = false
 
     private let data = DataRepository()
 
@@ -28,6 +30,9 @@ struct DashboardView: View {
                             .foregroundStyle(PathPulseColor.red600)
                     }
                 }
+                if let rewards {
+                    RewardsCard(rewards: rewards, onSeeAll: { rewardsHistoryOpen = true })
+                }
                 heroCard
                 statTiles
                 splitCompositionCard
@@ -39,6 +44,7 @@ struct DashboardView: View {
         .background(PathPulseColor.background)
         .task { await refresh() }
         .refreshable { await refresh() }
+        .sheet(isPresented: $rewardsHistoryOpen) { RewardsHistorySheet(data: data) }
     }
 
     // MARK: - Refresh
@@ -54,6 +60,7 @@ struct DashboardView: View {
             let (bp, sp) = try await (b, s)
             batches = bp.items
             sessions = sp.items
+            rewards = try? await data.rewards(limit: 10)
         } catch {
             errorMessage = UserErrors.message(error)
         }

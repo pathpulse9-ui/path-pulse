@@ -43,6 +43,7 @@ alter table payout_batches add column if not exists status text;
 alter table payout_batches add column if not exists total_amount text;
 alter table payout_batches add column if not exists receipts jsonb;
 alter table payout_batches add column if not exists updated_at timestamptz;
+alter table payout_batches add column if not exists created_by text;
 
 create table if not exists group_payout_batches (
   id text primary key,
@@ -105,12 +106,20 @@ create table if not exists settlement_batches (
   driver_payouts jsonb not null default '[]'::jsonb
 );
 
+alter table settlement_batches add column if not exists created_by text;
+alter table settlement_batches add column if not exists deposit_tx_hash text;
+alter table settlement_batches add column if not exists deposit_from text;
+alter table settlement_batches add column if not exists deposit_amount text;
+alter table settlement_batches add column if not exists deposit_at timestamptz;
+create index if not exists settlement_batches_deposit_idx on settlement_batches (deposit_tx_hash);
+alter table group_payout_batches add column if not exists created_by text;
+
 create index if not exists settlement_batches_created_at_idx on settlement_batches (created_at desc);
 create index if not exists settlement_batches_network_idx on settlement_batches (network);
 create index if not exists settlement_batches_asset_idx on settlement_batches (asset_code);
 
 -- PAT-75: per-driver Carret sub-account mapping. Replaces the shared audit
--- account 48559 with a one-to-one link between a PathPulse user (userId from
+-- account with a one-to-one link between a PathPulse user (userId from
 -- session) and their own Carret sub-account.
 create table if not exists carret_subaccounts (
   user_id text primary key,
@@ -147,6 +156,26 @@ create table if not exists idempotency_keys (
 );
 create index if not exists idempotency_keys_created_at_idx on idempotency_keys (created_at);
 
+create table if not exists idempotency_requests (
+  user_id text not null,
+  key text not null,
+  request_hash text not null,
+  status_code int,
+  response_json jsonb,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz,
+  primary key (user_id, key)
+);
+create index if not exists idempotency_requests_created_at_idx on idempotency_requests (created_at);
+
+create table if not exists push_devices (
+  token text primary key,
+  user_id text not null,
+  platform text not null,
+  updated_at timestamptz not null default now()
+);
+create index if not exists push_devices_user_idx on push_devices (user_id);
+
 -- PAT-80: per-Carret-sub-account daily usage counter. Carret caps every
 -- activity type at ₹30K/day per sub-account (deposit INR, withdraw INR,
 -- deposit crypto, withdraw crypto). We track usage in IST buckets so:
@@ -164,12 +193,7 @@ create table if not exists carret_daily_usage (
   primary key (carret_account_id, activity, ymd_ist)
 );
 
--- D4/T2: durable off-ramp sessions + a full append-only event log so the
--- reconciler can catch a missed webhook and heal state. Table names are
--- pp_-prefixed because an earlier fork rolled a different off_ramp_*
--- schema into prod; sidestepping it entirely instead of trying to
--- retrofit its constraints.
-create table if not exists pp_off_ramp_sessions (
+create table if not exists off_ramp_sessions (
   id text primary key,
   user_id text not null,
   provider text not null,
@@ -178,40 +202,92 @@ create table if not exists pp_off_ramp_sessions (
   amount text not null,
   asset_code text not null,
   asset_issuer text,
-  fiat_currency text,
+  fiat_currency text not null,
   fiat_amount_estimate text,
   settlement_batch_id text,
   interactive_url text,
   anchor_account text,
   merchant_transaction_id text,
+  stellar_tx_hash text,
   carret_order_id text,
   carret_quote_id text,
   carret_deposit_memo text,
-  network text,
-  tx_hash text,
-  raw jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create index if not exists pp_off_ramp_sessions_user_created_idx on pp_off_ramp_sessions (user_id, created_at desc);
-create index if not exists pp_off_ramp_sessions_status_idx on pp_off_ramp_sessions (status);
-create index if not exists pp_off_ramp_sessions_carret_order_idx on pp_off_ramp_sessions (carret_order_id);
-create index if not exists pp_off_ramp_sessions_batch_idx on pp_off_ramp_sessions (settlement_batch_id);
 
--- Append-only event log. Every state change carries its source
--- (placed on creation, webhook when Carret pings us, poll when
--- the getStatus call converged, reconciler when the orphan sweep
--- healed a missed webhook) and the raw upstream payload for audit.
-create table if not exists pp_off_ramp_status_events (
+create index if not exists off_ramp_sessions_user_idx on off_ramp_sessions (user_id, created_at desc);
+create index if not exists off_ramp_sessions_batch_idx on off_ramp_sessions (settlement_batch_id);
+create index if not exists off_ramp_sessions_order_idx on off_ramp_sessions (carret_order_id);
+create index if not exists off_ramp_sessions_status_idx on off_ramp_sessions (status, created_at);
+
+create table if not exists off_ramp_status_events (
   id bigserial primary key,
-  session_id text not null references pp_off_ramp_sessions(id) on delete cascade,
+  session_id text not null,
+  previous_status text,
+  status text not null,
   source text not null,
-  carret_status text,
-  mapped_status text,
-  payload jsonb,
-  received_at timestamptz not null default now()
+  detail jsonb,
+  created_at timestamptz not null default now()
 );
-create index if not exists pp_off_ramp_status_events_session_idx on pp_off_ramp_status_events (session_id, id);
+
+create index if not exists off_ramp_status_events_session_idx on off_ramp_status_events (session_id, id);
+
+-- D6 score feed: PulseGen validation results and their provenance.
+-- A score is only trustworthy if you can say where it came from, so every
+-- batch records its supplier, when it arrived, who imported it and a hash of
+-- the exact payload. Scores are append-only history; the newest row per
+-- driver is the current one.
+create table if not exists score_imports (
+  id text primary key,
+  supplier text not null,
+  source_ref text,
+  payload_sha256 text not null,
+  score_count int not null,
+  imported_by text not null,
+  received_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  notes text
+);
+
+create index if not exists score_imports_received_at_idx on score_imports (received_at desc);
+
+create table if not exists driver_scores (
+  id bigserial primary key,
+  driver_id text not null,
+  score numeric(9, 8) not null,
+  scored_at timestamptz not null,
+  source text not null,
+  import_id text references score_imports (id),
+  created_at timestamptz not null default now(),
+  constraint driver_scores_score_range check (score >= 0 and score <= 1)
+);
+
+create unique index if not exists driver_scores_unique_idx on driver_scores (driver_id, scored_at, source);
+create index if not exists driver_scores_latest_idx on driver_scores (driver_id, scored_at desc);
+
+-- D6 audit trail: which transaction gave a driver their badge, and the score
+-- that justified it. Without this the assignment tx exists only in the API
+-- response and is lost on reload, so "why does this driver earn 1.5x" has no
+-- durable answer.
+create table if not exists scout_assignments (
+  id bigserial primary key,
+  driver_id text not null,
+  address text not null,
+  tier int not null,
+  multiplier numeric(4, 2) not null,
+  score numeric(9, 8),
+  score_source text,
+  score_import_id text,
+  asset_code text not null,
+  issuer text not null,
+  tx_hash text not null,
+  horizon_url text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists scout_assignments_driver_idx on scout_assignments (driver_id, created_at desc);
+create index if not exists scout_assignments_created_idx on scout_assignments (created_at desc);
 `;
 
 export async function migrate(): Promise<void> {

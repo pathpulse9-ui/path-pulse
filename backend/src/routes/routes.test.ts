@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { closeDb } from '../db/client.js';
 import { env } from '../config/env.js';
 import { startTestApi, stopTestApi } from './testSupport.js';
@@ -41,6 +42,9 @@ async function opsCookie(): Promise<string> {
   return (res.headers.get('set-cookie') ?? '').split(';')[0];
 }
 const authed = (cookie: string) => ({ headers: { cookie } });
+const keyed = (cookie: string, key: string = randomUUID()) => ({
+  headers: { cookie, 'content-type': 'application/json', 'idempotency-key': key },
+});
 
 test('GET /health reports network and version', async () => {
   const res = await get('/health');
@@ -141,7 +145,7 @@ test('GET /v1/routing/treasury/plan describes the treasury holdings and settleme
 });
 
 test('POST /v1/settlement/batches rejects an empty body', async () => {
-  const res = await postJson('/v1/settlement/batches', {}, authed(await opsCookie()));
+  const res = await postJson('/v1/settlement/batches', {}, keyed(await opsCookie()));
   assert.equal(res.status, 400);
   assert.equal((await json(res)).error, 'ValidationError');
 });
@@ -150,7 +154,7 @@ test('POST /v1/settlement/batches rejects a malformed gross amount', async () =>
   const res = await postJson(
     '/v1/settlement/batches',
     { grossAmount: 'lots', drivers: [{ userId: 'd1', address: 'GABC', tier: 1 }] },
-    authed(await opsCookie()),
+    keyed(await opsCookie()),
   );
   assert.equal(res.status, 400);
 });
@@ -164,7 +168,7 @@ test('POST /v1/settlement/group-payouts rejects an invalid Stellar address', asy
   const res = await postJson(
     '/v1/settlement/group-payouts',
     { recipients: [{ name: 'Test', address: 'not-a-key', amount: '1.5' }] },
-    authed(await opsCookie()),
+    keyed(await opsCookie()),
   );
   assert.equal(res.status, 400);
 });
@@ -173,7 +177,7 @@ test('POST /v1/settlement/group-payouts rejects an empty recipient list', async 
   const res = await postJson(
     '/v1/settlement/group-payouts',
     { recipients: [] },
-    authed(await opsCookie()),
+    keyed(await opsCookie()),
   );
   assert.equal(res.status, 400);
 });
@@ -241,9 +245,56 @@ test('ops session round-trips and is accepted where a guest is refused', async (
   assert.match(me.user.userId, /^ops_/);
 
   // Reaches validation rather than the role gate — proves the gate let it past.
-  const res = await postJson('/v1/settlement/batches', {}, authed(cookie));
+  const res = await postJson('/v1/settlement/batches', {}, keyed(cookie));
   assert.equal(res.status, 400);
   assert.equal((await json(res)).error, 'ValidationError');
+});
+
+test('value-moving endpoints refuse a request with no Idempotency-Key', async () => {
+  const ops = await opsCookie();
+  const guest = await guestCookie();
+  const cases: [string, unknown, string][] = [
+    ['/v1/settlement/batches', { grossAmount: '1', drivers: [] }, ops],
+    ['/v1/settlement/group-payouts', { recipients: [] }, ops],
+    ['/v1/ops/payouts/batches', { settlementBatchId: 'stl_whatever' }, ops],
+    ['/v1/offramp/sessions', { amount: '10' }, guest],
+    ['/v1/routing/swap', { from: 'XLM', to: 'USDC', amount: '10' }, guest],
+  ];
+  for (const [path, body, cookie] of cases) {
+    const res = await postJson(path, body, authed(cookie));
+    assert.equal(res.status, 400, `${path} should be 400 without a key`);
+    assert.equal((await json(res)).error, 'IdempotencyKeyRequired', `${path} error code`);
+  }
+});
+
+test('an oversized Idempotency-Key is refused', async () => {
+  const res = await postJson('/v1/settlement/batches', {}, keyed(await opsCookie(), 'k'.repeat(256)));
+  assert.equal(res.status, 400);
+  assert.equal((await json(res)).error, 'IdempotencyKeyInvalid');
+});
+
+test('rewards history and device registration require a session', async () => {
+  assert.equal((await get('/v1/me/payouts')).status, 401);
+  assert.equal((await postJson('/v1/me/devices', { token: 'x'.repeat(64), platform: 'ios' })).status, 401);
+  assert.equal((await fetch(base + '/v1/me/devices/abc', { method: 'DELETE' })).status, 401);
+});
+
+test('a guest without a wallet gets an empty rewards page', async () => {
+  const res = await get('/v1/me/payouts', authed(await guestCookie()));
+  assert.equal(res.status, 200);
+  const body = await json(res);
+  assert.deepEqual(body, { address: null, balances: [], items: [], nextCursor: null });
+});
+
+test('device registration validates the platform and round-trips', async () => {
+  const cookie = await guestCookie();
+  const token = randomUUID().replace(/-/g, '').repeat(2);
+  const bad = await postJson('/v1/me/devices', { token, platform: 'web' }, keyed(cookie));
+  assert.equal(bad.status, 400);
+  const ok = await postJson('/v1/me/devices', { token, platform: 'android' }, keyed(cookie));
+  assert.equal(ok.status, 204);
+  const del = await fetch(`${base}/v1/me/devices/${token}`, { method: 'DELETE', headers: { cookie } });
+  assert.equal(del.status, 204);
 });
 
 test('POST /v1/auth/ops/login rejects a wrong passcode', async () => {
@@ -257,9 +308,9 @@ test('off-ramp session reads reject anonymous callers', async () => {
 });
 
 test('carret KYC/PII endpoints reject anonymous callers', async () => {
-  assert.equal((await get('/v1/carret/kyc/status/48559')).status, 401);
-  assert.equal((await postJson('/v1/carret/kyc/initiate', { account_id: 48559 })).status, 401);
-  assert.equal((await postJson('/v1/carret/kyc/cleanup', { account_id: 48559 })).status, 401);
+  assert.equal((await get('/v1/carret/kyc/status/99999')).status, 401);
+  assert.equal((await postJson('/v1/carret/kyc/initiate', { account_id: 99999 })).status, 401);
+  assert.equal((await postJson('/v1/carret/kyc/cleanup', { account_id: 99999 })).status, 401);
 });
 
 test("one driver cannot read another driver's off-ramp sessions", async () => {

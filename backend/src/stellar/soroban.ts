@@ -1,11 +1,20 @@
 import { rpc, Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 import { horizon } from './network.js';
+import { assertMainnetAllowed } from './networkGuard.js';
 import type { Signer } from './signing.js';
 
-export const sorobanServer = new rpc.Server(env.routing.sorobanRpcUrl, {
-  allowHttp: env.routing.sorobanRpcUrl.startsWith('http://'),
-});
+let server: rpc.Server | null = null;
+
+export function sorobanServer(): rpc.Server {
+  if (!env.routing.sorobanRpcUrl) {
+    throw httpError('SOROBAN_RPC_URL is not configured', 500, 'ConfigError');
+  }
+  server ??= new rpc.Server(env.routing.sorobanRpcUrl, {
+    allowHttp: env.routing.sorobanRpcUrl.startsWith('http://'),
+  });
+  return server;
+}
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -23,15 +32,16 @@ const POLL_INTERVAL_MS = 1000;
 const POLL_ATTEMPTS = 30;
 
 export async function simulateAndSubmit(tx: Transaction, signer: Signer): Promise<SorobanResult> {
+  assertMainnetAllowed('soroban submit');
   let prepared: Transaction;
   try {
-    prepared = (await sorobanServer.prepareTransaction(tx)) as Transaction;
+    prepared = (await sorobanServer().prepareTransaction(tx)) as Transaction;
   } catch (e) {
     throw httpError(`Soroban simulation failed: ${String(e)}`, 422, 'SorobanSimulationFailed');
   }
 
   const signed = await signer.sign(prepared);
-  const sent = await sorobanServer.sendTransaction(signed);
+  const sent = await sorobanServer().sendTransaction(signed);
   if (sent.status === 'ERROR' || sent.status === 'DUPLICATE') {
     throw httpError(
       `Soroban submit rejected (${sent.status}): ${JSON.stringify(sent.errorResult ?? {})}`,

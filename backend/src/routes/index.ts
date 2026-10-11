@@ -15,6 +15,7 @@ import type {
   BuildTransactionRequest,
   SettlementBatch,
   SettlementBatchPage,
+  OffRampStatus,
 } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import {
@@ -57,25 +58,53 @@ import {
   listSessions as onrampListSessions,
   getSession as onrampGetSession,
 } from '../services/onramp.js';
-import { reconcileOnce } from '../services/orphanReconciler.js';
 import {
-  listEvents as offrampListEvents,
-  appendEvent as offrampStoreAppendEvent,
-  updateStatus as offrampStoreUpdateStatus,
-} from '../services/offrampStore.js';
+  listAllSessions,
+  listEvents,
+  recordEvent as offrampRecordEvent,
+  saveSession as offrampSaveSession,
+  getSession as offrampGetSession,
+} from '../services/offRampStore.js';
+import {
+  parseScoreCsv,
+  pulseGenEndpointHost,
+  pulseGenLive,
+  resolveScore,
+  validateScoreBatch,
+} from '../services/pulsegen.js';
+import {
+  countScores,
+  getImport,
+  hashPayload,
+  listImports,
+  latestAssignments,
+  listLatestScores,
+  listScores,
+  saveImport,
+} from '../services/scoreStore.js';
+import { reconcileOnce } from '../services/orphanReconciler.js';
 import { db as offrampDb } from '../db/client.js';
 
 /**
- * D4/T2 demo helper: mark a session pending (rolling back the effect of a
- * webhook that "never arrived") and shove updated_at into the past so the
- * reconciler picks it up on the very next pass instead of waiting 30s.
+ * D4/T2 demo helper: roll a completed session back to pending (as if the
+ * Carret webhook that marked it filled was never received) and push
+ * updated_at 2 minutes into the past so the next reconciler pass picks
+ * it up without waiting out the 30s stale window.
  */
-async function offrampMarkPending(id: string): Promise<void> {
-  await offrampStoreUpdateStatus(id, 'pending_user_transfer_start');
+async function offrampMarkPending(id: string, previousStatus: string): Promise<void> {
+  const next: OffRampStatus = 'pending_user_transfer_start';
   await offrampDb().query(
-    `update pp_off_ramp_sessions set updated_at = now() - interval '2 minutes' where id = $1`,
-    [id],
+    `update off_ramp_sessions set status = $2, updated_at = now() - interval '2 minutes' where id = $1`,
+    [id, next],
   );
+  await offrampRecordEvent({
+    sessionId: id,
+    previousStatus: previousStatus as OffRampStatus,
+    status: next,
+    source: 'client',
+    detail: { note: 'simulated missed webhook — reconciler will heal on next pass' },
+    createdAt: new Date().toISOString(),
+  });
 }
 import { verifyRampWebhook } from '../services/ramp.js';
 import {
@@ -99,10 +128,19 @@ import {
   upsertMapping, deleteMapping, updateKycStatus, markWalletWhitelisted,
 } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
+import { getRewards } from '../services/payoutHistory.js';
+import { registerDevice, unregisterDevice } from '../services/push.js';
 import { requireSession, requireRole } from '../middleware/requireSession.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
 import multer from 'multer';
-import { assignSampleTier, getOnchainTier, getScoutConfig, revokeTier } from '../stellar/scout.js';
+import {
+  assignTierForDriver,
+  getOnchainTier,
+  getScoutConfig,
+  revokeTier,
+  scoreToTier,
+} from '../stellar/scout.js';
+import { getManagedWallet, provisionManagedWallet } from '../stellar/managed.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { listAttempts } from '../services/payoutAttempts.js';
 import { quoteSwap, executeSwap } from '../routing/aggregator.js';
@@ -119,7 +157,7 @@ const createSettlementSchema = z.object({
   grossAmount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'grossAmount must be a 7-decimal number'),
   asset: assetRefOptional(),
   drivers: z
-    .array(z.object({ userId: z.string().min(1), address: z.string().min(1), tier: scoutTierSchema }))
+    .array(z.object({ userId: z.string().min(1), address: z.string().min(1), tier: scoutTierSchema.optional() }))
     .min(1),
 });
 function assetRefOptional() {
@@ -314,6 +352,44 @@ router.get('/v1/auth/me', (req, res) => {
       : null,
   };
   res.json(body);
+});
+
+const rewardsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().min(1).optional(),
+});
+
+router.get('/v1/me/payouts', requireSession(), async (req, res, next) => {
+  try {
+    const { limit, cursor } = rewardsQuerySchema.parse(req.query);
+    res.json(await getRewards(getSessionFromRequest(req)!, limit, cursor));
+  } catch (e) {
+    next(e);
+  }
+});
+
+const pushDeviceSchema = z.object({
+  token: z.string().min(16).max(4096),
+  platform: z.enum(['ios', 'android']),
+});
+
+router.post('/v1/me/devices', requireSession(), async (req, res, next) => {
+  try {
+    const { token, platform } = pushDeviceSchema.parse(req.body);
+    await registerDevice(getSessionFromRequest(req)!.userId, token, platform);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.delete('/v1/me/devices/:token', requireSession(), async (req, res, next) => {
+  try {
+    await unregisterDevice(getSessionFromRequest(req)!.userId, req.params.token);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post('/v1/auth/logout', (_req, res) => {
@@ -530,7 +606,7 @@ const createWithdrawalSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
   asset: assetRefOptional(),
   fiatCurrency: z.string().optional(),
-  settlementBatchId: z.string().optional(),
+  settlementBatchId: z.string().min(1, 'settlementBatchId is required'),
 });
 
 router.get('/v1/offramp/quotes', async (req, res, next) => {
@@ -620,66 +696,68 @@ router.get('/v1/onramp/sessions/:id', requireSession(), async (req, res, next) =
   } catch (e) { next(e); }
 });
 
-// ── D4 / T2 reconciler dev handles ─────────────────────────────────────
-//
-// - GET /v1/offramp/sessions/:id/events → the full status-event log for
-//   one session (placed → webhook* → poll* → reconciler*), so the demo
-//   can screenshot the recovery.
-// - POST /v1/ops/offramp/reconcile-once → forces one reconciler sweep
-//   without waiting for the interval. Requires the session cookie so
-//   only signed-in operators can trigger it (there's no destructive
-//   effect; the endpoint just calls Carret + writes rows).
+// ── D4 / T2 driver-facing dev handles ──────────────────────────────────
+// Session-authed variants (driver can inspect/trigger against their own
+// session only) so the Tranche 2 recording works without ops credentials.
+// Upstream's ops-scoped variants below handle the operator case.
+
 router.get('/v1/offramp/sessions/:id/events', requireSession(), async (req, res, next) => {
   try {
-    const session = getSessionFromRequest(req)!;
-    // Reuse getWithdrawal to enforce ownership before dumping events.
-    const s = await getWithdrawal(req.params.id, session.userId);
-    const events = await offrampListEvents(s.id);
+    const userId = getSessionFromRequest(req)!.userId;
+    const session = await getWithdrawal(req.params.id, userId);
     res.json({
-      session: {
-        id: s.id,
-        status: s.status,
-        settlementBatchId: s.settlementBatchId,
-        provider: s.provider,
-      },
-      events,
+      sessionId: session.id,
+      settlementBatchId: session.settlementBatchId ?? null,
+      events: await listEvents(session.id),
     });
   } catch (e) { next(e); }
 });
 
 router.post('/v1/ops/offramp/reconcile-once', requireSession(), async (_req, res, next) => {
   try {
-    const result = await reconcileOnce();
-    res.json(result);
+    res.json(await reconcileOnce());
   } catch (e) { next(e); }
 });
 
 /**
- * D4 / T2 demo helper — simulate a lost webhook on the given session.
- *
- * Sets the session status back to `pending_user_transfer_start` and
- * writes an audit event tagged `client` explaining that a webhook was
- * artificially dropped. The next reconciler pass will call Carret,
- * see that the real order status is `filled`, and write a `reconciler`
- * event that heals the session back to `completed`. That heal is the
- * exact evidence Stellar asked for.
- *
- * Only touches the caller's own sessions.
+ * D4 / T2 demo helper — simulate a lost webhook on the caller's own
+ * session. Rolls status back to pending_user_transfer_start and writes
+ * a `client` event. The next reconciler pass sees Carret's real
+ * `filled` status and writes a `reconciler` event healing it back.
  */
 router.post('/v1/ops/offramp/sessions/:id/simulate-missed-webhook', requireSession(), async (req, res, next) => {
   try {
-    const session = getSessionFromRequest(req)!;
-    const s = await getWithdrawal(req.params.id, session.userId);
-    await offrampMarkPending(s.id);
-    await offrampStoreAppendEvent(s.id, 'client', null, 'pending_user_transfer_start', {
-      note: 'simulated missed webhook — reconciler will heal on next pass',
-    });
+    const userId = getSessionFromRequest(req)!.userId;
+    const s = await getWithdrawal(req.params.id, userId);
+    await offrampMarkPending(s.id, s.status);
     res.json({ ok: true, sessionId: s.id, rolledTo: 'pending_user_transfer_start' });
   } catch (e) { next(e); }
 });
-// Alias for the earlier operator-panel deploy that hit /reconcile.
-// Both paths funnel into the same handler so no client sees "Cannot POST".
-router.post('/v1/ops/offramp/reconcile', requireSession(), async (_req, res, next) => {
+
+/**
+ * Operator view of off-ramp sessions. The driver-facing endpoints are scoped
+ * to the caller, so this is the only way an operator can inspect a withdrawal
+ * that is not their own — including one seeded or stuck mid-flight.
+ */
+router.get('/v1/ops/offramp/sessions', requireRole('ops'), async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json({ items: await listAllSessions(limit) });
+  } catch (e) { next(e); }
+});
+
+router.get('/v1/ops/offramp/sessions/:id/events', requireRole('ops'), async (req, res, next) => {
+  try {
+    const events = await listEvents(req.params.id);
+    if (!events.length) {
+      const known = (await listAllSessions(500)).some((s) => s.id === req.params.id);
+      if (!known) throw notFound(`Off-ramp session ${req.params.id} not found`);
+    }
+    res.json({ sessionId: req.params.id, events });
+  } catch (e) { next(e); }
+});
+
+router.post('/v1/ops/offramp/reconcile', requireRole('ops'), async (_req, res, next) => {
   try {
     res.json(await reconcileOnce());
   } catch (e) { next(e); }
@@ -712,14 +790,8 @@ router.get('/v1/routing/quote', async (req, res, next) => {
   }
 });
 
-router.post('/v1/routing/swap', async (req, res, next) => {
+router.post('/v1/routing/swap', requireSession(), idempotency(), async (req, res, next) => {
   try {
-    if (!getSessionFromRequest(req)) {
-      const denied = new Error('Sign in to execute a conversion') as Error & { status: number };
-      denied.name = 'Unauthorized';
-      denied.status = 401;
-      throw denied;
-    }
     const { from, to, amount } = routingSwapSchema.parse(req.body);
     res.status(201).json(await executeSwap(from, to, amount));
   } catch (e) {
@@ -736,8 +808,11 @@ router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
   }
 });
 
-// SCOUT reputation assets (D6): config, assign a tier from a PulseGen score, look up on-chain tier.
-const assignScoutSchema = z.object({ score: z.number().min(0).max(1) });
+// SCOUT reputation assets (D6): config, assign an existing driver the tier their PulseGen score maps to, look up on-chain tier.
+// .strict() so a caller that sends a score gets an explicit 400 rather than
+// having it silently stripped — the guarantee "you cannot supply a score" has
+// to be demonstrable, not merely true.
+const assignScoutSchema = z.object({ driverId: z.string().min(1) }).strict();
 
 router.get('/v1/scout', async (_req, res, next) => {
   try {
@@ -749,8 +824,180 @@ router.get('/v1/scout', async (_req, res, next) => {
 
 router.post('/v1/scout/assign', requireRole('ops'), async (req, res, next) => {
   try {
-    const { score } = assignScoutSchema.parse(req.body);
-    res.json(await assignSampleTier(score));
+    const { driverId } = assignScoutSchema.parse(req.body);
+    res.json(await assignTierForDriver(driverId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * PulseGen score delivery (D6). PulseGen is PathPulse.ai's validation engine
+ * and an external dependency; until a live endpoint exists its results arrive
+ * as batches. Accepts JSON or a `driver_id,score,scored_at` CSV and records
+ * provenance — supplier, arrival time, importing operator and a SHA-256 of the
+ * exact payload received.
+ *
+ * The provenance attests to RECEIPT, not correctness: it proves a named party
+ * supplied these numbers at a known time, not that the numbers are right.
+ */
+function httpFail(message: string, status: number, name: string): Error {
+  const e = new Error(message) as Error & { status: number };
+  e.name = name;
+  e.status = status;
+  return e;
+}
+const validationError = (m: string) => httpFail(m, 400, 'ValidationError');
+const notFound = (m: string) => httpFail(m, 404, 'NotFound');
+
+const scoreImportSchema = z.object({
+  supplier: z.string().min(1, 'supplier is required — name who delivered these scores'),
+  sourceRef: z.string().optional(),
+  notes: z.string().optional(),
+  receivedAt: z.string().optional(),
+  scores: z.array(z.unknown()).optional(),
+  csv: z.string().optional(),
+});
+
+router.post('/v1/ops/scores/import', requireRole('ops'), async (req, res, next) => {
+  try {
+    const body = scoreImportSchema.parse(req.body);
+    if (!body.scores && !body.csv) {
+      throw validationError('provide either scores[] or csv');
+    }
+    if (body.scores && body.csv) {
+      throw validationError('provide scores[] or csv, not both');
+    }
+
+    const rows = body.csv ? parseScoreCsv(body.csv) : body.scores;
+    const { scores } = validateScoreBatch(rows);
+
+    const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
+    const record = await saveImport(
+      {
+        supplier: body.supplier,
+        sourceRef: body.sourceRef,
+        notes: body.notes,
+        importedBy: getSessionFromRequest(req)!.userId,
+        receivedAt: body.receivedAt ?? new Date().toISOString(),
+        payloadSha256: hashPayload(raw),
+      },
+      scores,
+    );
+
+    res.json({ import: record, scores: await listScores(record.id) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/scores/imports', requireRole('ops'), async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json({ items: await listImports(limit) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/scores/imports/:id', requireRole('ops'), async (req, res, next) => {
+  try {
+    const record = await getImport(req.params.id);
+    if (!record) throw notFound(`Score import ${req.params.id} not found`);
+    res.json({ import: record, scores: await listScores(record.id) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Feed status for the ops console — which source would answer, the batch that
+ * delivered the current scores, and the scores themselves. This is what makes
+ * a tier's origin visible before any badge is assigned.
+ */
+router.get('/v1/scout/feed', requireSession(), async (_req, res, next) => {
+  try {
+    const imports = await listImports(1);
+    res.json({
+      pulseGenLive: pulseGenLive(),
+      endpointHost: pulseGenEndpointHost(),
+      mode: pulseGenLive() ? 'pulsegen-live' : imports.length ? 'pulsegen-batch' : 'derived',
+      scoredDrivers: await countScores(),
+      latestImport: imports[0] ?? null,
+      scores: await listLatestScores(100),
+      assignments: await latestAssignments(100),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/scout/score/:driverId', requireSession(), async (req, res, next) => {
+  try {
+    res.json(await resolveScore(req.params.driverId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Prepare the reviewer demo cohort through the real path: provision each
+ * driver's managed wallet, read their score from the feed, and assign the tier
+ * that score maps to. Replaces the previous console demo, which invented
+ * drivers and asserted their tiers in the settlement request — the exact
+ * pattern D6 review objected to.
+ */
+const demoDriversSchema = z.object({
+  driverIds: z.array(z.string().min(1)).min(1).max(10).optional(),
+});
+
+const DEFAULT_DEMO_DRIVERS = [
+  'drv-pulsegen-demo-002',
+  'drv-pulsegen-demo-003',
+  'drv-pulsegen-demo-006',
+];
+
+router.post('/v1/ops/demo/scout-drivers', requireRole('ops'), async (req, res, next) => {
+  try {
+    const { driverIds } = demoDriversSchema.parse(req.body ?? {});
+    const ids = driverIds ?? DEFAULT_DEMO_DRIVERS;
+    const drivers = [];
+
+    for (const driverId of ids) {
+      const wallet = (await getManagedWallet(driverId)) ?? (await provisionManagedWallet(driverId));
+      const validation = await resolveScore(driverId);
+      const expected = scoreToTier(validation.score);
+      const current = await getOnchainTier(wallet.address);
+
+      // Idempotent: a badge that already matches its score is not re-issued.
+      // Report the transaction that did issue it, so the assignment is always
+      // traceable rather than reading as though nothing happened.
+      let assignmentTx: string | null = null;
+      let assignedNow = false;
+      if (current.tier !== expected) {
+        assignmentTx = (await assignTierForDriver(driverId)).txHash;
+        assignedNow = true;
+      } else {
+        const prior = (await latestAssignments(500)).find((a) => a.driverId === driverId);
+        assignmentTx = prior?.txHash ?? null;
+      }
+
+      const onchain = await getOnchainTier(wallet.address);
+      drivers.push({
+        userId: driverId,
+        address: wallet.address,
+        score: validation.score,
+        scoredAt: validation.scoredAt,
+        scoreSource: validation.source,
+        scoreImportId: validation.importId ?? null,
+        tier: onchain.tier,
+        multiplier: onchain.multiplier,
+        assignmentTx,
+        assignedNow,
+      });
+    }
+
+    res.json({ drivers });
   } catch (e) {
     next(e);
   }
@@ -781,7 +1028,7 @@ router.get('/v1/scout/:address', async (req, res, next) => {
  *            correlate by `order_id` in the JSON body.
  * Both need a 200 to be considered delivered.
  */
-router.post('/v1/offramp/callback', (req, res) => {
+router.post('/v1/offramp/callback', async (req, res) => {
   const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
 
   if (activeProvider() === 'carret') {
@@ -797,9 +1044,7 @@ router.post('/v1/offramp/callback', (req, res) => {
     };
     const orderId = body.order_id ?? body.data?.order_id;
     const status = body.status ?? body.data?.status;
-    if (orderId && status) {
-      applyCarretCallback(orderId, status).catch(() => {});
-    }
+    if (orderId && status) await applyCarretCallback(orderId, status);
     res.status(200).json({ ok: true });
     return;
   }
@@ -813,7 +1058,7 @@ router.post('/v1/offramp/callback', (req, res) => {
   const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined;
   const body = req.body as { type?: string; status?: string; payload?: { status?: string } };
   const status = body.type ?? body.status ?? body.payload?.status;
-  if (ref && status) applyCallback(ref, status).catch(() => {});
+  if (ref && status) await applyCallback(ref, status);
   res.status(200).json({ ok: true });
 });
 

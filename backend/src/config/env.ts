@@ -7,7 +7,11 @@ import type { StellarNetwork, RoutingProviderName, AssetRef } from '@pathpulse/c
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rootEnv = resolve(here, '../../../.env');
-loadEnv(existsSync(rootEnv) ? { path: rootEnv } : {});
+const envFile = process.env.PATHPULSE_ENV_FILE ? resolve(process.env.PATHPULSE_ENV_FILE) : rootEnv;
+if (process.env.PATHPULSE_ENV_FILE && !existsSync(envFile)) {
+  throw new Error(`PATHPULSE_ENV_FILE points at ${envFile}, which does not exist`);
+}
+loadEnv(existsSync(envFile) ? { path: envFile } : {});
 
 function req(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
@@ -30,10 +34,15 @@ if (!SIGNER_BACKENDS.includes(signerBackend)) {
 
 const CIRCLE_TESTNET_USDC = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const CIRCLE_TESTNET_EURC = 'GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO';
+const CIRCLE_MAINNET_USDC = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+const CIRCLE_MAINNET_EURC = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
 const DEFAULT_ROUTING_ASSETS = `XLM,USDC:${CIRCLE_TESTNET_USDC},EURC:${CIRCLE_TESTNET_EURC}`;
+const MAINNET_ROUTING_ASSETS = `XLM,USDC:${CIRCLE_MAINNET_USDC},EURC:${CIRCLE_MAINNET_EURC}`;
 
-function parseRoutingAssets(raw?: string): AssetRef[] {
-  return (raw?.trim() || DEFAULT_ROUTING_ASSETS)
+export type AccountFunding = 'friendbot' | 'sponsor';
+
+function parseRoutingAssets(raw?: string, fallback = DEFAULT_ROUTING_ASSETS): AssetRef[] {
+  return (raw?.trim() || fallback)
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -91,17 +100,27 @@ export const env = {
   keyEncryptionKey: process.env.KEY_ENCRYPTION_KEY ?? '',
   keyEncryptionKeyCiphertext: process.env.KEY_ENCRYPTION_KEY_CIPHERTEXT ?? '',
 
-  // Multi-source cross-asset routing (D5). Testnet only
+  accountFunding: (process.env.ACCOUNT_FUNDING ?? (network === 'mainnet' ? 'sponsor' : 'friendbot')) as AccountFunding,
+  driverTrustlines: parseRoutingAssets(
+    process.env.DRIVER_TRUSTLINES,
+    `USDC:${network === 'mainnet' ? CIRCLE_MAINNET_USDC : CIRCLE_TESTNET_USDC}`,
+  ).filter((a) => a.issuer),
+
+  // Multi-source cross-asset routing (D5).
   routing: {
     providers: (process.env.ROUTING_PROVIDERS ?? 'aquarius')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean) as RoutingProviderName[],
     quoteTimeoutMs: Number(process.env.ROUTING_QUOTE_TIMEOUT_MS ?? 3000),
-    assets: parseRoutingAssets(process.env.ROUTING_ASSETS),
+    assets: parseRoutingAssets(process.env.ROUTING_ASSETS, network === 'mainnet' ? MAINNET_ROUTING_ASSETS : DEFAULT_ROUTING_ASSETS),
     settlementAssetCode: (process.env.ROUTING_SETTLEMENT_ASSET ?? 'USDC').toUpperCase(),
-    sorobanRpcUrl: process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org',
-    aquaApiUrl: process.env.AQUA_API_URL ?? 'https://amm-api-testnet.aqua.network/api/external/v2',
+    sorobanRpcUrl: process.env.SOROBAN_RPC_URL ?? (network === 'mainnet' ? '' : 'https://soroban-testnet.stellar.org'),
+    aquaApiUrl:
+      process.env.AQUA_API_URL ??
+      (network === 'mainnet'
+        ? 'https://amm-api.aqua.network/api/external/v2'
+        : 'https://amm-api-testnet.aqua.network/api/external/v2'),
     aquaRouterContract: process.env.AQUA_ROUTER_CONTRACT ?? '',
     slippageBps: Number(process.env.ROUTING_SLIPPAGE_BPS ?? 100),
     stellarBroker: {
@@ -110,11 +129,12 @@ export const env = {
     },
   },
 
-  // PulseGen validation-score feed (D6). Unset until the live feed lands; the
-  // synthetic provider is the agreed interim per the plan's risk register.
+  // PulseGen validation-score feed (D6). When unset, scores resolve from the
+  // most recent delivered batch.
   pulseGen: {
     baseUrl: process.env.PULSEGEN_BASE_URL ?? '',
     apiKey: process.env.PULSEGEN_API_KEY ?? '',
+    pilotSynthetic: process.env.PULSEGEN_PILOT_SYNTHETIC === 'true',
   },
 
   webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',
@@ -204,7 +224,32 @@ export const env = {
     verificationField: process.env.SDP_VERIFICATION_FIELD ?? 'DATE_OF_BIRTH',
     contactDomain: process.env.SDP_CONTACT_DOMAIN ?? 'pathpulse.local',
   },
+
+  alerts: {
+    webhookUrl: process.env.ALERT_WEBHOOK_URL ?? '',
+    healthIntervalMs: Number(process.env.HEALTH_CHECK_INTERVAL_MS ?? 60_000),
+  },
+
+  push: {
+    apns: {
+      keyId: process.env.APNS_KEY_ID ?? '',
+      teamId: process.env.APNS_TEAM_ID ?? '',
+      bundleId: process.env.APNS_BUNDLE_ID ?? '',
+      privateKey: (process.env.APNS_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+      production: process.env.APNS_ENV === 'production',
+    },
+    fcm: {
+      projectId: process.env.FIREBASE_PROJECT_ID ?? '',
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',
+      privateKey: (process.env.FIREBASE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+    },
+  },
 } as const;
+
+export const apnsLive =
+  !!env.push.apns.keyId && !!env.push.apns.teamId && !!env.push.apns.bundleId && !!env.push.apns.privateKey;
+
+export const fcmLive = !!env.push.fcm.projectId && !!env.push.fcm.clientEmail && !!env.push.fcm.privateKey;
 
 /** Live Ramp requires a host API key; otherwise the sandbox stub runs. */
 export const rampLive = !!process.env.RAMP_API_KEY;
@@ -223,6 +268,10 @@ if (process.env.NODE_ENV === 'production' && !process.env.GOV_PARTNER_PASSCODE) 
 
 if (process.env.NODE_ENV === 'production' && !process.env.OPS_PASSCODE) {
   throw new Error('OPS_PASSCODE must be set in production');
+}
+
+if (env.accountFunding !== 'friendbot' && env.accountFunding !== 'sponsor') {
+  throw new Error(`ACCOUNT_FUNDING must be friendbot|sponsor, got: ${env.accountFunding}`);
 }
 
 export const isMainnet = env.network === 'mainnet';
@@ -257,9 +306,23 @@ if (isMainnet) {
     if (!value) problems.push(`${name} must be set on mainnet`);
   }
   if (!process.env.SESSION_SECRET) problems.push('SESSION_SECRET must be set on mainnet');
+  if (!env.keyEncryptionKeyCiphertext) {
+    problems.push('KEY_ENCRYPTION_KEY_CIPHERTEXT must be set on mainnet — driver seeds are sealed only under a KMS-wrapped key');
+  }
+  if (env.accountFunding !== 'sponsor') {
+    problems.push('ACCOUNT_FUNDING must be "sponsor" on mainnet — Friendbot does not exist there');
+  }
   if (!env.opsPasscode) problems.push('OPS_PASSCODE must be set on mainnet');
+  if (env.routing.providers.includes('aquarius') && (!env.routing.sorobanRpcUrl || !env.routing.aquaRouterContract)) {
+    problems.push('Aquarius routing on mainnet needs SOROBAN_RPC_URL and AQUA_ROUTER_CONTRACT — or drop it from ROUTING_PROVIDERS');
+  }
   if (env.carret.allowTestnet) {
     problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');
+  }
+  if ((!env.pulseGen.baseUrl || !env.pulseGen.apiKey) && !env.pulseGen.pilotSynthetic) {
+    problems.push(
+      'PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet',
+    );
   }
 
   if (problems.length) {

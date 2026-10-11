@@ -18,6 +18,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        fun prop(name: String) = providers.gradleProperty(name).getOrElse("")
+        buildConfigField("String", "FIREBASE_APP_ID", "\"${prop("pathpulse.firebase.appId")}\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${prop("pathpulse.firebase.projectId")}\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"${prop("pathpulse.firebase.apiKey")}\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${prop("pathpulse.firebase.senderId")}\"")
     }
 
     buildTypes {
@@ -60,6 +66,8 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

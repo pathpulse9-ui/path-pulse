@@ -7,7 +7,9 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.HttpCookies
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.request.post
@@ -196,19 +198,51 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
 
     // ── Carret banks (real payouts) ────────────────────────────────────
 
-    suspend fun listCarretBanks(): List<CarretBank> =
-        client.get("$baseUrl/v1/carret/banks").ensureSuccess().body<CarretBanksResponse>().items
+    suspend fun carretBanks(): List<CarretBank> =
+        client.get("$baseUrl/v1/carret/banks").ensureSuccess().body<CarretBankList>().items
 
-    suspend fun registerCarretBank(input: CarretBankRegistrationInput): CarretBank =
+    suspend fun registerCarretBank(request: RegisterCarretBankRequest): CarretBank =
         client.post("$baseUrl/v1/carret/banks") {
             contentType(ContentType.Application.Json)
-            setBody(input)
+            setBody(request)
         }.ensureSuccess().body()
 
     // ── Trading wallet balance chip ────────────────────────────────────
 
     suspend fun carretWallets(): List<CarretWalletBalance> =
         client.get("$baseUrl/v1/carret/wallets").ensureSuccess().body<CarretWalletsResponse>().items
+
+    // ── Off-ramp live quote + place order (upstream) ───────────────────
+
+    suspend fun offRampQuote(amount: String): OffRampQuote =
+        client.get("$baseUrl/v1/offramp/quotes") { parameter("amount", amount) }.ensureSuccess().body()
+
+    suspend fun createOffRampSession(amount: String, idempotencyKey: String): OffRampSession =
+        client.post("$baseUrl/v1/offramp/sessions") {
+            contentType(ContentType.Application.Json)
+            header("Idempotency-Key", idempotencyKey)
+            setBody(CreateOffRampRequest(amount))
+        }.ensureSuccess().body()
+
+    suspend fun offRampSession(id: String): OffRampSession =
+        client.get("$baseUrl/v1/offramp/sessions/$id").ensureSuccess().body()
+
+    suspend fun rewards(limit: Int = 50, cursor: String? = null): RewardsResponse =
+        client.get("$baseUrl/v1/me/payouts") {
+            parameter("limit", limit)
+            if (cursor != null) parameter("cursor", cursor)
+        }.ensureSuccess().body()
+
+    suspend fun registerPushDevice(token: String) {
+        client.post("$baseUrl/v1/me/devices") {
+            contentType(ContentType.Application.Json)
+            setBody(RegisterPushDeviceRequest(token))
+        }.ensureSuccess()
+    }
+
+    suspend fun unregisterPushDevice(token: String) {
+        client.delete("$baseUrl/v1/me/devices/$token").ensureSuccess()
+    }
 }
 
 class ApiException(val apiError: ApiError) : Exception(apiError.message)

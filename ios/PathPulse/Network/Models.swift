@@ -405,3 +405,53 @@ struct DistributionAccount: Codable, Equatable, Hashable, Identifiable {
         }
     }
 }
+
+// MARK: - Carret banks
+
+struct CarretBank: Codable, Equatable, Hashable, Identifiable {
+    let id: Int
+    let status: String
+    let bank_account_no: String
+    let bank_ifsc: String
+    let bank_account_name: String
+    let bank_name: String
+
+    var isVerified: Bool { status == "verified" }
+    var maskedAccount: String { "••" + String(bank_account_no.suffix(4)) }
+}
+
+struct CarretBankList: Codable {
+    var items: [CarretBank] = []
+}
+
+struct RegisterCarretBankRequest: Codable {
+    let bank_account_no: String
+    let bank_ifsc: String
+    let bank_account_name: String
+    let bank_name: String
+}
+
+// MARK: - Rewards
+
+struct RewardBalance: Codable, Equatable, Hashable {
+    let asset: AssetRef
+    let balance: String
+}
+
+struct RewardPayout: Codable, Equatable, Hashable, Identifiable {
+    let id: String
+    let cursor: String
+    let createdAt: String
+    let amount: String
+    let asset: AssetRef
+    let from: String
+    let txHash: String
+    let explorerUrl: String
+}
+
+struct RewardsResponse: Codable {
+    var address: String?
+    var balances: [RewardBalance] = []
+    var items: [RewardPayout] = []
+    var nextCursor: String?
+}

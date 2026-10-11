@@ -155,6 +155,8 @@ fun DashboardScreen(
             )
         }
 
+        RewardsSection(refreshing = loading)
+
         if (error != null) {
             PpCard {
                 Text(error, style = MaterialTheme.typography.bodyMedium, color = PpRed600)

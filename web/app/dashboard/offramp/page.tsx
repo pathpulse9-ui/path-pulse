@@ -9,13 +9,24 @@ import {
   getCarretLimits, resumeCarretKyc, listCarretBanks, registerCarretBank, listCarretWallets,
   getOffRampSessionEvents, reconcileOfframpOnce, simulateMissedWebhook,
 } from '../../lib/api';
-import type { OffRampSession, OffRampStatus, OffRampQuote } from '@pathpulse/contract';
+import type {
+  OffRampSession,
+  OffRampStatus,
+  OffRampQuote,
+  OpsOffRampSession,
+  OffRampStatusEventRecord,
+  ReconcileReportRecord,
+} from '@pathpulse/contract';
 import {
+  listOpsOffRampSessions,
+  getOpsOffRampEvents,
+  runOffRampReconcile,
   listOffRampSessions,
   getOffRampSession,
   createOffRampWithdrawal,
   getOffRampQuote,
 } from '../../lib/api';
+import { useIdempotencyKey } from '../../lib/idempotency';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
 import Link from 'next/link';
 
@@ -37,9 +48,15 @@ function statusClasses(s: OffRampStatus) {
 
 export default function OffRampPage() {
   const [sessions, setSessions] = useState<OffRampSession[]>([]);
+  const runWithdrawal = useIdempotencyKey();
   const [selected, setSelected] = useState<OffRampSession | null>(null);
   const [amount, setAmount] = useState('10');
   const [batchId, setBatchId] = useState('');
+  const [opsSessions, setOpsSessions] = useState<OpsOffRampSession[] | null>(null);
+  const [opsError, setOpsError] = useState<unknown>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [report, setReport] = useState<ReconcileReportRecord | null>(null);
+  const [timeline, setTimeline] = useState<{ id: string; events: OffRampStatusEventRecord[] } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [quote, setQuote] = useState<OffRampQuote | null>(null);
@@ -154,10 +171,8 @@ export default function OffRampPage() {
     setBusy(true);
     setError(null);
     try {
-      const session = await createOffRampWithdrawal({
-        amount,
-        settlementBatchId: batchId.trim() || undefined,
-      });
+      const withdrawal = { amount, settlementBatchId: batchId.trim() };
+      const session = await runWithdrawal(withdrawal, (key) => createOffRampWithdrawal(withdrawal, key));
       setSelected(session);
       await load();
     } catch (e) {
@@ -166,6 +181,38 @@ export default function OffRampPage() {
       setBusy(false);
     }
   }
+
+  const loadOps = useCallback(async () => {
+    setOpsError(null);
+    try {
+      setOpsSessions((await listOpsOffRampSessions()).items);
+    } catch (e) {
+      setOpsSessions(null);
+      setOpsError(e);
+    }
+  }, []);
+
+  const reconcile = useCallback(async () => {
+    setReconciling(true);
+    setOpsError(null);
+    try {
+      setReport(await runOffRampReconcile());
+      await loadOps();
+    } catch (e) {
+      setOpsError(e);
+    } finally {
+      setReconciling(false);
+    }
+  }, [loadOps]);
+
+  const showTimeline = useCallback(async (id: string) => {
+    setOpsError(null);
+    try {
+      setTimeline({ id, events: (await getOpsOffRampEvents(id)).events });
+    } catch (e) {
+      setOpsError(e);
+    }
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -272,17 +319,17 @@ export default function OffRampPage() {
             />
           </label>
           <label className="text-sm flex-1 min-w-48">
-            <span className="block text-black/50 mb-1">Settlement batch ID (optional)</span>
+            <span className="block text-black/50 mb-1">Settlement batch ID (required)</span>
             <input
               value={batchId}
               onChange={(e) => setBatchId(e.target.value)}
-              placeholder="stl_… (links the off-ramp to a settlement)"
+              placeholder="stl_… (the settlement this withdrawal draws from)"
               className="rounded-xl border border-black/10 bg-white text-black placeholder:text-black/30 px-3 py-2 text-sm w-full font-mono focus:outline-none focus:border-black/30"
             />
           </label>
           <button
             onClick={startWithdrawal}
-            disabled={busy}
+            disabled={busy || !batchId.trim()}
             className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
           >
             {busy ? 'Starting…' : 'Sell to fiat'}
@@ -321,7 +368,7 @@ export default function OffRampPage() {
                 {quoting
                   ? 'refreshing…'
                   : quote.live
-                    ? `live · ${quote.provider}${quote.quoteId ? ` · #${quote.quoteId}` : ''}`
+                    ? `live quote · ${quote.provider}${quote.quoteId ? ` · #${quote.quoteId}` : ''}`
                     : 'indicative estimate'}
               </span>
             </div>
@@ -445,6 +492,121 @@ export default function OffRampPage() {
           </table>
         </div>
       )}
+
+      <div className="rounded-2xl bg-white p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
+              Operator — off-ramp reconciliation
+            </h2>
+            <p className="text-xs text-black/50 mt-1">
+              Every session, not only your own. The reconciler also runs automatically every 60s.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={loadOps}
+              className="text-sm font-medium px-4 py-2 rounded-full border border-black/15 hover:bg-black/5 transition-colors duration-200"
+            >
+              Load sessions
+            </button>
+            <button
+              onClick={reconcile}
+              disabled={reconciling}
+              className="bg-black text-white text-sm font-medium px-5 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
+            >
+              {reconciling ? 'Reconciling…' : 'Run reconciliation'}
+            </button>
+          </div>
+        </div>
+
+        {opsError != null && <ErrorNotice error={opsError} />}
+
+        {report && (
+          <div className="rounded-xl border border-black/10 p-4 space-y-2">
+            <div className="flex gap-4 text-xs">
+              <span>scanned <b>{report.scanned}</b></span>
+              <span className="text-green-700">recovered <b>{report.recovered}</b></span>
+              <span className="text-black/50">unmatched <b>{report.unmatched}</b></span>
+              <span className={report.failed ? 'text-red-700' : 'text-black/50'}>
+                failed <b>{report.failed}</b>
+              </span>
+            </div>
+            {report.outcomes.map((o) => (
+              <div key={o.sessionId} className="text-xs font-mono text-black/70">
+                {short(o.sessionId)} · {o.action}
+                {o.to ? ` · ${o.from} → ${o.to}` : ''}
+                {o.matchedBy ? ` · matched by ${o.matchedBy}` : ''}
+                {o.settlementBatchId ? ` · batch ${short(o.settlementBatchId)}` : ''}
+              </div>
+            ))}
+            {report.outcomes.length === 0 && (
+              <p className="text-xs text-black/40">No sessions were due for reconciliation.</p>
+            )}
+          </div>
+        )}
+
+        {opsSessions && opsSessions.length > 0 && (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-black/50 border-b border-black/10">
+                <th className="py-2 font-medium">Session</th>
+                <th className="py-2 font-medium">Status</th>
+                <th className="py-2 font-medium">Amount</th>
+                <th className="py-2 font-medium">Settlement batch</th>
+                <th className="py-2 font-medium">Carret order</th>
+                <th className="py-2 font-medium">Events</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opsSessions.map((o) => (
+                <tr key={o.id} className="border-b border-black/5">
+                  <td className="py-2 font-mono text-xs">
+                    <button onClick={() => showTimeline(o.id)} className="underline hover:text-black">
+                      {short(o.id)}
+                    </button>
+                  </td>
+                  <td className="py-2">
+                    <span className={`text-xs rounded-full border px-2 py-0.5 ${statusClasses(o.status)}`}>
+                      {STATUS_LABEL[o.status]}
+                    </span>
+                  </td>
+                  <td className="py-2">{o.amount} {o.assetCode}</td>
+                  <td className="py-2 font-mono text-xs">
+                    {o.settlementBatchId ? short(o.settlementBatchId) : '—'}
+                  </td>
+                  <td className="py-2 font-mono text-xs">{o.carretOrderId ?? '—'}</td>
+                  <td className="py-2 text-xs text-black/50">{o.eventCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {opsSessions && opsSessions.length === 0 && (
+          <p className="text-sm text-black/40">No off-ramp sessions recorded yet.</p>
+        )}
+
+        {timeline && (
+          <div className="rounded-xl border border-black/10 p-4">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-xs text-black/50">Status events · {short(timeline.id)}</span>
+              <button onClick={() => setTimeline(null)} className="text-xs text-black/40 hover:text-black">
+                close
+              </button>
+            </div>
+            {timeline.events.map((e, i) => (
+              <div key={i} className="text-xs font-mono py-0.5">
+                {e.createdAt} &nbsp; {e.previousStatus ?? '(none)'} → {e.status} &nbsp;
+                <span className="text-black/45">[{e.source}]</span>
+              </div>
+            ))}
+            {timeline.events.length === 0 && (
+              <p className="text-xs text-black/40">No events recorded for this session.</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

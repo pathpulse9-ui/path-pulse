@@ -4,6 +4,8 @@ import GoogleSignIn
 /// App entry — mirrors Android's `MainActivity.onCreate` + `setContent { PathPulseTheme { AppRoot() } }`.
 @main
 struct PathPulseApp: App {
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
+
     var body: some Scene {
         WindowGroup {
             AppRootView()

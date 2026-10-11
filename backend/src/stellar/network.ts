@@ -1,5 +1,6 @@
-import { Horizon } from '@stellar/stellar-sdk';
+import { Horizon, type FeeBumpTransaction, type Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
+import { assertMainnetAllowed } from './networkGuard.js';
 
 /** Shared Horizon server instance for network. */
 export const horizon = new Horizon.Server(env.horizonUrl, {
@@ -17,6 +18,11 @@ export async function fundWithFriendbot(publicKey: string): Promise<void> {
   if (!res.ok) {
     throw new Error(`Friendbot funding failed (${res.status}): ${await res.text()}`);
   }
+}
+
+export async function submitToHorizon(tx: Transaction | FeeBumpTransaction, context: string) {
+  assertMainnetAllowed(context);
+  return horizon.submitTransaction(tx);
 }
 
 export async function accountExists(publicKey: string): Promise<boolean> {

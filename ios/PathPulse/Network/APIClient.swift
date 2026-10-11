@@ -89,11 +89,24 @@ final class APIClient: @unchecked Sendable {
         try await send(makeRequest(path: path, method: "POST", body: body))
     }
 
+    func post<T: Decodable>(_ path: String, body: Encodable, idempotencyKey: String) async throws -> T {
+        var request = try makeRequest(path: path, method: "POST", body: body)
+        request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        return try await send(request)
+    }
+
     /// Fire-and-forget POST — used for logout / cleanup where the response body
     /// is irrelevant. Optional JSON body for endpoints that take one.
     @discardableResult
     func postDiscardingBody(_ path: String, body: Encodable? = nil) async throws -> Int {
         let (_, response) = try await session.data(for: makeRequest(path: path, method: "POST", body: body))
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        return http.statusCode
+    }
+
+    @discardableResult
+    func deleteDiscardingBody(_ path: String) async throws -> Int {
+        let (_, response) = try await session.data(for: makeRequest(path: path, method: "DELETE"))
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         return http.statusCode
     }

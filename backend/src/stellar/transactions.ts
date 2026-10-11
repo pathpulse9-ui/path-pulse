@@ -13,9 +13,10 @@ import type {
   TransactionOperation,
 } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
-import { horizon } from './network.js';
+import { horizon, submitToHorizon } from './network.js';
 import { assertMainnetAllowed } from './networkGuard.js';
-import { getManagedWallet, getManagedSigner } from './managed.js';
+import { getManagedWallet, getManagedSigner, getReserveSponsor } from './managed.js';
+import { sponsorFees } from './sponsorship.js';
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -73,7 +74,8 @@ export async function buildTransaction(req: BuildTransactionRequest): Promise<Bu
   let tx = builder.setTimeout(180).build();
   tx = (await (await getManagedSigner(req.userId)).sign(tx)) as typeof tx; // delegated signing
 
-  return { xdr: tx.toXDR(), hash: tx.hash().toString('hex') };
+  const envelope = env.accountFunding === 'sponsor' ? await sponsorFees(await getReserveSponsor(), tx) : tx;
+  return { xdr: envelope.toXDR(), hash: envelope.hash().toString('hex') };
 }
 
 /** Submit a signed transaction envelope (managed or external-wallet) to Horizon. */
@@ -86,7 +88,7 @@ export async function submitTransaction(xdr: string): Promise<SubmitTransactionR
     throw httpError('Invalid transaction XDR', 400, 'ValidationError');
   }
   try {
-    const res = await horizon.submitTransaction(tx);
+    const res = await submitToHorizon(tx, 'transaction submit');
     return {
       hash: res.hash,
       successful: res.successful,

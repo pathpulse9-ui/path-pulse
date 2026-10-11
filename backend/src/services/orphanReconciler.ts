@@ -1,35 +1,65 @@
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { carretLive } from '../config/env.js';
-import { getOfframpOrder, mapCarretStatus } from './carret.js';
-import { appendEvent, listInFlight, updateStatus } from './offrampStore.js';
-import { getMapping } from './carretSubAccountStore.js';
+import { carretTimestampMs, listOfframpOrders, mapCarretStatus, type CarretOrder } from './carret.js';
+import { listOrphanCandidates, type OrphanCandidate } from './offRampStore.js';
+import { attachCarretOrder, reconcileSessionStatus } from './offramp.js';
 
 /**
  * Off-ramp reconciler (D4 / T2).
  *
- * Runs every N seconds. Scans persisted off-ramp sessions in a non-terminal
- * state that haven't received an update recently, asks Carret what the
- * current order status is, and — when they disagree — writes an
- * `off_ramp_status_events` row (source: `reconciler`) and updates the
- * session's status to match.
+ * Runs every 60s over every off-ramp session that is still non-terminal and
+ * older than the stale window, and converges it against Carret's own order
+ * list. Two failure modes are recovered:
  *
- * Why: if Carret's webhook drops (network blip, our process restarts
- * mid-flight, the signature verification rejects a legit event) the
- * session never leaves its interim status. The reconciler is a
- * self-healing second-source-of-truth that closes the loop on the next
- * pass — the timing gap is bounded by the interval (default 60s) and
- * the healing event is auditable in `off_ramp_status_events`.
+ *   1. **Missed callback** — the session holds a Carret order id but the
+ *      webhook never arrived (dropped delivery, backend restart mid-flight).
+ *      The order is re-read and its status applied.
+ *   2. **Interrupted session** — `POST /offramp/place_order/` timed out, so we
+ *      never learned the order id. Carret's order list is matched on
+ *      (asked_quantity, created_at ±5min) and the order is bound to the
+ *      session before its status is applied.
  *
- * Set `CARRET_RECONCILER_INTERVAL_MS` to override the cadence. Set
- * `CARRET_RECONCILER_MIN_AGE_S` to change the minimum session age
- * before a sweep touches it (default 30s so a fresh place_order isn't
- * immediately re-checked).
+ * Every transition it makes is written to `off_ramp_status_events` with
+ * `source = 'reconciler'`, so a recovered session is distinguishable from one
+ * that completed normally, and the settlement batch link is preserved
+ * throughout — recovery never detaches a session from its batch.
+ *
+ * Kicks off automatically on server boot via `startOrphanReconciler()`.
+ * `CARRET_RECONCILER_INTERVAL_MS` overrides the 60s cadence,
+ * `CARRET_RECONCILER_STALE_SECONDS` the 30s stale window.
  */
 
 const INTERVAL_MS = Number(process.env.CARRET_RECONCILER_INTERVAL_MS ?? 60_000);
-const MIN_AGE_S = Number(process.env.CARRET_RECONCILER_MIN_AGE_S ?? 30);
+const STALE_SECONDS = Number(process.env.CARRET_RECONCILER_STALE_SECONDS ?? 30);
+const MATCH_WINDOW_MS = 5 * 60 * 1000;
+
 let timer: NodeJS.Timeout | null = null;
+
+export interface ReconcileOutcome {
+  sessionId: string;
+  settlementBatchId: string | null;
+  carretOrderId: string | null;
+  matchedBy: 'order_id' | 'amount_and_time' | null;
+  from: string;
+  to: string | null;
+  action: 'recovered' | 'unchanged' | 'unmatched' | 'failed';
+  error?: string;
+}
+
+export interface ReconcileReport {
+  scanned: number;
+  recovered: number;
+  unmatched: number;
+  failed: number;
+  outcomes: ReconcileOutcome[];
+}
+
+export interface ReconcileDeps {
+  listOrders: (accountId: number | string) => Promise<CarretOrder[]>;
+}
+
+const liveDeps: ReconcileDeps = { listOrders: (accountId) => listOfframpOrders(accountId) };
 
 export function startOrphanReconciler(): void {
   if (timer) return;
@@ -44,9 +74,8 @@ export function startOrphanReconciler(): void {
   timer = setInterval(() => {
     reconcileOnce().catch((e) => logger.warn({ err: e }, 'reconcile pass failed'));
   }, INTERVAL_MS);
-  // Unref so this doesn't hold the process open in tests / short-lived runs.
   timer.unref?.();
-  logger.info({ intervalMs: INTERVAL_MS, minAgeSeconds: MIN_AGE_S }, 'offramp reconciler started');
+  logger.info({ intervalMs: INTERVAL_MS, staleSeconds: STALE_SECONDS }, 'orphan reconciler started');
 }
 
 export function stopOrphanReconciler(): void {
@@ -56,108 +85,143 @@ export function stopOrphanReconciler(): void {
   }
 }
 
-export interface ReconcileResult {
-  scanned: number;
-  healed: number;
-  unchanged: number;
-  failed: number;
-  details: Array<{
-    sessionId: string;
-    carretOrderId: string;
-    from: string;
-    to: string | null;
-    settlementBatchId?: string | null;
-    outcome: 'healed' | 'unchanged' | 'failed';
-    error?: string;
-  }>;
-}
+/**
+ * One reconciliation pass. Exposed so tests, the ops endpoint and cron
+ * entrypoints can trigger a single sweep instead of waiting for the interval.
+ * `deps` is injectable so the recovery path is testable without Carret.
+ */
+export async function reconcileOnce(deps: ReconcileDeps = liveDeps): Promise<ReconcileReport> {
+  const candidates = await listOrphanCandidates(STALE_SECONDS).catch((e) => {
+    logger.debug({ err: e }, 'reconcile query skipped');
+    return [] as OrphanCandidate[];
+  });
 
-export async function reconcileOnce(): Promise<ReconcileResult> {
-  const out: ReconcileResult = { scanned: 0, healed: 0, unchanged: 0, failed: 0, details: [] };
-  if (!env.databaseUrl) return out;
+  const report: ReconcileReport = {
+    scanned: candidates.length,
+    recovered: 0,
+    unmatched: 0,
+    failed: 0,
+    outcomes: [],
+  };
 
-  const inflight = await listInFlight(MIN_AGE_S, 100);
-  out.scanned = inflight.length;
-  if (!inflight.length) return out;
+  const ordersByAccount = new Map<string, CarretOrder[]>();
+  const claimed = new Set(
+    candidates.map((c) => c.carretOrderId).filter((id): id is string => Boolean(id)),
+  );
 
-  for (const s of inflight) {
-    // Sessions without a Carret order id are provider-native (Ramp) or
-    // haven't reached place_order yet — nothing to reconcile against Carret.
-    if (!s.carretOrderId) continue;
+  for (const candidate of candidates) {
+    const accountId = candidate.carretAccountId ?? String(env.carret.accountId ?? '');
+    if (!accountId) {
+      report.unmatched += 1;
+      report.outcomes.push(outcome(candidate, null, null, 'unmatched'));
+      continue;
+    }
 
     try {
-      if (!carretLive) {
-        // No credentials — still record we scanned but couldn't act.
-        await appendEvent(s.id, 'reconciler', null, null, { note: 'carret-not-live' });
-        out.unchanged += 1;
-        out.details.push({
-          sessionId: s.id, carretOrderId: String(s.carretOrderId),
-          from: s.status, to: null, settlementBatchId: s.settlementBatchId ?? null,
-          outcome: 'unchanged',
-        });
+      if (!ordersByAccount.has(accountId)) {
+        ordersByAccount.set(accountId, await deps.listOrders(accountId));
+      }
+      const orders = ordersByAccount.get(accountId) ?? [];
+
+      const match = candidate.carretOrderId
+        ? orders.find((o) => String(o.id) === candidate.carretOrderId)
+        : matchByAmountAndTime(orders, candidate, claimed);
+
+      if (!match) {
+        report.unmatched += 1;
+        report.outcomes.push(outcome(candidate, null, null, 'unmatched'));
         continue;
       }
 
-      // Resolve the driver's own Carret account_id — env.carret.accountId
-      // is a shared-dev fallback, and Carret's /offramp/orders/?account_id=X
-      // only surfaces orders under X, so we MUST pass the account that
-      // owns this session's order.
-      const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
-      const orderAccountId = mapping?.carretAccountId;
-      const order = await getOfframpOrder(s.carretOrderId, orderAccountId);
-      const mapped = mapCarretStatus(order.status);
-
-      if (mapped && mapped !== s.status) {
-        await updateStatus(s.id, mapped);
-        await appendEvent(s.id, 'reconciler', order.status, mapped, {
-          carretOrderId: order.id,
-          settlementBatchId: s.settlementBatchId,
-          heal: `${s.status} -> ${mapped}`,
-        });
-        out.healed += 1;
-        out.details.push({
-          sessionId: s.id, carretOrderId: String(s.carretOrderId),
-          from: s.status, to: mapped, settlementBatchId: s.settlementBatchId ?? null,
-          outcome: 'healed',
-        });
-        logger.info(
-          {
-            sessionId: s.id,
-            carretOrderId: order.id,
-            from: s.status,
-            to: mapped,
-            settlementBatchId: s.settlementBatchId,
-          },
-          'reconciler healed drifted session',
-        );
-      } else {
-        // Confirmed still in-flight (Carret agrees with us). Skip event
-        // spam — only log convergence and the healing case.
-        out.unchanged += 1;
-        out.details.push({
-          sessionId: s.id, carretOrderId: String(s.carretOrderId),
-          from: s.status, to: mapped ?? null,
-          settlementBatchId: s.settlementBatchId ?? null,
-          outcome: 'unchanged',
-        });
+      const matchedBy = candidate.carretOrderId ? 'order_id' : 'amount_and_time';
+      if (matchedBy === 'amount_and_time') {
+        claimed.add(String(match.id));
+        await attachCarretOrder(candidate.sessionId, String(match.id));
       }
-    } catch (e) {
-      out.failed += 1;
-      out.details.push({
-        sessionId: s.id, carretOrderId: String(s.carretOrderId),
-        from: s.status, to: null,
-        settlementBatchId: s.settlementBatchId ?? null,
-        outcome: 'failed', error: (e as Error).message,
+
+      const mapped = mapCarretStatus(match.status);
+      if (!mapped || mapped === candidate.status) {
+        report.outcomes.push(outcome(candidate, String(match.id), matchedBy, 'unchanged'));
+        continue;
+      }
+
+      await reconcileSessionStatus(candidate.sessionId, mapped, {
+        carretOrderId: String(match.id),
+        carretStatus: match.status,
+        matchedBy,
+        settlementBatchId: candidate.settlementBatchId,
       });
-      logger.warn({ err: e, sessionId: s.id }, 'reconcile call failed');
+      report.recovered += 1;
+      report.outcomes.push({
+        ...outcome(candidate, String(match.id), matchedBy, 'recovered'),
+        to: mapped,
+      });
+      logger.info(
+        {
+          sessionId: candidate.sessionId,
+          carretOrderId: String(match.id),
+          settlementBatchId: candidate.settlementBatchId,
+          from: candidate.status,
+          to: mapped,
+          matchedBy,
+        },
+        'orphan session recovered from Carret order list',
+      );
+    } catch (e) {
+      report.failed += 1;
+      report.outcomes.push({
+        ...outcome(candidate, candidate.carretOrderId, null, 'failed'),
+        error: (e as Error).message,
+      });
+      logger.warn({ err: e, sessionId: candidate.sessionId }, 'orphan reconcile call failed');
     }
   }
 
-  if (out.scanned > 0) {
+  if (report.scanned > 0) {
     logger.info(
-      { scanned: out.scanned, healed: out.healed, unchanged: out.unchanged, failed: out.failed },
-      'offramp reconciler pass complete',
+      { scanned: report.scanned, recovered: report.recovered, unmatched: report.unmatched, failed: report.failed },
+      'orphan reconciler pass complete',
     );
   }
-  return out;
+  return report;
+}
+
+/**
+ * An interrupted `place_order` leaves no order id, so the only handle we have
+ * is the amount and roughly when it was placed. Requiring both, and refusing
+ * an order another session already owns, keeps one Carret order from being
+ * credited to two withdrawals.
+ */
+function matchByAmountAndTime(
+  orders: CarretOrder[],
+  candidate: OrphanCandidate,
+  claimed: Set<string>,
+): CarretOrder | undefined {
+  const createdAt = new Date(candidate.createdAt).getTime();
+  const wanted = Number(candidate.amount);
+
+  return orders.find((o) => {
+    if (claimed.has(String(o.id))) return false;
+    if (Number(o.asked_quantity) !== wanted) return false;
+    const placedAt = carretTimestampMs(o.created_at);
+    if (placedAt === null) return false;
+    return Math.abs(placedAt - createdAt) <= MATCH_WINDOW_MS;
+  });
+}
+
+function outcome(
+  candidate: OrphanCandidate,
+  carretOrderId: string | null,
+  matchedBy: ReconcileOutcome['matchedBy'],
+  action: ReconcileOutcome['action'],
+): ReconcileOutcome {
+  return {
+    sessionId: candidate.sessionId,
+    settlementBatchId: candidate.settlementBatchId,
+    carretOrderId,
+    matchedBy,
+    from: candidate.status,
+    to: null,
+    action,
+  };
 }

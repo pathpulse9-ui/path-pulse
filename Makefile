@@ -42,9 +42,27 @@ NEXT_PUBLIC_GOOGLE_CLIENT_ID ?= $(shell aws apprunner describe-service --region 
 # SIGNER_BACKEND, STELLAR_NETWORK) and localhost-only keys (SDP_BASE_URL, REDIS_URL).
 ENV_ALLOW := GOOGLE_CLIENT_ID OFFRAMP_PROVIDER ROUTING_PROVIDERS ROUTING_ASSETS ROUTING_QUOTE_TIMEOUT_MS ROUTING_SETTLEMENT_ASSET STELLARBROKER_PARTNER_KEY STELLARBROKER_API_URL CARRET_API_KEY CARRET_ACCOUNT_ID CARRET_BASE_URL CARRET_BANK_ID CARRET_WEBHOOK_SECRET CARRET_CHAIN CARRET_CRYPTO CARRET_FIAT CARRET_INDICATIVE_RATE CARRET_HTTPS_PROXY CARRET_ALLOW_TESTNET RAMP_API_KEY RAMP_WEBHOOK_PUBLIC_KEY RAMP_WIDGET_URL RAMP_HOST_APP_NAME OFFRAMP_CRYPTO OFFRAMP_ASSET_ID OFFRAMP_FIAT OFFRAMP_INDICATIVE_RATE SDP_API_KEY SDP_WALLET_ID SDP_ASSET_ID SDP_TENANT_NAME SDP_CONTACT_DOMAIN SDP_REGISTRATION_CONTACT_TYPE SDP_VERIFICATION_FIELD SDP_RETRY_ATTEMPTS SDP_RETRY_BASE_DELAY_MS
 
+# PulseGen syncs only when its endpoint is reachable from App Runner. A loopback
+# URL is a local stub: pushing it would leave the deployed service advertising an
+# endpoint it cannot reach, while scores silently fall back to delivered batches.
+PULSEGEN_URL   := $(shell grep -m1 '^PULSEGEN_BASE_URL=' $(ENV_FILE) 2>/dev/null | cut -d= -f2-)
+PULSEGEN_LOCAL := $(shell printf '%s' '$(PULSEGEN_URL)' | grep -Eqi '127\.0\.0\.1|localhost|\[::1\]' && echo 1)
+ENV_ALLOW_EFF  := $(ENV_ALLOW)$(if $(PULSEGEN_URL),$(if $(PULSEGEN_LOCAL),, PULSEGEN_BASE_URL PULSEGEN_API_KEY))
+
 UPD := python3 scripts/apprunner-update.py --region $(REGION)
 
-.PHONY: help check login deploy deploy-api deploy-web env status verify verify-api verify-web rollback-api rollback-web _wait-api _wait-web
+.PHONY: help check login deploy deploy-api deploy-web env status verify verify-api verify-web rollback-api rollback-web _wait-api _wait-web _pulsegen-notice
+
+_pulsegen-notice:
+	if [ -n '$(PULSEGEN_LOCAL)' ]; then \
+	  echo "pulsegen  : NOT synced — $(PULSEGEN_URL) is loopback, unreachable from App Runner."; \
+	  echo "            deployed scores resolve from delivered batches. Set a reachable"; \
+	  echo "            PULSEGEN_BASE_URL in $(ENV_FILE) to sync it."; \
+	elif [ -n '$(PULSEGEN_URL)' ]; then \
+	  echo "pulsegen  : syncing PULSEGEN_BASE_URL + PULSEGEN_API_KEY"; \
+	else \
+	  echo "pulsegen  : no PULSEGEN_BASE_URL set — deployed scores resolve from delivered batches."; \
+	fi
 
 help:
 	grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -69,7 +87,8 @@ deploy-api: check login ## backend: build, push, sync env, roll
 	echo ">> backend $(ECR)/pathpulse-backend:$(TAG)"
 	docker buildx build --platform $(PLATFORM) --provenance=false --sbom=false -f backend/Dockerfile -t $(ECR)/pathpulse-backend:$(TAG) --load .
 	docker push $(ECR)/pathpulse-backend:$(TAG)
-	$(UPD) --arn '$(API_ARN)' --image $(ECR)/pathpulse-backend:$(TAG) --env-file '$(ENV_FILE)' --allow '$(ENV_ALLOW)'
+	$(MAKE) _pulsegen-notice
+	$(UPD) --arn '$(API_ARN)' --image $(ECR)/pathpulse-backend:$(TAG) --env-file '$(ENV_FILE)' --allow '$(ENV_ALLOW_EFF)'
 	$(MAKE) _wait-api
 	$(MAKE) verify-api
 
@@ -83,7 +102,8 @@ deploy-web: login ## web: build (with build args), push, roll
 	$(MAKE) verify-web
 
 env: ## sync API env vars from $(ENV_FILE) only (no rebuild)
-	$(UPD) --arn '$(API_ARN)' --env-file '$(ENV_FILE)' --allow '$(ENV_ALLOW)'
+	$(MAKE) _pulsegen-notice
+	$(UPD) --arn '$(API_ARN)' --env-file '$(ENV_FILE)' --allow '$(ENV_ALLOW_EFF)'
 	$(MAKE) _wait-api
 	$(MAKE) verify-api
 
