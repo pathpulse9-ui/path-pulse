@@ -1,3 +1,8 @@
+// Sentry must be imported + initialized before anything else so its
+// instrumentation can patch the http/express modules on first use.
+import { initSentry } from './observability/sentry.js';
+initSentry();
+
 import { createServer } from './server.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';

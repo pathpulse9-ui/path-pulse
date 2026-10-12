@@ -80,6 +80,16 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
         client.get("$baseUrl/v1/offramp/sessions") { parameter("limit", limit) }
             .ensureSuccess().body()
 
+    suspend fun onRampSessions(limit: Int = 50): OnRampSessionPage =
+        client.get("$baseUrl/v1/onramp/sessions") { parameter("limit", limit) }
+            .ensureSuccess().body()
+
+    suspend fun onRampSession(id: String): OnRampSession =
+        client.get("$baseUrl/v1/onramp/sessions/$id").ensureSuccess().body()
+
+    suspend fun offRampSessionEvents(id: String): OffRampSessionEvents =
+        client.get("$baseUrl/v1/offramp/sessions/$id/events").ensureSuccess().body()
+
     suspend fun scoutRoster(): ScoutRoster =
         client.get("$baseUrl/v1/scout").ensureSuccess().body()
 
@@ -217,11 +227,15 @@ class DataRepository(private val client: HttpClient = ApiClient.http, private va
     suspend fun offRampQuote(amount: String): OffRampQuote =
         client.get("$baseUrl/v1/offramp/quotes") { parameter("amount", amount) }.ensureSuccess().body()
 
-    suspend fun createOffRampSession(amount: String, idempotencyKey: String): OffRampSession =
+    suspend fun createOffRampSession(
+        amount: String,
+        settlementBatchId: String,
+        idempotencyKey: String,
+    ): OffRampSession =
         client.post("$baseUrl/v1/offramp/sessions") {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", idempotencyKey)
-            setBody(CreateOffRampRequest(amount))
+            setBody(CreateOffRampRequest(amount = amount, settlementBatchId = settlementBatchId))
         }.ensureSuccess().body()
 
     suspend fun offRampSession(id: String): OffRampSession =

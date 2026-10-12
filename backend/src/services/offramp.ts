@@ -1,5 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Asset, BASE_FEE, Keypair, Memo, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
+import { horizon, submitToHorizon } from '../stellar/network.js';
+import { getManagedSigner, getManagedWallet } from '../stellar/managed.js';
+import { logger } from '../config/logger.js';
 import type {
   AssetRef,
   CreateOffRampWithdrawalRequest,
@@ -64,6 +67,50 @@ function httpError(message: string, status: number, name: string): Error {
   e.name = name;
   e.status = status;
   return e;
+}
+
+/**
+ * Carret mainnet off-ramp — Stellar leg.
+ *
+ * `placeOfframpOrder` only tells Carret "I will send you USDC"; the on-chain
+ * transfer is still on us. Build a payment from the driver's managed wallet
+ * to Carret's deposit address (with the memo they returned so they can
+ * correlate on their side), sign via KMS/managed signer, submit to Horizon.
+ *
+ * USDC on Stellar mainnet is issued by Circle at
+ * `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`. Overridable via
+ * `CARRET_USDC_ISSUER` for Carret-specific wrapped assets if that ever
+ * changes.
+ */
+async function broadcastCarretDeposit(params: {
+  userId: string;
+  destination: string;
+  memo?: string;
+  amount: string;
+}): Promise<string> {
+  const wallet = await getManagedWallet(params.userId);
+  if (!wallet) {
+    throw httpError(`Managed wallet not provisioned for user ${params.userId}`, 500, 'ConfigError');
+  }
+  const signer = await getManagedSigner(params.userId);
+  const issuer = process.env.CARRET_USDC_ISSUER ?? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  const asset = new Asset('USDC', issuer);
+
+  const source = await horizon.loadAccount(wallet.address);
+  const builder = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase: env.networkPassphrase,
+  }).addOperation(Operation.payment({
+    destination: params.destination,
+    asset,
+    amount: params.amount,
+  }));
+  if (params.memo) builder.addMemo(Memo.text(params.memo));
+
+  let tx = builder.setTimeout(180).build();
+  tx = (await signer.sign(tx)) as typeof tx;
+  const res = await submitToHorizon(tx, 'carret deposit payment');
+  return res.hash;
 }
 
 export interface OffRampContext {
@@ -226,6 +273,34 @@ const carretLiveProvider: OffRampProvider = {
     session.fiatAmountEstimate = fiatInr.toFixed(2);
     session.merchantTransactionId = String(order.id);
     session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
+
+    // On-chain USDC deposit — the piece Stellar's T2 review flagged as
+    // missing. We hold the driver's funds in a managed wallet, so the
+    // backend signs + submits a payment to the deposit address Carret
+    // returned, with Carret's memo attached so they can correlate.
+    //
+    // Guarded on STELLAR_NETWORK=mainnet. The CARRET_ALLOW_TESTNET escape
+    // hatch continues to skip the broadcast so devs can click the flow
+    // without needing real USDC. The ppUserId gate skips the broadcast
+    // when there is no managed wallet (external-wallet drivers still
+    // deposit via the anchor webview themselves).
+    if (env.network === 'mainnet' && s.ppUserId) {
+      try {
+        const txHash = await broadcastCarretDeposit({
+          userId: s.ppUserId,
+          destination: deposit.address,
+          memo: deposit.memo_label ?? undefined,
+          amount: session.amount,
+        });
+        s.stellarTxHash = txHash;
+        s.network = 'mainnet';
+      } catch (e) {
+        // Log and continue — Carret still has an open order; the orphan
+        // reconciler will keep it in sight and ops can retry the deposit
+        // out of band. Better than crashing the whole place_order.
+        logger?.warn?.({ err: e, sessionId: session.id }, 'carret deposit broadcast failed');
+      }
+    }
 
     // PAT-80: record the successful order against the daily bucket.
     if (mapping) {

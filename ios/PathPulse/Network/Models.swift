@@ -388,6 +388,22 @@ struct OnRampSessionPage: Codable {
     let items: [OnRampSession]
 }
 
+// MARK: - Off-ramp status event log (D4/T2 history drilldown)
+
+struct OffRampStatusEvent: Codable, Hashable, Identifiable {
+    let id: String
+    let source: String       // "placed" | "create" | "webhook" | "poll" | "reconciler" | "client"
+    var carretStatus: String?
+    var mappedStatus: String?
+    let receivedAt: String
+}
+
+struct OffRampSessionEvents: Codable {
+    let sessionId: String
+    var settlementBatchId: String?
+    let events: [OffRampStatusEvent]
+}
+
 struct DistributionAccount: Codable, Equatable, Hashable, Identifiable {
     let role: String        // "partner_revenue" | "driver_pool" | "treasury"
     let publicKey: String

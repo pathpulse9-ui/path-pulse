@@ -12,6 +12,7 @@
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "latest",
     "@pathpulse/contract": "workspace:*",
+    "@sentry/nextjs": "^11.6.0",
     "@stellar/stellar-sdk": "latest",
     "lucide-react": "latest",
     "next": "16.2.12",

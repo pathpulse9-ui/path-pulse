@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   Award,
   Banknote,
+  Clock,
   Landmark,
   Send,
   ShieldCheck,
@@ -58,6 +59,13 @@ export const SECTIONS = [
     icon: Wallet,
     description:
       'Top up your Carret trading wallet with INR from your registered bank — quote, place order, watch it fill.',
+  },
+  {
+    label: 'History',
+    href: '/dashboard/history',
+    icon: Clock,
+    description:
+      'Every off-ramp and on-ramp session for this driver, chronological, with the full status-event log for each.',
   },
   {
     label: 'Treasury',

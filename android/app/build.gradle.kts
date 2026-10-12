@@ -24,6 +24,8 @@ android {
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${prop("pathpulse.firebase.projectId")}\"")
         buildConfigField("String", "FIREBASE_API_KEY", "\"${prop("pathpulse.firebase.apiKey")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${prop("pathpulse.firebase.senderId")}\"")
+        buildConfigField("String", "SENTRY_DSN", "\"${prop("pathpulse.sentry.dsn")}\"")
+        buildConfigField("String", "SENTRY_ENVIRONMENT", "\"${prop("pathpulse.sentry.environment")}\"")
     }
 
     buildTypes {
@@ -68,6 +70,10 @@ dependencies {
     implementation(libs.googleid)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+
+    // Sentry — manual init in PathPulseApp.onCreate, gated on a non-empty
+    // sentry.properties DSN so dev + CI builds stay silent.
+    implementation(libs.sentry.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

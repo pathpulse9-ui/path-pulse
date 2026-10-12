@@ -1,5 +1,8 @@
 package com.pathpulse.driver.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,11 +18,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -31,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -41,6 +48,7 @@ import com.pathpulse.driver.network.DataRepository
 import com.pathpulse.driver.network.OffRampQuote
 import com.pathpulse.driver.network.OffRampSession
 import com.pathpulse.driver.network.RegisterCarretBankRequest
+import com.pathpulse.driver.network.SettlementBatch
 import com.pathpulse.driver.network.UserErrors
 import com.pathpulse.driver.ui.components.PpCard
 import com.pathpulse.driver.ui.components.PpPrimaryButton
@@ -169,7 +177,18 @@ fun WithdrawSheet(
     var placed by remember { mutableStateOf<OffRampSession?>(null) }
     var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var batches by remember { mutableStateOf<List<SettlementBatch>?>(null) }
+    var selectedBatchId by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        if (batches == null) {
+            runCatching { dataRepository.settlementBatches(10) }.getOrNull()?.let { page ->
+                batches = page.items
+                if (selectedBatchId == null) selectedBatchId = page.items.firstOrNull()?.id
+            }
+        }
+    }
 
     LaunchedEffect(amount) {
         quote = null
@@ -217,6 +236,13 @@ fun WithdrawSheet(
                     placeholder = "0",
                     keyboard = KeyboardType.Decimal,
                 )
+
+                SettlementBatchPicker(
+                    batches = batches,
+                    selectedId = selectedBatchId,
+                    onPick = { selectedBatchId = it },
+                )
+
                 if (quoting) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.padding(end = PpSpace.sm).size(18.dp), color = PpMint, strokeWidth = 2.dp)
@@ -233,15 +259,16 @@ fun WithdrawSheet(
                 }
                 PpPrimaryButton(
                     text = if (placing) "Placing…" else "Confirm withdrawal",
-                    enabled = quote != null && !quoting && !placing,
+                    enabled = quote != null && !quoting && !placing && selectedBatchId != null,
                     onClick = {
+                        val batchId = selectedBatchId ?: return@PpPrimaryButton
                         if (pending?.first != amount) pending = amount to UUID.randomUUID().toString()
                         val key = pending!!.second
                         placing = true
                         error = null
                         scope.launch {
                             try {
-                                placed = dataRepository.createOffRampSession(amount, key)
+                                placed = dataRepository.createOffRampSession(amount, batchId, key)
                                 pending = null
                             } catch (e: Exception) {
                                 if (!isRetryable(e)) pending = null
@@ -341,6 +368,68 @@ private fun SheetField(
             modifier = Modifier.fillMaxWidth(),
         )
         hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = PpRed600, modifier = Modifier.padding(top = PpSpace.xs)) }
+    }
+}
+
+@Composable
+private fun SettlementBatchPicker(
+    batches: List<SettlementBatch>?,
+    selectedId: String?,
+    onPick: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column {
+        Text(
+            "Settlement batch",
+            style = MaterialTheme.typography.labelSmall,
+            color = PpBlack40,
+            modifier = Modifier.padding(bottom = PpSpace.xs),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .border(1.dp, PpBlack15, RoundedCornerShape(14.dp))
+                .background(PpSurface)
+                .clickable { open = true }
+                .padding(PpSpace.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                selectedId ?: when {
+                    batches == null -> "Loading recent batches…"
+                    batches.isEmpty() -> "No settlement batches yet"
+                    else -> "Pick a settlement batch…"
+                },
+                color = if (selectedId == null) PpBlack40 else PpBlack70,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Text("▾", color = PpBlack40)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            batches.orEmpty().forEach { b ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(b.id, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "${b.grossAmount} ${b.asset.code} · ${b.createdAt.take(10)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PpBlack40,
+                            )
+                        }
+                    },
+                    onClick = { onPick(b.id); open = false },
+                )
+            }
+        }
+        Text(
+            "Required — binds this withdrawal to the on-chain settlement batch it draws from.",
+            style = MaterialTheme.typography.bodySmall,
+            color = PpBlack40,
+            modifier = Modifier.padding(top = PpSpace.xs),
+        )
     }
 }
 

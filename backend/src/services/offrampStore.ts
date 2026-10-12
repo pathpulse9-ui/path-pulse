@@ -19,6 +19,8 @@ export interface StoredOffRampSession extends OffRampSession {
   carretOrderId?: string;
   carretQuoteId?: string;
   carretDepositMemo?: string | null;
+  stellarTxHash?: string;
+  network?: string;
 }
 
 export type OffRampEventSource = 'create' | 'poll' | 'webhook' | 'reconciler' | 'client';

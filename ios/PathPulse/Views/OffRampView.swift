@@ -16,6 +16,7 @@ struct OffRampView: View {
     @State private var withdrawSheetOpen = false
     @State private var bankSheetOpen = false
     @State private var onrampSheetOpen = false
+    @State private var historySheetOpen = false
     @State private var banks: [CarretBank]? = nil
     @State private var wallets: [CarretWalletBalance]? = nil
 
@@ -62,10 +63,29 @@ struct OffRampView: View {
                 }
 
                 PpCard {
-                    PpCardHeader(
-                        title: sessions.count == 1 ? "1 withdrawal" : "\(sessions.count) withdrawals",
-                        subtitle: "Convert your USDC rewards to INR in your bank."
-                    )
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(sessions.count == 1 ? "1 withdrawal" : "\(sessions.count) withdrawals")
+                                .font(PathPulseFont.titleMedium)
+                                .foregroundStyle(PathPulseColor.black)
+                            Text("Convert your USDC rewards to INR in your bank.")
+                                .font(PathPulseFont.bodySmall)
+                                .foregroundStyle(PathPulseColor.black60)
+                        }
+                        Spacer()
+                        Button(action: { historySheetOpen = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("History")
+                                    .font(PathPulseFont.labelSmall)
+                            }
+                            .foregroundStyle(PathPulseColor.black70)
+                            .padding(.horizontal, PpSpace.sm)
+                            .padding(.vertical, 6)
+                            .overlay(Capsule().stroke(PathPulseColor.black15, lineWidth: 1))
+                        }
+                    }
 
                     if sessions.isEmpty && !loading {
                         PpEmptyState(
@@ -100,11 +120,11 @@ struct OffRampView: View {
         .sheet(isPresented: $withdrawSheetOpen, onDismiss: { Task { await refresh() } }) {
             WithdrawSheet(data: data, limits: limits, wallets: wallets)
         }
-        .sheet(isPresented: $bankSheetOpen, onDismiss: { Task { await refresh() } }) {
-            BankRegistrationSheet(data: data, existingBanks: banks ?? [])
-        }
         .sheet(isPresented: $onrampSheetOpen, onDismiss: { Task { await refresh() } }) {
             OnRampSheet(data: data, bankHint: (banks ?? []).first { $0.status.lowercased() == "verified" })
+        }
+        .sheet(isPresented: $historySheetOpen, onDismiss: { Task { await refresh() } }) {
+            HistoryView()
         }
     }
 
@@ -290,238 +310,6 @@ struct OffRampView: View {
     }
 }
 
-// MARK: - Bank registration sheet
-
-/// Register a payout bank against the driver's Carret sub-account.
-/// Fires POST /v1/carret/banks, then polls listCarretBanks every 4s
-/// so the driver watches "Pending" → "Verified" without leaving the sheet.
-private struct BankRegistrationSheet: View {
-    let data: DataRepository
-    let existingBanks: [CarretBank]
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var accountNo: String = ""
-    @State private var confirmAccountNo: String = ""
-    @State private var ifsc: String = ""
-    @State private var holder: String = ""
-    @State private var bankName: String = ""
-    @State private var submitting = false
-    @State private var error: String? = nil
-    @State private var banks: [CarretBank]
-    @State private var pollTask: Task<Void, Never>? = nil
-
-    init(data: DataRepository, existingBanks: [CarretBank]) {
-        self.data = data
-        self.existingBanks = existingBanks
-        _banks = State(initialValue: existingBanks)
-    }
-
-    private var ifscValid: Bool { ifsc.range(of: "^[A-Z]{4}0[A-Z0-9]{6}$", options: .regularExpression) != nil }
-    private var accountValid: Bool { accountNo.range(of: "^[0-9]{9,18}$", options: .regularExpression) != nil }
-    private var accountsMatch: Bool { accountNo == confirmAccountNo && !accountNo.isEmpty }
-    private var canSubmit: Bool {
-        !submitting && ifscValid && accountValid && accountsMatch
-            && !holder.trimmingCharacters(in: .whitespaces).isEmpty
-            && !bankName.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-    private var hasVerified: Bool { banks.contains { $0.status.lowercased() == "verified" } }
-    private var hasPending: Bool { banks.contains { $0.status.lowercased() == "pending" } }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                PathPulseColor.background.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: PpSpace.lg) {
-                        if !banks.isEmpty { banksList }
-                        if !hasVerified { form }
-                    }
-                    .padding(PpSize.screenPadding)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("Payout bank")
-                        .font(PathPulseFont.labelLarge)
-                        .foregroundStyle(PathPulseColor.black)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark").foregroundStyle(PathPulseColor.black)
-                    }
-                }
-            }
-        }
-        .onAppear { pollPending() }
-        .onDisappear { pollTask?.cancel() }
-    }
-
-    @ViewBuilder private var banksList: some View {
-        VStack(spacing: PpSpace.sm) {
-            ForEach(banks) { b in
-                HStack(spacing: PpSpace.md) {
-                    ZStack {
-                        Circle().fill(colorFor(b.status).opacity(0.18)).frame(width: 36, height: 36)
-                        Image(systemName: iconFor(b.status))
-                            .foregroundStyle(colorFor(b.status))
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(b.bank_name) ••\(b.last4)")
-                            .font(PathPulseFont.bodyMedium)
-                            .foregroundStyle(PathPulseColor.black)
-                        Text(b.bank_ifsc)
-                            .font(PathPulseFont.bodySmall)
-                            .foregroundStyle(PathPulseColor.black50)
-                    }
-                    Spacer()
-                    PpStatusPill(text: b.status.capitalized, color: colorFor(b.status))
-                }
-                .padding(PpSpace.md)
-                .background(PathPulseColor.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(PathPulseColor.black05, lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-        }
-    }
-
-    @ViewBuilder private var form: some View {
-        VStack(alignment: .leading, spacing: PpSpace.md) {
-            Text(hasVerified ? "Add another bank" : "Register your bank")
-                .font(PathPulseFont.titleMedium)
-                .foregroundStyle(PathPulseColor.black)
-            Text("Carret runs a ₹1 penny-drop to prove you own the account. Funds are refunded automatically.")
-                .font(PathPulseFont.bodySmall)
-                .foregroundStyle(PathPulseColor.black60)
-
-            if let error {
-                HStack(alignment: .top, spacing: PpSpace.sm) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(PathPulseColor.red600)
-                    Text(error)
-                        .font(PathPulseFont.bodySmall)
-                        .foregroundStyle(PathPulseColor.red700)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(PpSpace.md)
-                .background(PathPulseColor.red100)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-
-            field("Account holder name (as per bank)", text: $holder, placeholder: "Aditya Kumar Singh", cap: .words)
-            field("Bank name", text: $bankName, placeholder: "HDFC Bank", cap: .words)
-            field("IFSC", text: Binding(
-                get: { ifsc },
-                set: { ifsc = $0.uppercased().filter { $0.isLetter || $0.isNumber } }
-            ), placeholder: "HDFC0001234", cap: .allCharacters, keyboard: .asciiCapable, valid: ifscValid || ifsc.isEmpty)
-            field("Account number", text: Binding(
-                get: { accountNo },
-                set: { accountNo = $0.filter(\.isNumber) }
-            ), placeholder: "9-18 digits", keyboard: .numberPad, valid: accountValid || accountNo.isEmpty)
-            field("Re-enter account number", text: Binding(
-                get: { confirmAccountNo },
-                set: { confirmAccountNo = $0.filter(\.isNumber) }
-            ), placeholder: "Must match above", keyboard: .numberPad, valid: accountsMatch || confirmAccountNo.isEmpty)
-
-            Button(action: { Task { await submit() } }) {
-                HStack(spacing: PpSpace.sm) {
-                    if submitting { ProgressView().tint(PathPulseColor.white) }
-                    Text(submitting ? "Verifying…" : "Register bank")
-                        .font(PathPulseFont.labelLarge)
-                        .foregroundStyle(PathPulseColor.white)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .background(canSubmit ? PathPulseColor.black : PathPulseColor.black50)
-                .clipShape(Capsule())
-            }
-            .disabled(!canSubmit)
-            .padding(.top, PpSpace.sm)
-        }
-    }
-
-    @ViewBuilder private func field(
-        _ label: String,
-        text: Binding<String>,
-        placeholder: String,
-        cap: TextInputAutocapitalization = .never,
-        keyboard: UIKeyboardType = .default,
-        valid: Bool = true
-    ) -> some View {
-        VStack(alignment: .leading, spacing: PpSpace.xs) {
-            Text(label)
-                .font(PathPulseFont.labelSmall)
-                .foregroundStyle(PathPulseColor.black50)
-            TextField(placeholder, text: text)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(cap)
-                .keyboardType(keyboard)
-                .font(PathPulseFont.bodyMedium)
-                .padding(PpSpace.md)
-                .background(PathPulseColor.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(valid ? PathPulseColor.black15 : PathPulseColor.red600, lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-    }
-
-    @MainActor private func submit() async {
-        guard canSubmit else { return }
-        submitting = true; error = nil
-        defer { submitting = false }
-        do {
-            let bank = try await data.registerCarretBank(.init(
-                bank_account_no: accountNo,
-                bank_ifsc: ifsc,
-                bank_account_name: holder.trimmingCharacters(in: .whitespaces),
-                bank_name: bankName.trimmingCharacters(in: .whitespaces)
-            ))
-            // Optimistic — merge/replace by id.
-            banks = banks.filter { $0.id != bank.id } + [bank]
-            accountNo = ""; confirmAccountNo = ""; ifsc = ""; holder = ""; bankName = ""
-            pollPending()
-        } catch {
-            self.error = UserErrors.message(error)
-        }
-    }
-
-    private func pollPending() {
-        pollTask?.cancel()
-        pollTask = Task {
-            while !Task.isCancelled {
-                if !hasPending { return }
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                if Task.isCancelled { return }
-                if let fresh = try? await data.listCarretBanks() {
-                    await MainActor.run { banks = fresh }
-                }
-            }
-        }
-    }
-
-    private func colorFor(_ status: String) -> Color {
-        switch status.lowercased() {
-        case "verified": return PathPulseColor.mint
-        case "pending":  return PathPulseColor.accentAmber
-        case "failed":   return PathPulseColor.red600
-        default:         return PathPulseColor.black40
-        }
-    }
-
-    private func iconFor(_ status: String) -> String {
-        switch status.lowercased() {
-        case "verified": return "checkmark.seal.fill"
-        case "pending":  return "clock.fill"
-        case "failed":   return "xmark.octagon.fill"
-        default:         return "building.columns"
-        }
-    }
-}
 
 // MARK: - Withdrawal sheet
 
@@ -540,6 +328,9 @@ private struct WithdrawSheet: View {
     @State private var error: String? = nil
     @State private var quoteTask: Task<Void, Never>? = nil
     @State private var pollTask: Task<Void, Never>? = nil
+    @State private var batches: [SettlementBatch] = []
+    @State private var selectedBatchId: String? = nil
+    @State private var loadingBatches = false
 
     var body: some View {
         NavigationStack {
@@ -591,6 +382,7 @@ private struct WithdrawSheet: View {
             ScrollView {
                 VStack(spacing: PpSpace.lg) {
                     amountCard
+                    batchPicker
                     if let q = quote { quotePreview(q) }
                     if quoting { quotingHint }
                     limitsHint
@@ -725,6 +517,61 @@ private struct WithdrawSheet: View {
         }
     }
 
+    @ViewBuilder private var batchPicker: some View {
+        VStack(alignment: .leading, spacing: PpSpace.xs) {
+            Text("Settlement batch")
+                .font(PathPulseFont.labelSmall)
+                .foregroundStyle(PathPulseColor.black50)
+            Menu {
+                if loadingBatches {
+                    Text("Loading recent batches…")
+                } else if batches.isEmpty {
+                    Text("No settlement batches yet")
+                } else {
+                    ForEach(batches) { b in
+                        Button(action: { selectedBatchId = b.id }) {
+                            VStack(alignment: .leading) {
+                                Text(b.id)
+                                Text("\(b.grossAmount) \(b.asset.code) · \(String(b.createdAt.prefix(10)))")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(selectedBatchId ?? "Pick a settlement batch…")
+                        .font(PathPulseFont.bodyMedium)
+                        .foregroundStyle(selectedBatchId == nil ? PathPulseColor.black40 : PathPulseColor.black)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(PathPulseColor.black40)
+                }
+                .padding(PpSpace.md)
+                .background(PathPulseColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(PathPulseColor.black15, lineWidth: 1),
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            Text("Required — every off-ramp session binds to the on-chain settlement batch it draws from.")
+                .font(PathPulseFont.bodySmall)
+                .foregroundStyle(PathPulseColor.black40)
+        }
+        .task {
+            if batches.isEmpty {
+                loadingBatches = true
+                defer { loadingBatches = false }
+                if let page = try? await data.settlementBatches(limit: 10) {
+                    batches = page.items
+                    if selectedBatchId == nil { selectedBatchId = page.items.first?.id }
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var limitsHint: some View {
         if let l = limits {
             Text("Daily limit: ₹\(Int(l.remaining.withdraw_inr).formatted()) remaining of ₹\(Int(l.dailyCapInr).formatted()).")
@@ -841,6 +688,7 @@ private struct WithdrawSheet: View {
 
     private var canPlace: Bool {
         guard let n = Double(amount), n > 0 else { return false }
+        guard selectedBatchId != nil else { return false }
         return quote != nil && !placing && !quoting
     }
 
@@ -872,7 +720,7 @@ private struct WithdrawSheet: View {
     }
 
     @MainActor private func place() async {
-        guard canPlace else { return }
+        guard canPlace, let batchId = selectedBatchId else { return }
         placing = true; error = nil
         defer { placing = false }
         if pendingWithdrawal?.amount != amount {
@@ -880,7 +728,11 @@ private struct WithdrawSheet: View {
         }
         let key = pendingWithdrawal!.key
         do {
-            let s = try await data.createOffRampSession(amount: amount, idempotencyKey: key)
+            let s = try await data.createOffRampSession(
+                amount: amount,
+                settlementBatchId: batchId,
+                idempotencyKey: key,
+            )
             pendingWithdrawal = nil
             placedSession = s
         } catch {

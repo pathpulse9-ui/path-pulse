@@ -24,6 +24,9 @@ packages:
   GoogleSignIn:
     url: https://github.com/google/GoogleSignIn-iOS
     from: "7.1.0"
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: "8.42.0"
 
 targets:
   PathPulse:
@@ -39,6 +42,8 @@ targets:
         product: GoogleSignIn
       - package: GoogleSignIn
         product: GoogleSignInSwift
+      - package: Sentry
+        product: Sentry
     resources:
       - path: PathPulse/Resources
         optional: true
@@ -69,6 +74,10 @@ targets:
         # Allow http://localhost:8080 for local backend dev (production traffic is HTTPS).
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # Sentry DSN — empty by default so TestFlight builds don't ship events
+        # to a production Sentry project without an explicit opt-in.
+        SentryDsn: $(SENTRY_DSN)
+        SentryEnvironment: $(SENTRY_ENVIRONMENT)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.pathpulse.driver

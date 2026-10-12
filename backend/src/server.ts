@@ -7,6 +7,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { router } from './routes/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { registerSentryErrorHandler, sentryUserFromSession } from './observability/sentry.js';
 import { authLimiter, writeLimiter } from './middleware/rateLimit.js';
 
 export function createServer() {
@@ -40,7 +41,11 @@ export function createServer() {
     authLimiter,
   );
   app.use(writeLimiter);
+  app.use(sentryUserFromSession());
   app.use(router);
+  // Sentry error handler must sit before any other error-handling middleware
+  // so unhandled exceptions reach it with the request context attached.
+  registerSentryErrorHandler(app);
   app.use(errorHandler);
   return app;
 }

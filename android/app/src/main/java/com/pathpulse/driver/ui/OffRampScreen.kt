@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,6 +69,7 @@ fun OffRampScreen(
     var wallets by remember { mutableStateOf<List<CarretWalletBalance>?>(null) }
     var bankSheetOpen by remember { mutableStateOf(false) }
     var withdrawSheetOpen by remember { mutableStateOf(false) }
+    var historySheetOpen by remember { mutableStateOf(false) }
     var reloadKey by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(reloadKey) {
@@ -181,10 +183,23 @@ fun OffRampScreen(
         }
 
         PpCard {
-            PpCardHeader(
-                title = if (sessions.size == 1) "1 withdrawal" else "${sessions.size} withdrawals",
-                subtitle = "Convert your USDC rewards to INR in your bank.",
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (sessions.size == 1) "1 withdrawal" else "${sessions.size} withdrawals",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        "Convert your USDC rewards to INR in your bank.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PpBlack70,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                TextButton(onClick = { historySheetOpen = true }) {
+                    Text("History", style = MaterialTheme.typography.labelMedium)
+                }
+            }
 
             if (sessions.isEmpty() && !loading) {
                 PpEmptyState(
@@ -223,6 +238,13 @@ fun OffRampScreen(
                 reloadKey++
             },
             onRegistered = { bank -> banks = banks.orEmpty() + bank },
+        )
+    }
+
+    if (historySheetOpen) {
+        HistoryScreen(
+            onDismiss = { historySheetOpen = false },
+            dataRepository = dataRepository,
         )
     }
 

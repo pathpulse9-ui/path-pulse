@@ -27,9 +27,20 @@ struct DataRepository: Sendable {
     /// the amount (7-decimal string) and, optionally, an asset override. On
     /// success the returned OffRampSession id is what the receipt / status
     /// polling calls key on.
-    func createOffRampSession(amount: String, idempotencyKey: String) async throws -> OffRampSession {
-        struct Body: Codable { let amount: String }
-        return try await client.post("v1/offramp/sessions", body: Body(amount: amount), idempotencyKey: idempotencyKey)
+    func createOffRampSession(
+        amount: String,
+        settlementBatchId: String,
+        idempotencyKey: String,
+    ) async throws -> OffRampSession {
+        struct Body: Codable {
+            let amount: String
+            let settlementBatchId: String
+        }
+        return try await client.post(
+            "v1/offramp/sessions",
+            body: Body(amount: amount, settlementBatchId: settlementBatchId),
+            idempotencyKey: idempotencyKey,
+        )
     }
 
     /// GET /v1/offramp/sessions/{id} — poll a single session for the
@@ -172,6 +183,13 @@ struct DataRepository: Sendable {
 
     func onRampSession(id: String) async throws -> OnRampSession {
         try await client.get("v1/onramp/sessions/\(id)")
+    }
+
+    /// GET /v1/offramp/sessions/{id}/events — append-only status event log
+    /// (placed → webhook* → poll* → reconciler*), source-tagged. Used by the
+    /// history view's per-session drilldown.
+    func offRampSessionEvents(id: String) async throws -> OffRampSessionEvents {
+        try await client.get("v1/offramp/sessions/\(id)/events")
     }
 
     // MARK: - Trading wallet balances

@@ -113,6 +113,8 @@ data class OffRampSession(
     val amount: String,
     val asset: AssetRef,
     val fiatCurrency: String,
+    val fiatAmountEstimate: String? = null,
+    val settlementBatchId: String? = null,
     val createdAt: String,
 )
 
@@ -120,6 +122,46 @@ data class OffRampSession(
 data class OffRampSessionPage(
     val items: List<OffRampSession> = emptyList(),
     val nextCursor: String? = null,
+)
+
+// On-ramp (INR → USDC) — history view consumes this alongside off-ramp.
+
+@Serializable
+data class OnRampSession(
+    val id: String,
+    val amount: String,
+    val cryptoAmount: String? = null,
+    val asset: String,
+    val fiat: String,
+    val status: String,
+    val provider: String,
+    val createdAt: String,
+    val bankLast4: String? = null,
+)
+
+@Serializable
+data class OnRampSessionPage(
+    val items: List<OnRampSession> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+// D4/T2 status event log — the append-only history behind each off-ramp
+// session (placed → webhook* → poll* → reconciler* → client*).
+
+@Serializable
+data class OffRampStatusEvent(
+    val id: String,
+    val source: String,
+    val carretStatus: String? = null,
+    val mappedStatus: String? = null,
+    val receivedAt: String,
+)
+
+@Serializable
+data class OffRampSessionEvents(
+    val sessionId: String,
+    val settlementBatchId: String? = null,
+    val events: List<OffRampStatusEvent> = emptyList(),
 )
 
 // --- SCOUT reputation ------------------------------------------------------
@@ -317,6 +359,7 @@ data class OffRampQuote(
 @Serializable
 data class CreateOffRampRequest(
     val amount: String,
+    val settlementBatchId: String,
 )
 
 // ── Carret banks + wallet (production off-ramp) ────────────────────────
