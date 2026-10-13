@@ -83,7 +83,7 @@ export const aquariusProvider: RoutingProvider = {
     const path = await findPath(from, to, sourceStroops);
     const minOut = applySlippage(path.destinationStroops);
 
-    const account = await sorobanServer.getAccount(wallet.address);
+    const account = await sorobanServer().getAccount(wallet.address);
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: env.networkPassphrase,

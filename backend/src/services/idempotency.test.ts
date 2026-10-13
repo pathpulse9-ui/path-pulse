@@ -65,7 +65,7 @@ test('two concurrent requests with the same key execute once', { skip }, async (
   const statuses = [a.status, b.status].sort();
   assert.deepEqual(statuses, [201, 409]);
   const loser = a.status === 409 ? a : b;
-  assert.equal((await loser.json()).error, 'IdempotencyInProgress');
+  assert.equal(((await loser.json()) as { error: string }).error, 'IdempotencyInProgress');
   assert.equal(executions - before, 1);
 });
 
@@ -89,7 +89,7 @@ test('reusing a key with a different body is a conflict', { skip }, async () => 
   await new Promise((r) => setTimeout(r, 200));
   const res = await send('user_a', key, '6');
   assert.equal(res.status, 409);
-  assert.equal((await res.json()).error, 'IdempotencyConflict');
+  assert.equal(((await res.json()) as { error: string }).error, 'IdempotencyConflict');
 });
 
 test('the same key from two different users executes for each', { skip }, async () => {

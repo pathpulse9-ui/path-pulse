@@ -250,7 +250,7 @@ export interface ScoutConfig {
  * feed is an external dependency, so `source` records which feed produced a
  * score — `derived` marks the interim fallback used when no feed answers.
  */
-export type ScoreSource = 'pulsegen' | 'derived';
+export type ScoreSource = 'pulsegen' | 'derived' | 'pathpulse-internal';
 
 export interface ValidationScore {
   driverId: string;

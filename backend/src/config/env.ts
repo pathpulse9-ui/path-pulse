@@ -135,6 +135,11 @@ export const env = {
     baseUrl: process.env.PULSEGEN_BASE_URL ?? '',
     apiKey: process.env.PULSEGEN_API_KEY ?? '',
     pilotSynthetic: process.env.PULSEGEN_PILOT_SYNTHETIC === 'true',
+    // Internal driver-signal scorer that reads from PathPulse's own tables
+    // (settlement participation, off-ramp activity, KYC + bank verification,
+    // account age, payout attempts). Covers v1 until a live external feed
+    // partnership lands. See services/pathpulseInternalScore.ts.
+    internal: process.env.PATHPULSE_INTERNAL_SCORER === 'true',
   },
 
   webAppUrl: process.env.WEB_APP_URL ?? 'http://localhost:3000',
@@ -319,7 +324,7 @@ if (isMainnet) {
   if (env.carret.allowTestnet) {
     problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');
   }
-  if ((!env.pulseGen.baseUrl || !env.pulseGen.apiKey) && !env.pulseGen.pilotSynthetic) {
+  if ((!env.pulseGen.baseUrl || !env.pulseGen.apiKey) && !env.pulseGen.pilotSynthetic && !env.pulseGen.internal) {
     problems.push(
       'PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet',
     );

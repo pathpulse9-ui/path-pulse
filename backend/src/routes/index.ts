@@ -200,6 +200,30 @@ router.get('/health', (_req, res) => {
   res.json(body);
 });
 
+/**
+ * Expose the backend's current outbound IP so we can hand it to upstream
+ * IP-whitelist operators (Carret in particular). App Runner's default
+ * egress draws from an AWS NAT pool so this can rotate per request —
+ * running it a few times tells you the pool size you're dealing with.
+ * Not auth-gated: the result is public information the moment any
+ * outbound request is made.
+ */
+router.get('/v1/ops/egress-ip', async (_req, res, next) => {
+  try {
+    const probes = ['https://api.ipify.org?format=json', 'https://ifconfig.me/all.json'];
+    for (const url of probes) {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) continue;
+        const body = await r.json() as { ip?: string; ip_addr?: string };
+        const ip = body.ip ?? body.ip_addr;
+        if (ip) { res.json({ ip, source: url }); return; }
+      } catch { /* try next */ }
+    }
+    res.status(502).json({ error: 'EgressProbeFailed', message: 'all ip probes failed' });
+  } catch (e) { next(e); }
+});
+
 router.get('/v1/accounts/distribution', async (_req, res, next) => {
   try {
     res.json(await listDistributionAccounts());

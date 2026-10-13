@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { ScoreSource, ValidationScore } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { getLatestScore, type ScoreInput } from './scoreStore.js';
+import { pathpulseInternalScoreProvider } from './pathpulseInternalScore.js';
 
 /**
  * PulseGen score feed (D6).
@@ -33,7 +34,7 @@ export interface ScoreProvider {
   getScore(driverId: string): Promise<ValidationScore>;
 }
 
-export type FeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'derived';
+export type FeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'pathpulse-internal' | 'derived';
 
 /**
  * A score plus where it actually came from. `importId` is set only when the
@@ -126,12 +127,24 @@ export function pulseGenEndpointHost(): string | null {
   }
 }
 
+/** Internal PathPulse-native scorer enabled via PATHPULSE_INTERNAL_SCORER=true. */
+export function pathpulseInternalLive(): boolean {
+  return !!env.pulseGen?.internal;
+}
+
 /**
  * Resolve a driver's score from the best available source.
  *
- * A live-feed failure falls through to an imported batch rather than throwing:
- * an outage at PathPulse.ai must not strand a settlement, and the returned
- * score still says which source answered.
+ * Preference order:
+ *   1. Live PulseGen feed (if PULSEGEN_BASE_URL + API_KEY set)
+ *   2. PathPulse internal scorer (if PATHPULSE_INTERNAL_SCORER=true) — reads
+ *      from our own tables, defensible for a v1 pilot without a 3rd-party feed
+ *   3. Imported batch (CSV / JSON upload)
+ *   4. Derived (deterministic hash fallback)
+ *
+ * A failure in a higher-priority source falls through so one outage doesn't
+ * strand a settlement. The returned score always carries which source
+ * actually answered.
  */
 export async function resolveScore(driverId: string): Promise<ResolvedScore> {
   if (pulseGenLive()) {
@@ -139,7 +152,16 @@ export async function resolveScore(driverId: string): Promise<ResolvedScore> {
       const live = await pulseGenScoreProvider.getScore(driverId);
       return { ...live, via: 'pulsegen-live', importId: null };
     } catch {
-      // fall through to the last delivered batch
+      // fall through
+    }
+  }
+
+  if (pathpulseInternalLive()) {
+    try {
+      const internal = await pathpulseInternalScoreProvider.getScore(driverId);
+      return { ...internal, via: 'pathpulse-internal', importId: null };
+    } catch {
+      // fall through
     }
   }
 
@@ -161,12 +183,15 @@ export async function resolveScore(driverId: string): Promise<ResolvedScore> {
 /** Which source would answer right now, for the ops feed panel. */
 export async function feedMode(driverId?: string): Promise<FeedMode> {
   if (pulseGenLive()) return 'pulsegen-live';
+  if (pathpulseInternalLive()) return 'pathpulse-internal';
   if (driverId && (await getLatestScore(driverId))) return 'pulsegen-batch';
   return 'derived';
 }
 
 export function scoreProvider(): ScoreProvider {
-  return pulseGenLive() ? pulseGenScoreProvider : derivedScoreProvider;
+  if (pulseGenLive()) return pulseGenScoreProvider;
+  if (pathpulseInternalLive()) return pathpulseInternalScoreProvider;
+  return derivedScoreProvider;
 }
 
 const MAX_BATCH = 10_000;
