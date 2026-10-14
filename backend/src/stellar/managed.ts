@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { keyFromEnv, seal, unseal } from '../crypto/seal.js';
 import { fundWithFriendbot, accountExists } from './network.js';
-import { CustodialSigner, createSigner, type Signer } from './signing.js';
+import { CustodialSigner, type Signer } from './signing.js';
 import { createSponsoredAccount, type ReserveSponsor } from './sponsorship.js';
 import { logger } from '../config/logger.js';
 
@@ -148,9 +148,13 @@ export function isServiceAccount(userId: string): boolean {
 }
 
 /**
- * Protocol-owned service accounts sign through SIGNER_BACKEND, so they can use a KMS-held key.
- * Per-user wallets always sign with their own sealed seed: a KMS key per driver would cost
- * $1 per driver per month, so the per-user tier is encrypt-at-rest by design, not by omission.
+ * Both service and per-user wallets sign with their sealed seed. The original design
+ * routed service accounts through SIGNER_BACKEND (KMS), but that requires a key
+ * ceremony — add the KMS pubkey as a signer on the service account, then zero the
+ * master — which hasn't been run. Until it is, `createSigner()` on `aws-kms` returns
+ * a signer bound to the KMS key's own pubkey (not the service account's), producing
+ * tx_bad_auth. Per-user wallets never used KMS: a KMS key per driver would cost
+ * $1 per driver per month, so the per-user tier is encrypt-at-rest by design.
  */
 export async function serviceAccountMasterSigner(userId: string): Promise<CustodialSigner> {
   if (!isServiceAccount(userId)) throw new Error(`${userId} is not a service account`);
@@ -162,6 +166,5 @@ export async function serviceAccountMasterSigner(userId: string): Promise<Custod
 export async function getManagedSigner(userId: string): Promise<Signer> {
   const row = await findRow(userId);
   if (!row) throw new Error(`No managed wallet for user ${userId} — sign in first`);
-  if (isServiceAccount(userId)) return createSigner(Keypair.fromSecret(unseal(row.sealed_seed, await encryptionKey())));
   return new CustodialSigner(Keypair.fromSecret(unseal(row.sealed_seed, await encryptionKey())));
 }
