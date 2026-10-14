@@ -30,7 +30,7 @@ object ApiClient {
 
     val http = HttpClient(OkHttp) {
         expectSuccess = false
-        install(HttpCookies)
+        install(HttpCookies) { storage = SessionCookieStorage }
         install(ContentNegotiation) { json(json) }
         install(HttpTimeout) {
             requestTimeoutMillis = 15_000

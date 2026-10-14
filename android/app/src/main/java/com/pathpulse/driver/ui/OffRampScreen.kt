@@ -1,6 +1,22 @@
 package com.pathpulse.driver.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontFamily
+import com.pathpulse.driver.ui.theme.PpBackground
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +86,7 @@ fun OffRampScreen(
     var bankSheetOpen by remember { mutableStateOf(false) }
     var withdrawSheetOpen by remember { mutableStateOf(false) }
     var historySheetOpen by remember { mutableStateOf(false) }
+    var receipt by remember { mutableStateOf<OffRampSession?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(reloadKey) {
@@ -214,7 +231,7 @@ fun OffRampScreen(
                 Column(modifier = Modifier.padding(top = PpSpace.sm)) {
                     sessions.forEachIndexed { i, s ->
                         if (i > 0) PpDivider()
-                        OffRampRow(session = s)
+                        OffRampRow(session = s, onClick = { receipt = s })
                     }
                 }
             }
@@ -247,6 +264,8 @@ fun OffRampScreen(
             dataRepository = dataRepository,
         )
     }
+
+    receipt?.let { WithdrawalReceiptSheet(session = it, onDismiss = { receipt = null }) }
 
     if (withdrawSheetOpen) {
         WithdrawSheet(
@@ -292,9 +311,9 @@ private fun ActionBanner(
 }
 
 @Composable
-private fun OffRampRow(session: OffRampSession) {
+private fun OffRampRow(session: OffRampSession, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = PpSpace.md),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = PpSpace.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PpSquareBadge(text = "OR", background = PpTeal50, contentColor = PpTeal700)
@@ -328,8 +347,113 @@ private fun OffRampRow(session: OffRampSession) {
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = PpBlack40,
+            modifier = Modifier.padding(start = PpSpace.sm).size(20.dp),
+        )
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WithdrawalReceiptSheet(session: OffRampSession, onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = PpBackground,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = PpSize.screenPadding)
+                .padding(bottom = PpSpace.xl)
+                .windowInsetsPadding(WindowInsets.navigationBars),
+        ) {
+            Text("Withdrawal receipt", style = MaterialTheme.typography.labelLarge, color = PpBlack40)
+            Text(
+                "${session.amount} ${session.asset.code}",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(top = PpSpace.sm),
+            )
+            session.fiatAmountEstimate?.let {
+                Text(
+                    "≈ $it ${session.fiatCurrency} to your bank",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = PpBlack70,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Box(modifier = Modifier.padding(top = PpSpace.sm)) { StatusPill(status = session.status) }
+
+            PpCard(modifier = Modifier.padding(top = PpSpace.lg)) {
+                ReceiptRow("Provider", session.provider.replaceFirstChar { it.uppercase() })
+                session.merchantTransactionId?.let { PpDivider(); ReceiptRow("Order", "#$it", mono = true) }
+                session.settlementBatchId?.let { PpDivider(); ReceiptRow("Settlement batch", it, mono = true) }
+                PpDivider()
+                ReceiptRow("Requested", receiptDate(session.createdAt))
+                session.updatedAt?.let { PpDivider(); ReceiptRow("Last update", receiptDate(it)) }
+                PpDivider()
+                ReceiptRow("Reference", session.id, mono = true)
+            }
+
+            PpCard(modifier = Modifier.padding(top = PpSpace.md)) {
+                Text("Stellar transfer", style = MaterialTheme.typography.titleSmall)
+                val hash = session.stellarTxHash
+                val url = session.stellarTxUrl
+                if (hash != null && url != null) {
+                    Text(
+                        "${hash.take(10)}…${hash.takeLast(8)}  ↗",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = PpTeal700,
+                        modifier = Modifier
+                            .padding(top = PpSpace.sm)
+                            .clickable { uriHandler.openUri(url) },
+                    )
+                } else {
+                    Text(
+                        if (session.sandbox == true) {
+                            "Sandbox withdrawal — nothing was sent on the Stellar network."
+                        } else {
+                            "No Stellar transfer is recorded for this withdrawal yet."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PpBlack70,
+                        modifier = Modifier.padding(top = PpSpace.sm),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReceiptRow(label: String, value: String, mono: Boolean = false) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = PpSpace.sm),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = PpBlack40)
+        Text(
+            value,
+            style = if (mono) {
+                MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+            } else {
+                MaterialTheme.typography.bodyMedium
+            },
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            modifier = Modifier.weight(1f).padding(start = PpSpace.md),
+        )
+    }
+}
+
+private val RECEIPT_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm")
+
+private fun receiptDate(iso: String): String =
+    runCatching { OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault()).format(RECEIPT_DATE) }.getOrDefault(iso)
 
 @Composable
 private fun StatusPill(status: String) {

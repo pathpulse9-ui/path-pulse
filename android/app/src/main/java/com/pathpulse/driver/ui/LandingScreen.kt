@@ -98,7 +98,7 @@ private fun Header() {
                 .padding(start = PpSpace.md),
         )
         Text(
-            "TESTNET",
+            com.pathpulse.driver.BuildConfig.STELLAR_NETWORK.uppercase(),
             style = MaterialTheme.typography.labelSmall,
             color = PpBlack50,
             modifier = Modifier
