@@ -243,14 +243,23 @@ export default function KycPage() {
   }
 
   async function doUploadPan(): Promise<boolean> {
-    const file = panFileRef.current?.files?.[0];
-    if (!file) { setError('Choose a PAN photo first.'); return false; }
+    // PAN is submitted as number-based (Anurag confirmed 2026-10-15 — the file-
+    // upload path on Carret prod was returning a cached test record). We collect
+    // PAN number, name, and DOB and send them to /kyc/document/submit/.
+    if (!panNumber.trim())  { setError('Enter your PAN number.'); return false; }
+    if (!panName.trim())    { setError('Enter your name as on PAN.'); return false; }
+    if (!panDobIso)         { setError('Enter your date of birth as on PAN.'); return false; }
     try {
-      await uploadCarretKycFile({ kycSession: sessionId, docType: 'pan', fileType: 'image', file });
+      await submitCarretKycDocument(sessionId, {
+        document_type: 'pan',
+        document_number: panNumber.toUpperCase().trim(),
+        name: panName.trim(),
+        dob: formatDob(panDobIso),
+      });
       return true;
     } catch (e) {
       if (isAlreadyAdded(e)) return true;
-      setError(e instanceof Error ? e.message : 'PAN upload failed');
+      setError(e instanceof Error ? e.message : 'PAN verification failed');
       return false;
     }
   }
@@ -425,7 +434,7 @@ export default function KycPage() {
       case 'contact':  return email.includes('@') && phone.length === 10;
       case 'bornWhen': return !!dobIso;
       case 'about':    return true;
-      case 'pan':      return !!panFileName;
+      case 'pan':      return /^[A-Z]{5}\d{4}[A-Z]$/.test(panNumber.trim()) && !!panName.trim() && !!panDobIso;
       case 'aadhaar':
         switch (secondaryType) {
           case 'aadhaar':         return !!aadhaarName;
@@ -554,24 +563,31 @@ export default function KycPage() {
         )}
 
         {page === 'pan' && (
-          <PageShell icon={<CardIcon />} title="Upload your PAN card" subtitle="Snap a clear photo of the front of your PAN card — Carret extracts the number, name, and DOB from the image.">
+          <PageShell icon={<CardIcon />} title="Your PAN details" subtitle="Enter exactly as printed on your PAN card. Carret verifies against the Income Tax registry.">
             <div className="space-y-3 pt-4">
-              <DropZone
-                icon={panFileName ? <CheckCircleIcon /> : <CameraIcon />}
-                title={panFileName || 'Choose PAN photo'}
-                subtitle={panFileName ? 'Ready to upload' : 'JPG, PNG, or PDF — front of the card'}
-                selected={!!panFileName}
-                onClick={() => panFileRef.current?.click()}
+              <BigField
+                label="PAN number"
+                value={panNumber}
+                onChange={(v) => setPanNumber(v.toUpperCase())}
+                placeholder="e.g. ABCDE1234F"
+                maxLength={10}
               />
-              <input
-                ref={panFileRef}
-                type="file"
-                accept="image/*,.pdf"
-                className="hidden"
-                onChange={(e) => setPanFileName(e.target.files?.[0]?.name ?? '')}
+              <BigField
+                label="Name on PAN"
+                value={panName}
+                onChange={setPanName}
+                placeholder="As printed on PAN card"
+              />
+              <BigField
+                label="Date of birth (on PAN)"
+                value={panDobIso}
+                onChange={setPanDobIso}
+                type="date"
+                max={minDobIso()}
+                placeholder=""
               />
               <InfoTile>
-                Good light, all four corners visible, no glare on the name or number strip.
+                PAN format: 5 letters + 4 digits + 1 letter. Carret will reject mismatched name/DOB with the Income Tax registry.
               </InfoTile>
             </div>
           </PageShell>

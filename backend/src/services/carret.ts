@@ -843,19 +843,18 @@ export async function uploadKycFile(params: {
   docBack?: { filename: string; fileBuffer: Buffer; contentType?: string };
 }): Promise<unknown> {
   if (!carretLive) throw new Error('uploadKycFile called without live credentials');
-  // Carret's multipart part names per their docs' submit-files table:
-  //   PAN / Voter / Passport / DL / Selfie → doc_front (+ doc_back for voter)
-  //   Aadhaar XML                          → xml_file
-  // Node 18's built-in FormData + File + global fetch produced a multipart body
-  // Carret's DRF parser refused ("No file was submitted."). Switching to the
-  // classic `form-data` package which generates RFC-2388 multipart with explicit
-  // Content-Length — the format DRF reliably recognizes as request.FILES.
+  // Anurag (Carret) confirmed 2026-10-15: EVERY doc type goes via `doc_front`
+  // with file_type signalling how Carret should parse (xml for Aadhaar XML,
+  // image for everything else). The docs' `xml_file` row is wrong; their own
+  // curl example uses doc_front. Node 18's built-in FormData+Blob+fetch combo
+  // also produced a body Carret's DRF refused with "No file was submitted." —
+  // the classic form-data package generates RFC-2388 multipart with explicit
+  // Content-Length that DRF reliably routes to request.FILES.
   const form = new ClassicFormData();
   form.append('kyc_session', params.kycSessionId);
   form.append('doc_type', params.docType);
   form.append('file_type', params.fileType);
-  const frontField = params.fileType === 'xml' ? 'xml_file' : 'doc_front';
-  form.append(frontField, params.fileBuffer, {
+  form.append('doc_front', params.fileBuffer, {
     filename: params.filename,
     contentType: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
   });
