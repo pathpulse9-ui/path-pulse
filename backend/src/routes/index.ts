@@ -52,6 +52,7 @@ import {
   applyCarretCallback,
   activeProvider,
   quoteWithdrawal,
+  broadcastCarretDeposit,
 } from '../services/offramp.js';
 import {
   getQuote as onrampGetQuote,
@@ -119,6 +120,7 @@ import {
   cleanupKyc,
   startDigilocker,
   fetchEaadhaarDetails,
+  getConfiguredDepositAddress,
   whitelistWallet,
   registerBank,
   listBanks,
@@ -1673,6 +1675,40 @@ router.get('/v1/carret/wallets', requireSession(), async (req, res, next) => {
     if (!mapping) { res.json({ items: [] }); return; }
     const items = await listWalletBalances(mapping.carretAccountId);
     res.json({ items });
+  } catch (e) { next(e); }
+});
+
+/**
+ * Return Carret's configured deposit address + memo for the active corridor.
+ * Used by the ops smoke-test flow to pre-fund the trading wallet before placing
+ * an off-ramp order, because Carret validates the trading-wallet balance
+ * upfront and will reject /place_order/ with "Insufficient USDC" otherwise.
+ */
+router.get('/v1/carret/deposit-address', requireSession(), async (_req, res, next) => {
+  try {
+    const d = await getConfiguredDepositAddress();
+    res.json({ address: d.address, memo: d.memo_label, chain: d.chain, asset: d.asset });
+  } catch (e) { next(e); }
+});
+
+/**
+ * Broadcast a Stellar USDC payment from the caller's managed wallet to
+ * Carret's deposit address with their memo attached. Returns the Horizon tx
+ * hash. Used by the ops smoke-test to pre-fund the trading wallet.
+ */
+const depositSchema = z.object({ amount: z.string().regex(/^\d+(\.\d{1,7})?$/) });
+router.post('/v1/carret/deposit', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const { amount } = depositSchema.parse(req.body);
+    const d = await getConfiguredDepositAddress();
+    const txHash = await broadcastCarretDeposit({
+      userId: session.userId,
+      destination: d.address,
+      memo: d.memo_label ?? undefined,
+      amount,
+    });
+    res.json({ txHash, destination: d.address, memo: d.memo_label, amount });
   } catch (e) { next(e); }
 });
 

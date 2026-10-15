@@ -82,7 +82,7 @@ function httpError(message: string, status: number, name: string): Error {
  * `CARRET_USDC_ISSUER` for Carret-specific wrapped assets if that ever
  * changes.
  */
-async function broadcastCarretDeposit(params: {
+export async function broadcastCarretDeposit(params: {
   userId: string;
   destination: string;
   memo?: string;
