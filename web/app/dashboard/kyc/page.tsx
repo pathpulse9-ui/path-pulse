@@ -30,6 +30,8 @@ import {
   uploadCarretKycFile,
   getCarretKycStatus,
   cleanupCarretKyc,
+  startCarretDigilocker,
+  finishCarretDigilocker,
   type CarretKycStatus,
   type CarretSubAccountInput,
 } from '../../lib/api';
@@ -805,6 +807,15 @@ function SecondaryIdPage(props: {
 
         {secondaryType === 'aadhaar' && (
           <>
+            <DigilockerCard
+              kycSessionId={sessionId}
+              onVerified={(aadhaarLabel) => {
+                onAadhaarPick(aadhaarLabel);
+                setPage('selfie');
+              }}
+              onError={(msg) => setError(msg)}
+            />
+            <div className="text-center text-sm text-black/40 py-1">or upload manually</div>
             <DropZone
               icon={aadhaarName ? <CheckCircleIcon /> : <UploadIcon />}
               title={aadhaarName || 'Choose Aadhaar file'}
@@ -819,9 +830,6 @@ function SecondaryIdPage(props: {
               className="hidden"
               onChange={(e) => onAadhaarPick(e.target.files?.[0]?.name ?? '')}
             />
-            <InfoTile>
-              DigiLocker → Aadhaar → Share as XML → set a 4-digit code → download the ZIP. Fastest path to verified.
-            </InfoTile>
           </>
         )}
 
@@ -1080,6 +1088,98 @@ function InfoTile({ children }: { children: React.ReactNode }) {
     <div className="flex gap-2 p-3 rounded-2xl bg-emerald-500/10 text-black/70 text-sm">
       <span className="text-emerald-500 shrink-0"><BulbIcon /></span>
       <p>{children}</p>
+    </div>
+  );
+}
+
+/**
+ * DigiLocker in-flow Aadhaar fetch. Carret proxies DigiLocker, so the driver
+ * opens the hosted auth URL in a new tab, consents to share their Aadhaar,
+ * comes back here and clicks "I've authorized" — we then pull the signed XML
+ * server-side via /v1/carret/kyc/digilocker/finish and attach it to the active
+ * KYC session. No manual XML download. Falls through to the manual uploader
+ * below if DigiLocker is unreachable or the driver prefers to upload.
+ */
+function DigilockerCard({
+  kycSessionId,
+  onVerified,
+  onError,
+}: {
+  kycSessionId: string;
+  onVerified: (aadhaarLabel: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [phase, setPhase] = useState<'idle' | 'opening' | 'awaiting' | 'finishing'>('idle');
+  const [referenceId, setReferenceId] = useState<string>('');
+
+  const start = useCallback(async () => {
+    setPhase('opening');
+    try {
+      const r = await startCarretDigilocker();
+      setReferenceId(r.reference_id);
+      window.open(r.url, '_blank', 'noopener,noreferrer');
+      setPhase('awaiting');
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not start DigiLocker');
+      setPhase('idle');
+    }
+  }, [onError]);
+
+  const finish = useCallback(async () => {
+    if (!referenceId) return;
+    if (!kycSessionId) { onError('No KYC session yet — go through the earlier steps first.'); return; }
+    setPhase('finishing');
+    try {
+      const r = await finishCarretDigilocker({ referenceId, kycSessionId });
+      onVerified(`Aadhaar · ${r.aadhaar_name}`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'DigiLocker finish failed');
+      setPhase('awaiting');
+    }
+  }, [referenceId, kycSessionId, onError, onVerified]);
+
+  if (phase === 'idle' || phase === 'opening') {
+    return (
+      <button
+        type="button"
+        disabled={phase === 'opening'}
+        onClick={start}
+        className="w-full rounded-2xl bg-black text-white p-5 flex items-start gap-4 text-left disabled:opacity-60"
+      >
+        <div className="shrink-0 w-10 h-10 rounded-full bg-white/15 grid place-items-center">
+          {phase === 'opening' ? <Spinner className="w-4 h-4 text-white" /> : <BulbIcon />}
+        </div>
+        <div className="flex-1">
+          <div className="font-medium">Fetch via DigiLocker</div>
+          <div className="text-sm text-white/70 mt-0.5">
+            Opens DigiLocker in a new tab. Sign in with your Aadhaar-linked mobile, approve the share, and we pull the signed Aadhaar XML for you — no manual download.
+          </div>
+        </div>
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-5 space-y-3">
+      <div className="flex items-start gap-3">
+        <span className="text-emerald-600 shrink-0 mt-0.5"><CheckCircleIcon /></span>
+        <div className="flex-1">
+          <div className="font-medium">DigiLocker opened in a new tab</div>
+          <div className="text-sm text-black/70 mt-0.5">
+            Finish the consent there, then click below. If the tab didn't open, allow popups and{' '}
+            <button type="button" className="underline" onClick={start}>retry</button>.
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={phase === 'finishing'}
+        onClick={finish}
+        className="h-12 w-full rounded-xl bg-emerald-600 text-white font-medium disabled:opacity-60 inline-flex items-center justify-center gap-2"
+      >
+        {phase === 'finishing' && <Spinner className="w-4 h-4 text-white" />}
+        {phase === 'finishing' ? 'Pulling Aadhaar from DigiLocker…' : "I've authorized — pull my Aadhaar"}
+      </button>
     </div>
   );
 }

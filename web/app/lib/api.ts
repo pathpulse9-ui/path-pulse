@@ -589,6 +589,39 @@ export function submitCarretKycDocument(kycSessionId: string, document: {
   });
 }
 
+export interface CarretDigilockerStart {
+  reference_id: string;
+  url: string;
+}
+
+/** POST /v1/carret/kyc/digilocker/start — returns a DigiLocker auth URL. */
+export async function startCarretDigilocker(): Promise<CarretDigilockerStart> {
+  return apiFetch<CarretDigilockerStart>('/v1/carret/kyc/digilocker/start', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export interface CarretDigilockerFinish {
+  success: boolean;
+  aadhaar_name: string;
+  masked_aadhaar: string;
+}
+
+/** POST /v1/carret/kyc/digilocker/finish — pulls Aadhaar XML + attaches to KYC session. */
+export async function finishCarretDigilocker(params: {
+  referenceId: string;
+  kycSessionId: string;
+}): Promise<CarretDigilockerFinish> {
+  return apiFetch<CarretDigilockerFinish>('/v1/carret/kyc/digilocker/finish', {
+    method: 'POST',
+    body: JSON.stringify({
+      reference_id: params.referenceId,
+      kyc_session_id: params.kycSessionId,
+    }),
+  });
+}
+
 export async function uploadCarretKycFile(params: {
   kycSession: string;
   docType: 'pan' | 'aadhaar' | 'voter_id' | 'passport' | 'driving_license' | 'selfie';
