@@ -347,7 +347,15 @@ export default function KycPage() {
       }
     } finally { setSubmitting(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, firstName, lastName, email, phone, dobIso, panDobIso, gender, occupation, income, panNumber, panName, sessionId, accountId]);
+  }, [
+    page, firstName, lastName, email, phone, dobIso, panDobIso, gender, occupation, income,
+    panNumber, panName, sessionId, accountId,
+    // Secondary ID fields — missing deps here were causing the aadhaar branch to
+    // run even when the dropdown was set to passport/voter_id/driving_license,
+    // because the closure captured a stale `secondaryType`.
+    secondaryType, secondaryNumber, secondaryName, secondaryDobIso,
+    secondarySurname, secondaryFileNumber, secondaryDateOfIssueIso,
+  ]);
 
   // ── Resume on mount ─────────────────────────────────────────
   // Hydrates accountId + routes to the right step from the backend's
@@ -587,6 +595,9 @@ export default function KycPage() {
             firstName={firstName}
             lastName={lastName}
             dobIso={dobIso}
+            kycSessionId={sessionId}
+            onDigilockerDone={() => setPage('selfie')}
+            onError={(msg) => setError(msg)}
           />
         )}
 
@@ -748,6 +759,9 @@ function SecondaryIdPage(props: {
   aadhaarName: string; onAadhaarPick: (n: string) => void;
   aadhaarFileRef: React.RefObject<HTMLInputElement | null>;
   firstName: string; lastName: string; dobIso: string;
+  kycSessionId: string;
+  onDigilockerDone: () => void;
+  onError: (msg: string) => void;
 }) {
   const {
     secondaryType, onSecondaryType,
@@ -757,6 +771,7 @@ function SecondaryIdPage(props: {
     secondaryDateOfIssueIso, onSecondaryDateOfIssueIso,
     aadhaarName, onAadhaarPick, aadhaarFileRef,
     firstName, lastName, dobIso,
+    kycSessionId, onDigilockerDone, onError,
   } = props;
 
   // Prefill name + DOB from earlier steps — only when the target field is
@@ -808,12 +823,12 @@ function SecondaryIdPage(props: {
         {secondaryType === 'aadhaar' && (
           <>
             <DigilockerCard
-              kycSessionId={sessionId}
+              kycSessionId={kycSessionId}
               onVerified={(aadhaarLabel) => {
                 onAadhaarPick(aadhaarLabel);
-                setPage('selfie');
+                onDigilockerDone();
               }}
-              onError={(msg) => setError(msg)}
+              onError={onError}
             />
             <div className="text-center text-sm text-black/40 py-1">or upload manually</div>
             <DropZone
