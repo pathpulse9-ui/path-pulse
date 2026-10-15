@@ -489,7 +489,7 @@ export interface CarretSubAccountInput {
 export interface CarretSubAccountResponse {
   id: number;
   reference_id: string;
-  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review' | 'failed';
   aml_status: string;
   user: { id: number; email: string; first_name: string; last_name: string };
 }
@@ -533,7 +533,7 @@ export interface CarretKycOvd {
 
 export interface CarretKycStatus {
   kyc_session?: string;
-  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  kyc_status: 'pending' | 'verified' | 'rejected' | 'manual_review' | 'failed';
   ovd_documents?: CarretKycOvd[];
 }
 
