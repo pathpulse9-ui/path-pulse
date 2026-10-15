@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ProxyAgent } from 'undici';
+import ClassicFormData from 'form-data';
 import { env, carretLive } from '../config/env.js';
 import type { OffRampStatus } from '@pathpulse/contract';
 
@@ -842,30 +843,27 @@ export async function uploadKycFile(params: {
   docBack?: { filename: string; fileBuffer: Buffer; contentType?: string };
 }): Promise<unknown> {
   if (!carretLive) throw new Error('uploadKycFile called without live credentials');
-  const form = new FormData();
+  // Carret's multipart part names per their docs' submit-files table:
+  //   PAN / Voter / Passport / DL / Selfie → doc_front (+ doc_back for voter)
+  //   Aadhaar XML                          → xml_file
+  // Node 18's built-in FormData + File + global fetch produced a multipart body
+  // Carret's DRF parser refused ("No file was submitted."). Switching to the
+  // classic `form-data` package which generates RFC-2388 multipart with explicit
+  // Content-Length — the format DRF reliably recognizes as request.FILES.
+  const form = new ClassicFormData();
   form.append('kyc_session', params.kycSessionId);
   form.append('doc_type', params.docType);
   form.append('file_type', params.fileType);
-  // Field-name discovery (confirmed on prod against sub-account 49237, 2026-10-15):
-  //   - `doc_front` + file_type=xml → Carret 422 "processing document images"
-  //     (file IS received but routed to image parser).
-  //   - `xml_file`  + file_type=xml → Carret 400 "No file was submitted."
-  //     (field name not recognized; file never reaches request.FILES).
-  // So `doc_front` is the correct multipart part — the docs' `xml_file` row
-  // is wrong. Sent as a Node File (not Blob) so DRF's request.FILES picks it up.
-  form.append(
-    'doc_front',
-    new File([new Uint8Array(params.fileBuffer)], params.filename, {
-      type: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
-    }),
-  );
+  const frontField = params.fileType === 'xml' ? 'xml_file' : 'doc_front';
+  form.append(frontField, params.fileBuffer, {
+    filename: params.filename,
+    contentType: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
+  });
   if (params.docBack) {
-    form.append(
-      'doc_back',
-      new File([new Uint8Array(params.docBack.fileBuffer)], params.docBack.filename, {
-        type: params.docBack.contentType ?? 'application/octet-stream',
-      }),
-    );
+    form.append('doc_back', params.docBack.fileBuffer, {
+      filename: params.docBack.filename,
+      contentType: params.docBack.contentType ?? 'application/octet-stream',
+    });
   }
   const url = carretV2Base() + '/kyc/document_file/submit/';
   const res = await fetch(
@@ -874,10 +872,12 @@ export async function uploadKycFile(params: {
       method: 'POST',
       headers: {
         'API-KEY': env.carret.apiKey,
-        // Do NOT set Content-Type — fetch fills it with the multipart boundary.
+        ...form.getHeaders(), // Content-Type: multipart/form-data; boundary=...
+        'Content-Length': String(form.getLengthSync()),
         Accept: 'application/json',
       },
-      body: form,
+      // Classic FormData returns a Node stream; wrap in a Buffer for fetch.
+      body: form.getBuffer(),
     }),
   );
   if (!res.ok) {
