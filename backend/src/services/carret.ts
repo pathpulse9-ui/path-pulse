@@ -851,20 +851,22 @@ export async function uploadKycFile(params: {
   // it through the image-processing pipeline, which 422s with "Internal server
   // error occurred while processing document images" (confirmed via live finish).
   const frontField = params.fileType === 'xml' ? 'xml_file' : 'doc_front';
+  // Node's FormData + Blob doesn't always get recognized by Django's
+  // request.FILES — DRF then reports "No file was submitted." even though
+  // the part is in the body. Using the global File (Node 18+) tags the
+  // part with a filename and promotes it to request.FILES.
   form.append(
     frontField,
-    new Blob([new Uint8Array(params.fileBuffer)], {
+    new File([new Uint8Array(params.fileBuffer)], params.filename, {
       type: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
     }),
-    params.filename,
   );
   if (params.docBack) {
     form.append(
       'doc_back',
-      new Blob([new Uint8Array(params.docBack.fileBuffer)], {
+      new File([new Uint8Array(params.docBack.fileBuffer)], params.docBack.filename, {
         type: params.docBack.contentType ?? 'application/octet-stream',
       }),
-      params.docBack.filename,
     );
   }
   const url = carretV2Base() + '/kyc/document_file/submit/';
