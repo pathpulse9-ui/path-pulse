@@ -846,8 +846,13 @@ export async function uploadKycFile(params: {
   form.append('kyc_session', params.kycSessionId);
   form.append('doc_type', params.docType);
   form.append('file_type', params.fileType);
+  // Carret's multipart field name is `xml_file` for Aadhaar XML and `doc_front`
+  // for every other document (images, PDFs). Sending XML as `doc_front` routes
+  // it through the image-processing pipeline, which 422s with "Internal server
+  // error occurred while processing document images" (confirmed via live finish).
+  const frontField = params.fileType === 'xml' ? 'xml_file' : 'doc_front';
   form.append(
-    'doc_front',
+    frontField,
     new Blob([new Uint8Array(params.fileBuffer)], {
       type: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
     }),
