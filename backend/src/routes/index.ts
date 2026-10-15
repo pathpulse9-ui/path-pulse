@@ -1597,7 +1597,9 @@ router.post('/v1/carret/kyc/digilocker/finish', requireSession(), async (req, re
       fileType: 'xml',
       filename: 'aadhaar.xml',
       fileBuffer: buf,
-      contentType: upstreamContentType ?? 'application/xml',
+      // Force application/xml — S3 presigns the HyperVerge object as
+      // application/octet-stream which Carret rejects as "No file was submitted".
+      contentType: 'application/xml',
     });
     res.json({
       success: true,
