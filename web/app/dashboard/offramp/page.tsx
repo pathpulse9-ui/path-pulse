@@ -696,10 +696,12 @@ function CompletedModal({
             <span className="text-black/40">Amount sent: </span>
             <span className="font-mono text-black">{session.amount} {session.asset.code}</span>
           </div>
-          <div>
-            <span className="text-black/40">Carret order: </span>
-            <span className="font-mono text-black">{session.carretOrderId ?? '—'}</span>
-          </div>
+          {session.merchantTransactionId && (
+            <div>
+              <span className="text-black/40">Order id: </span>
+              <span className="font-mono text-black">{session.merchantTransactionId}</span>
+            </div>
+          )}
           {session.stellarTxHash && (
             <div>
               <a
