@@ -121,6 +121,7 @@ import {
   startDigilocker,
   fetchEaadhaarDetails,
   getConfiguredDepositAddress,
+  createCryptoDeposit,
   whitelistWallet,
   registerBank,
   listBanks,
@@ -1687,28 +1688,49 @@ router.get('/v1/carret/wallets', requireSession(), async (req, res, next) => {
 router.get('/v1/carret/deposit-address', requireSession(), async (_req, res, next) => {
   try {
     const d = await getConfiguredDepositAddress();
-    res.json({ address: d.address, memo: d.memo_label, chain: d.chain, asset: d.asset });
+    res.json({ id: d.id, address: d.address, memo: d.memo_label, chain: d.chain, asset: d.asset });
   } catch (e) { next(e); }
 });
 
 /**
- * Broadcast a Stellar USDC payment from the caller's managed wallet to
- * Carret's deposit address with their memo attached. Returns the Horizon tx
- * hash. Used by the ops smoke-test to pre-fund the trading wallet.
+ * Full crypto-deposit flow: broadcast Stellar USDC from the caller's managed
+ * wallet to Carret's deposit address, then register the deposit with Carret so
+ * their reconciler credits the trading wallet. Without the /crypto_deposit/
+ * registration a raw on-chain transfer sits uncredited (Carret's Travel Rule
+ * compliance). Returns both the Horizon tx hash and Carret's deposit record.
+ *
+ * Pass `txHash` to register an already-broadcast transaction without resending
+ * — used to retroactively credit a deposit after we fixed the memo type.
  */
-const depositSchema = z.object({ amount: z.string().regex(/^\d+(\.\d{1,7})?$/) });
+const depositSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d{1,7})?$/),
+  txHash: z.string().optional(),
+});
 router.post('/v1/carret/deposit', requireSession(), async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req)!;
-    const { amount } = depositSchema.parse(req.body);
+    const { amount, txHash: existingTx } = depositSchema.parse(req.body);
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.status(422).json({ error: 'NoMapping', message: 'Provision a Carret sub-account first' });
+      return;
+    }
     const d = await getConfiguredDepositAddress();
-    const txHash = await broadcastCarretDeposit({
+    const txHash = existingTx ?? await broadcastCarretDeposit({
       userId: session.userId,
       destination: d.address,
       memo: d.memo_label ?? undefined,
       amount,
     });
-    res.json({ txHash, destination: d.address, memo: d.memo_label, amount });
+    const deposit = await createCryptoDeposit({
+      accountId: mapping.carretAccountId,
+      carretWalletId: d.id,
+      asset: d.asset,
+      chain: d.chain,
+      amount,
+      txnId: txHash,
+    });
+    res.json({ txHash, destination: d.address, memo: d.memo_label, amount, deposit });
   } catch (e) { next(e); }
 });
 

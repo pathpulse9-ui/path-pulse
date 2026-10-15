@@ -121,6 +121,62 @@ export async function getConfiguredDepositAddress(): Promise<CarretDepositAddres
   return list[0];
 }
 
+/**
+ * POST /crypto_deposit/ — register a crypto deposit transaction so Carret
+ * credits the trading wallet. Carret validates against the on-chain tx and
+ * applies Travel Rule compliance. Without this call, a raw on-chain transfer
+ * to the deposit address silently sits uncredited.
+ *
+ * Own-wallet case only (we always deposit from the driver's managed wallet,
+ * which legally belongs to the driver's sub-account). For third-party wallets
+ * Carret requires counterparty_name / counterparty_pan / counterparty_dob —
+ * add when PathPulse surfaces external-wallet deposits.
+ */
+export interface CarretCryptoDeposit {
+  id: number;
+  account_id: number;
+  asset: string;
+  chain: string;
+  amount: string;
+  actual_amount?: string;
+  status: string;
+  txn_type: string;
+  deposited_from_addr?: string | null;
+  txn_id: string;
+  created_at?: number;
+}
+
+export async function createCryptoDeposit(params: {
+  accountId: number | string;
+  carretWalletId: number | string;
+  asset: string;
+  chain: string;
+  amount: string;
+  txnId: string;
+  reason?: string;
+}): Promise<CarretCryptoDeposit> {
+  const res = await carretFetch<{ message?: string; data?: CarretCryptoDeposit } | CarretCryptoDeposit>(
+    'POST',
+    '/crypto_deposit/',
+    {
+      body: {
+        account_id: Number(params.accountId),
+        asset: params.asset,
+        chain: params.chain,
+        amount: params.amount,
+        carret_wallet_id: Number(params.carretWalletId),
+        txn_id: params.txnId,
+        declaration_data: {
+          is_wallet_owned: true,
+          reason_for_transfer: params.reason ?? 'Driver payout settlement',
+          acknowledgement: true,
+        },
+      },
+    },
+  );
+  return (res as { data?: CarretCryptoDeposit }).data ?? (res as CarretCryptoDeposit);
+}
+
 // ── Banking ────────────────────────────────────────────────────────────
 
 export interface CarretBank {
