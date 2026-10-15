@@ -733,8 +733,16 @@ router.get('/v1/offramp/sessions/:id/events', requireSession(), async (req, res,
     const userId = getSessionFromRequest(req)!.userId;
     const session = await getWithdrawal(req.params.id, userId);
     res.json({
-      sessionId: session.id,
-      settlementBatchId: session.settlementBatchId ?? null,
+      // Nested `session` object — the web dashboard reads data.session.status
+      // / .provider / .settlementBatchId; flattening those into siblings makes
+      // the UI crash with "Cannot read properties of undefined (reading
+      // 'status')" the moment a driver opens the Off-ramp page.
+      session: {
+        id: session.id,
+        status: session.status,
+        provider: session.provider,
+        settlementBatchId: session.settlementBatchId ?? null,
+      },
       events: await listEvents(session.id),
     });
   } catch (e) { next(e); }
