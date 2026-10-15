@@ -583,7 +583,6 @@ export default function KycPage() {
                 value={panDobIso}
                 onChange={setPanDobIso}
                 type="date"
-                max={minDobIso()}
                 placeholder=""
               />
               <InfoTile>
