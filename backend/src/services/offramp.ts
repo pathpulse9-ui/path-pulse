@@ -105,7 +105,17 @@ export async function broadcastCarretDeposit(params: {
     asset,
     amount: params.amount,
   }));
-  if (params.memo) builder.addMemo(Memo.text(params.memo));
+  if (params.memo) {
+    // Carret's memo_label on XLM is a purely-numeric string that identifies
+    // the sub-account. Stellar exchanges that use numeric correlators expect
+    // MEMO_ID (uint64), not MEMO_TEXT with the digits as string — the
+    // reconciler on the other side keys on the ID and silently drops text
+    // memos. Use MEMO_ID when the memo is all digits and fits uint64.
+    const digitsOnly = /^\d{1,20}$/.test(params.memo);
+    builder.addMemo(
+      digitsOnly ? Memo.id(params.memo) : Memo.text(params.memo),
+    );
+  }
 
   let tx = builder.setTimeout(180).build();
   tx = (await signer.sign(tx)) as typeof tx;
