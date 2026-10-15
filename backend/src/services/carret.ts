@@ -845,19 +845,16 @@ export async function uploadKycFile(params: {
   const form = new FormData();
   form.append('kyc_session', params.kycSessionId);
   form.append('doc_type', params.docType);
-  // Carret's multipart field name is `xml_file` for Aadhaar XML and `doc_front`
-  // for every other document (images, PDFs). Sending XML as `doc_front` routes
-  // it through the image-processing pipeline, which 422s with "Internal server
-  // error occurred while processing document images".
-  //
-  // Node's FormData + Blob doesn't always get recognized by Django's
-  // request.FILES — DRF then reports "No file was submitted." Using the global
-  // File (Node 18+) tags the part with a filename and promotes it to
-  // request.FILES. Field order matches Carret's cURL example exactly:
-  // kyc_session, doc_type, <file-part>, file_type.
-  const frontField = params.fileType === 'xml' ? 'xml_file' : 'doc_front';
+  form.append('file_type', params.fileType);
+  // Field-name discovery (confirmed on prod against sub-account 49237, 2026-10-15):
+  //   - `doc_front` + file_type=xml → Carret 422 "processing document images"
+  //     (file IS received but routed to image parser).
+  //   - `xml_file`  + file_type=xml → Carret 400 "No file was submitted."
+  //     (field name not recognized; file never reaches request.FILES).
+  // So `doc_front` is the correct multipart part — the docs' `xml_file` row
+  // is wrong. Sent as a Node File (not Blob) so DRF's request.FILES picks it up.
   form.append(
-    frontField,
+    'doc_front',
     new File([new Uint8Array(params.fileBuffer)], params.filename, {
       type: params.contentType ?? (params.fileType === 'xml' ? 'application/xml' : 'application/octet-stream'),
     }),
@@ -870,7 +867,6 @@ export async function uploadKycFile(params: {
       }),
     );
   }
-  form.append('file_type', params.fileType);
   const url = carretV2Base() + '/kyc/document_file/submit/';
   const res = await fetch(
     url,
