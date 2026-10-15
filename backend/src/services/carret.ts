@@ -530,8 +530,10 @@ function normalizeWallets(res: unknown): CarretWalletBalance[] {
       const asset = String(w.asset ?? w.currency ?? w.symbol ?? '').toUpperCase();
       if (!asset) return null;
       const chain = w.chain ?? w.network;
-      const balance = String(w.balance ?? w.total ?? w.total_balance ?? '0');
-      const available = w.available ?? w.available_balance ?? w.spendable;
+      // Carret's /wallet/ docs show `current_balance` as the actual field name;
+      // older staging responses used `balance`. Try both before giving up.
+      const balance = String(w.current_balance ?? w.balance ?? w.total ?? w.total_balance ?? '0');
+      const available = w.available ?? w.available_balance ?? w.spendable ?? w.current_balance;
       return {
         asset,
         chain: chain ? String(chain) : undefined,
