@@ -1255,10 +1255,13 @@ router.get('/v1/carret/resume', async (req, res, next) => {
       if (effectiveStatus === 'manual_review' || effectiveStatus === 'rejected') {
         try {
           const kyc = await getKycStatus(mapping.carretAccountId);
+          // Carret wraps the real status inside `kyc_info` on this endpoint;
+          // the root-level fields we type for are empty.
+          const info = (kyc as unknown as { kyc_info?: CarretKycStatusResponse }).kyc_info ?? kyc;
           const freshSessionPending =
-            kyc?.kyc_status === 'pending' &&
-            Array.isArray(kyc?.ovd_documents) &&
-            kyc.ovd_documents.length === 0;
+            info?.kyc_status === 'pending' &&
+            Array.isArray(info?.ovd_documents) &&
+            info.ovd_documents.length === 0;
           if (freshSessionPending) effectiveStatus = 'pending';
         } catch { /* fall through to the sticky account-level status */ }
       }

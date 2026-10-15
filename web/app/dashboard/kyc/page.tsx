@@ -383,9 +383,13 @@ export default function KycPage() {
         else if (s === 'rejected' || s === 're_kyc' || s === 'failed') setPage('rejected');
         else if (s === 'manual_review')                              setPage('checking');
         else {
-          // pending — keep polling if we're already on checking, otherwise
-          // snap terminal-but-stale pages back to welcome.
-          if (page === 'verified' || page === 'rejected') { setPage('welcome'); setError(null); }
+          // pending — snap stale terminal pages (including a leftover
+          // 'checking' from a previous attempt that's since been cleaned up)
+          // back to welcome so the driver can walk the wizard again.
+          if (page === 'verified' || page === 'rejected' || page === 'checking') {
+            setPage('welcome');
+            setError(null);
+          }
         }
       } catch {
         if (isTerminal) { setPage('welcome'); setError(null); }
