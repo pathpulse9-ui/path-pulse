@@ -379,9 +379,9 @@ export default function KycPage() {
         if (!accountId) setAccountId(r.carretAccountId);
         if (!email && r.email) setEmail(r.email);
         const s = r.kycStatus as string;
-        if (s === 'verified')                        setPage('verified');
-        else if (s === 'rejected' || s === 're_kyc') setPage('rejected');
-        else if (s === 'manual_review')              setPage('checking');
+        if (s === 'verified')                                       setPage('verified');
+        else if (s === 'rejected' || s === 're_kyc' || s === 'failed') setPage('rejected');
+        else if (s === 'manual_review')                              setPage('checking');
         else {
           // pending — keep polling if we're already on checking, otherwise
           // snap terminal-but-stale pages back to welcome.
@@ -406,7 +406,7 @@ export default function KycPage() {
         if (cancelled) return;
         setStatus(s);
         if (s.kyc_status === 'verified') setPage('verified');
-        else if (s.kyc_status === 'rejected') setPage('rejected');
+        else if (s.kyc_status === 'rejected' || s.kyc_status === 'failed') setPage('rejected');
       } catch { /* keep polling */ }
     };
     void tick();
@@ -638,10 +638,19 @@ export default function KycPage() {
               </p>
             </div>
             {status?.kyc_status === 'manual_review' && (
-              <div className="max-w-sm px-6 pt-2">
+              <div className="max-w-sm px-6 pt-2 space-y-3">
                 <InfoTile>
-                  Under manual review by our partner. This can take a few hours — we'll notify you when it's done.
+                  Under manual review by our partner. The usual cause is a selfie that
+                  doesn't match the photo on your ID — a clearer selfie almost always
+                  gets you through on the next attempt.
                 </InfoTile>
+                <button
+                  type="button"
+                  onClick={doCleanupAndRetry}
+                  className="w-full h-12 rounded-xl bg-black text-white text-sm font-medium"
+                >
+                  Retry KYC with a new selfie
+                </button>
               </div>
             )}
           </div>
