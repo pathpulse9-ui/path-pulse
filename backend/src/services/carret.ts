@@ -891,6 +891,47 @@ export async function cleanupKyc(accountId: number | string): Promise<unknown> {
   return carretV2Fetch<unknown>('POST', '/kyc/cleanup/', { account_id: Number(accountId) });
 }
 
+// ── DigiLocker eAadhaar (Carret utility v1) ──────────────────────────
+//
+// Carret proxies DigiLocker so drivers don't have to leave the flow for
+// digilocker.gov.in to fetch a signed Aadhaar XML. Two calls: /start/ returns
+// a hosted login URL the driver opens, then (after they consent)
+// /eaadhaar_details/ returns a presigned XML URL our KYC path feeds to
+// /kyc/document_file/submit/. Reference_id is our correlator across both.
+
+export interface CarretDigilockerStart {
+  success: boolean;
+  message: string;
+  data: { reference_id: string; url: string };
+}
+
+export interface CarretEaadhaarDetails {
+  success: boolean;
+  message: string;
+  data: {
+    reference_id: string;
+    name: string;
+    dob: string;
+    address: string;
+    maskedAadhaarNumber: string;
+    photo: string;         // base64 jpeg
+    xmlAadhaarFile: string; // presigned URL
+    aadhaarFile: string;    // presigned URL (PDF)
+  };
+}
+
+export async function startDigilocker(referenceId: string): Promise<CarretDigilockerStart> {
+  return carretFetch<CarretDigilockerStart>('POST', '/utility/digilocker/start/', {
+    body: { reference_id: referenceId },
+  });
+}
+
+export async function fetchEaadhaarDetails(referenceId: string): Promise<CarretEaadhaarDetails> {
+  return carretFetch<CarretEaadhaarDetails>('POST', '/utility/digilocker/eaadhaar_details/', {
+    body: { reference_id: referenceId },
+  });
+}
+
 // ── Sub-account creation (v1) ─────────────────────────────────────────
 
 export interface SubAccountInput {

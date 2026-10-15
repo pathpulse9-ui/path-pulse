@@ -18,6 +18,7 @@ import type {
   OffRampStatus,
 } from '@pathpulse/contract';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import {
   listDistributionAccounts,
   getTreasuryConfig,
@@ -116,6 +117,8 @@ import {
   uploadKycFile,
   getKycStatus,
   cleanupKyc,
+  startDigilocker,
+  fetchEaadhaarDetails,
   whitelistWallet,
   registerBank,
   listBanks,
@@ -1524,6 +1527,83 @@ router.post('/v1/carret/kyc/cleanup', requireSession(), async (req, res, next) =
   try {
     const { account_id } = initiateKycSchema.parse(req.body);
     res.json(await cleanupKyc(account_id));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * DigiLocker Aadhaar flow. Two-step: `/start` returns a hosted DigiLocker URL
+ * the driver opens in a new tab; after they finish the consent, `/finish`
+ * pulls the signed Aadhaar XML from Carret's /eaadhaar_details and submits it
+ * to the active KYC session via /kyc/document_file/submit/ — no file upload
+ * from the driver's device needed. Reference id is server-generated and
+ * returned so the client echoes it back on finish.
+ */
+router.post('/v1/carret/kyc/digilocker/start', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.status(422).json({ error: 'NoMapping', message: 'Provision a Carret sub-account first' });
+      return;
+    }
+    const referenceId = `pp-${session.userId.slice(0, 8)}-${Date.now().toString(36)}`;
+    const r = await startDigilocker(referenceId);
+    res.json({ reference_id: referenceId, url: r.data.url });
+  } catch (e) {
+    next(e);
+  }
+});
+
+const digilockerFinishSchema = z.object({
+  reference_id: z.string().min(1),
+  kyc_session_id: z.string().min(1),
+});
+
+router.post('/v1/carret/kyc/digilocker/finish', requireSession(), async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req)!;
+    const mapping = await getMapping(session.userId);
+    if (!mapping) {
+      res.status(422).json({ error: 'NoMapping', message: 'Provision a Carret sub-account first' });
+      return;
+    }
+    const { reference_id, kyc_session_id } = digilockerFinishSchema.parse(req.body);
+    const details = await fetchEaadhaarDetails(reference_id);
+    const xmlUrl = details.data.xmlAadhaarFile;
+    const xmlRes = await fetch(xmlUrl);
+    if (!xmlRes.ok) {
+      throw new Error(`XML presigned-url download failed: ${xmlRes.status}`);
+    }
+    const buf = Buffer.from(await xmlRes.arrayBuffer());
+    const magic = buf.slice(0, 8).toString('hex');
+    const upstreamContentType = xmlRes.headers.get('content-type');
+    logger.info(
+      {
+        kyc_session_id,
+        reference_id,
+        xmlUrlHost: new URL(xmlUrl).host,
+        byteLength: buf.length,
+        magicHex: magic,
+        upstreamContentType,
+        snippet: buf.slice(0, 120).toString('utf8'),
+      },
+      'digilocker eAadhaar file downloaded, submitting to Carret',
+    );
+    await uploadKycFile({
+      kycSessionId: kyc_session_id,
+      docType: 'aadhaar',
+      fileType: 'xml',
+      filename: 'aadhaar.xml',
+      fileBuffer: buf,
+      contentType: upstreamContentType ?? 'application/xml',
+    });
+    res.json({
+      success: true,
+      aadhaar_name: details.data.name,
+      masked_aadhaar: details.data.maskedAadhaarNumber,
+    });
   } catch (e) {
     next(e);
   }
