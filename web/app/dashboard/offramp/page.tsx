@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CarretLimits, CarretResumeResponse, CarretBank, CarretWalletBalance,
   OffRampSessionEvents, ReconcileResult,
@@ -50,6 +50,12 @@ export default function OffRampPage() {
   const [sessions, setSessions] = useState<OffRampSession[]>([]);
   const runWithdrawal = useIdempotencyKey();
   const [selected, setSelected] = useState<OffRampSession | null>(null);
+  // Shows a "credited within 30 min" success modal the moment a session's
+  // status transitions to `completed`. We hold the just-completed session in
+  // state (not just a bool) so the modal can render the amount, bank, and
+  // Stellar tx link even after the user navigates between sessions.
+  const [completedModal, setCompletedModal] = useState<OffRampSession | null>(null);
+  const previousStatusRef = useRef<string | null>(null);
   const [amount, setAmount] = useState('10');
   const [batchId, setBatchId] = useState('');
   const [opsSessions, setOpsSessions] = useState<OpsOffRampSession[] | null>(null);
@@ -120,6 +126,19 @@ export default function OffRampPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
+
+  // Fire the "credited within 30 min" modal exactly once per completion. Uses
+  // a ref to remember the previous status so we don't re-open the modal on
+  // every poll tick, and only triggers on the pending→completed transition —
+  // reopening a historic completed session shouldn't surprise the driver.
+  useEffect(() => {
+    if (!selected) { previousStatusRef.current = null; return; }
+    const prev = previousStatusRef.current;
+    if (prev && prev !== 'completed' && selected.status === 'completed') {
+      setCompletedModal(selected);
+    }
+    previousStatusRef.current = selected.status;
+  }, [selected]);
 
   // Poll the selected session while it's in flight (status advances anchor-side).
   useEffect(() => {
@@ -434,14 +453,26 @@ export default function OffRampPage() {
             </div>
           </div>
           <div className="flex items-center gap-3 pt-1 flex-wrap">
-            <a
-              href={selected.interactiveUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
-            >
-              Open anchor webview (KYC + conversion)
-            </a>
+            {selected.stellarTxHash ? (
+              <a
+                href={`https://stellar.expert/explorer/public/tx/${selected.stellarTxHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200 inline-flex items-center gap-2"
+              >
+                View on Stellar Expert
+                <span className="text-xs text-black/40 font-mono">{short(selected.stellarTxHash)}</span>
+              </a>
+            ) : (
+              <a
+                href={selected.interactiveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
+              >
+                Open anchor webview (KYC + conversion)
+              </a>
+            )}
             {selected.sandbox && (
               <span className="text-xs text-black/40">
                 sandbox: status auto-advances (transfer → anchor → completed)
@@ -606,6 +637,89 @@ export default function OffRampPage() {
             )}
           </div>
         )}
+      </div>
+
+      {completedModal && (
+        <CompletedModal
+          session={completedModal}
+          bank={(banks ?? []).find((b) => b.status === 'verified') ?? null}
+          onClose={() => setCompletedModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Shown once per completed session. Confirms the net INR amount, the bank
+ * destination (so the driver sees exactly which account they'll be paid to),
+ * and a direct Stellar Expert link so they can inspect the on-chain leg.
+ */
+function CompletedModal({
+  session,
+  bank,
+  onClose,
+}: {
+  session: OffRampSession;
+  bank: CarretBank | null;
+  onClose: () => void;
+}) {
+  const bankLine = bank
+    ? `${bank.bank_account_name} · ${bank.bank_name} · ••••${bank.bank_account_no.slice(-4)}`
+    : 'your registered bank';
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-md rounded-2xl bg-white p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="grid place-items-center h-14 w-14 rounded-full bg-emerald-100 text-emerald-600 mx-auto text-3xl">
+          ✓
+        </div>
+        <div className="text-center space-y-1">
+          <h3 className="text-xl font-medium tracking-[-0.02em]">Off-ramp completed</h3>
+          <p className="text-sm text-black/60">
+            <span className="font-medium text-black">
+              ≈ {session.fiatAmountEstimate} {session.fiatCurrency}
+            </span>{' '}
+            will be credited to <span className="font-medium text-black">{bankLine}</span> within{' '}
+            <span className="font-medium text-black">30 minutes</span>.
+          </p>
+        </div>
+        <div className="rounded-xl bg-black/[0.03] p-3 text-xs text-black/60 space-y-1">
+          <div>
+            <span className="text-black/40">Amount sent: </span>
+            <span className="font-mono text-black">{session.amount} {session.asset.code}</span>
+          </div>
+          <div>
+            <span className="text-black/40">Carret order: </span>
+            <span className="font-mono text-black">{session.carretOrderId ?? '—'}</span>
+          </div>
+          {session.stellarTxHash && (
+            <div>
+              <a
+                href={`https://stellar.expert/explorer/public/tx/${session.stellarTxHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline text-black"
+              >
+                View Stellar transaction →
+              </a>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full h-11 rounded-xl bg-black text-white text-sm font-medium"
+        >
+          Done
+        </button>
       </div>
     </div>
   );
