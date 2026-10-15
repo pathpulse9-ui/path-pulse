@@ -1239,11 +1239,30 @@ router.get('/v1/carret/resume', async (req, res, next) => {
     // endpoint returns the SESSION state and can sit at "pending"
     // indefinitely for a verified account whose session was archived,
     // which would leave the driver re-walking KYC on every mount.
+    //
+    // BUT: Carret's account-level kyc_status is sticky — once it hits
+    // manual_review/rejected, it stays there even after we clean + start
+    // a fresh session. If the driver has initiated a NEW session and
+    // submitted zero docs on it yet, treat the account as `pending` so
+    // the UI lets them walk the wizard instead of trapping them on the
+    // "checking" spinner forever.
     let effectiveStatus = mapping.kycStatus;
     try {
       const acc = await getSubAccount(mapping.carretAccountId);
       if (acc?.kyc_status && acc.kyc_status !== mapping.kycStatus) {
         effectiveStatus = acc.kyc_status as typeof mapping.kycStatus;
+      }
+      if (effectiveStatus === 'manual_review' || effectiveStatus === 'rejected') {
+        try {
+          const kyc = await getKycStatus(mapping.carretAccountId);
+          const freshSessionPending =
+            kyc?.kyc_status === 'pending' &&
+            Array.isArray(kyc?.ovd_documents) &&
+            kyc.ovd_documents.length === 0;
+          if (freshSessionPending) effectiveStatus = 'pending';
+        } catch { /* fall through to the sticky account-level status */ }
+      }
+      if (effectiveStatus !== mapping.kycStatus) {
         // Best-effort persist; a DB miss doesn't block the response.
         await updateKycStatus(session.userId, effectiveStatus).catch(() => {});
       }
