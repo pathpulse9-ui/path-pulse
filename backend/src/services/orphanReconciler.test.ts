@@ -12,16 +12,6 @@ import {
 import { reconcileOnce, type ReconcileDeps } from './orphanReconciler.js';
 import { carretTimestampMs, type CarretOrder } from './carret.js';
 
-/**
- * D4 recovery proof: an off-ramp session whose Carret webhook never arrived,
- * and one whose `place_order` was interrupted before we learned the order id,
- * are both converged by the reconciler — and both stay linked to the
- * settlement batch they draw from.
- *
- * Mirrors `payoutAttempts.test.ts`: needs a live Postgres at DATABASE_URL and
- * self-skips when one isn't up, so a dev machine without Docker stays green.
- */
-
 let dbAvailable = false;
 const ids: string[] = [];
 

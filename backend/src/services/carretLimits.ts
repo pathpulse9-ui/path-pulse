@@ -1,24 +1,6 @@
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 
-/**
- * Carret daily-limit tracker (PAT-80).
- *
- * Carret enforces ₹30K/day per sub-account per activity type. We mirror the
- * counter locally so we can:
- *   1. Refuse over-limit sessions upfront (429 CarretDailyLimitExceeded)
- *   2. Surface remaining budget in UIs before the user commits to an amount
- *   3. Persist an audit trail of daily volume per sub-account
- *
- * Buckets are IST calendar days (Carret's regulator lives there). We compute
- * `ymd_ist` in code rather than at the SQL layer so the logic is the same
- * whether Postgres is UTC-configured or IST-configured.
- *
- * Falls back to an in-memory counter when DATABASE_URL is unset so local dev
- * without Docker keeps working — dev counters vanish on restart, which is
- * fine since dev never approaches the real limit.
- */
-
 export type CarretActivity =
   | 'deposit_inr'
   | 'withdraw_inr'
@@ -27,24 +9,17 @@ export type CarretActivity =
 
 export const CARRET_DAILY_LIMIT_INR = 30000;
 
-// In-memory fallback keyed by `${accountId}|${activity}|${ymdIst}`.
 const memoryUsage = new Map<string, number>();
 
 function hasDb(): boolean {
   return Boolean(env.databaseUrl);
 }
 
-/**
- * Today's date in IST as `YYYY-MM-DD`. IST is UTC+05:30 with no DST, so we
- * compute it by shifting the epoch and slicing the ISO string — no library
- * needed.
- */
 function todayIst(): string {
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
   return new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-/** Total INR moved by this sub-account for this activity today (IST). */
 export async function usedToday(
   accountId: string,
   activity: CarretActivity,
@@ -61,7 +36,6 @@ export async function usedToday(
   return Number(res.rows[0]?.amount_inr ?? 0);
 }
 
-/** ₹ remaining before this sub-account hits the daily cap for the activity. */
 export async function remainingLimit(
   accountId: string,
   activity: CarretActivity,
@@ -70,7 +44,6 @@ export async function remainingLimit(
   return Math.max(0, CARRET_DAILY_LIMIT_INR - used);
 }
 
-/** All 4 activities in one call — cheap for UI hydration. */
 export async function allRemaining(accountId: string): Promise<Record<CarretActivity, number>> {
   const [a, b, c, d] = await Promise.all([
     remainingLimit(accountId, 'deposit_inr'),
@@ -86,11 +59,6 @@ export async function allRemaining(accountId: string): Promise<Record<CarretActi
   };
 }
 
-/**
- * Refuse if this order would push the sub-account over Carret's daily cap.
- * Throws a typed error the route handler translates to `429 CarretDailyLimitExceeded`
- * with a body that includes `remaining` so the client can render a useful message.
- */
 export async function assertUnderLimit(
   accountId: string,
   activity: CarretActivity,
@@ -118,7 +86,6 @@ export async function assertUnderLimit(
   }
 }
 
-/** Commit usage after Carret confirmed the order landed. Idempotent by (account, activity, day) upsert. */
 export async function recordUsage(
   accountId: string,
   activity: CarretActivity,

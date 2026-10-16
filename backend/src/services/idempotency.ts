@@ -32,7 +32,13 @@ export function idempotency() {
       reject(res, 401, 'Unauthorized', 'session required');
       return;
     }
-    if (!env.databaseUrl) return next();
+    if (!env.databaseUrl) {
+      if (env.nodeEnv === 'production') {
+        reject(res, 503, 'IdempotencyUnavailable', 'Idempotency storage is not configured. Nothing was executed.');
+        return;
+      }
+      return next();
+    }
 
     const userId = session.userId;
     const requestHash = hashRequest(req);
