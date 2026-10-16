@@ -189,7 +189,7 @@ private struct SettlementDetailSheet: View {
     }
 
     private var horizonURL: URL {
-        URL(string: "https://stellar.expert/explorer/testnet/tx/\(batch.txHash)")!
+        Config.explorerTxURL(batch.txHash, network: batch.network)
     }
 
     @ViewBuilder

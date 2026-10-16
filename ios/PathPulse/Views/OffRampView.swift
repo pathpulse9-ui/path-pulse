@@ -19,6 +19,7 @@ struct OffRampView: View {
     @State private var historySheetOpen = false
     @State private var banks: [CarretBank]? = nil
     @State private var wallets: [CarretWalletBalance]? = nil
+    @State private var receipt: OffRampSession? = nil
 
     private let data = DataRepository()
 
@@ -100,7 +101,8 @@ struct OffRampView: View {
                         VStack(spacing: 0) {
                             ForEach(Array(sessions.enumerated()), id: \.element.id) { i, s in
                                 if i > 0 { PpDivider() }
-                                OffRampRow(session: s)
+                                Button(action: { receipt = s }) { OffRampRow(session: s) }
+                                    .buttonStyle(.plain)
                             }
                         }
                         .padding(.top, PpSpace.sm)
@@ -126,6 +128,7 @@ struct OffRampView: View {
         .sheet(isPresented: $historySheetOpen, onDismiss: { Task { await refresh() } }) {
             HistoryView()
         }
+        .sheet(item: $receipt) { WithdrawalReceiptSheet(session: $0) }
     }
 
     // MARK: - Header variants
@@ -809,8 +812,140 @@ private struct OffRampRow: View {
                     .font(PathPulseFont.bodySmall)
                     .foregroundStyle(PathPulseColor.black40)
             }
+            Image(systemName: "chevron.right")
+                .font(.footnote)
+                .foregroundStyle(PathPulseColor.black40)
         }
         .padding(.vertical, PpSpace.md)
+        .contentShape(Rectangle())
+    }
+}
+
+struct WithdrawalReceiptSheet: View {
+    let session: OffRampSession
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: PpSpace.md) {
+                    PpCard {
+                        VStack(alignment: .leading, spacing: PpSpace.sm) {
+                            Text("\(session.amount) \(session.asset.code)")
+                                .font(PathPulseFont.titleLarge)
+                                .foregroundStyle(PathPulseColor.black)
+                            if let fiat = session.fiatAmountEstimate {
+                                Text("≈ \(fiat) \(session.fiatCurrency) to your bank")
+                                    .font(PathPulseFont.bodyMedium)
+                                    .foregroundStyle(PathPulseColor.black60)
+                            }
+                            PpStatusPill(
+                                text: session.status.replacingOccurrences(of: "_", with: " "),
+                                color: Color.ppOffRampStatus(session.status)
+                            )
+                        }
+                    }
+
+                    PpCard {
+                        VStack(alignment: .leading, spacing: 0) {
+                            receiptRow("Provider", session.provider.capitalized)
+                            if let order = session.merchantTransactionId {
+                                PpDivider()
+                                receiptRow("Order", "#\(order)", mono: true)
+                            }
+                            if let batch = session.settlementBatchId {
+                                PpDivider()
+                                receiptRow("Settlement batch", batch, mono: true)
+                            }
+                            PpDivider()
+                            receiptRow("Requested", ReceiptFormat.date(session.createdAt))
+                            if let updated = session.updatedAt {
+                                PpDivider()
+                                receiptRow("Last update", ReceiptFormat.date(updated))
+                            }
+                            PpDivider()
+                            receiptRow("Reference", session.id, mono: true)
+                        }
+                    }
+
+                    PpCard {
+                        VStack(alignment: .leading, spacing: PpSpace.sm) {
+                            Text("Stellar transfer")
+                                .font(PathPulseFont.labelLarge)
+                                .foregroundStyle(PathPulseColor.black)
+                            if let hash = session.stellarTxHash, let link = session.stellarTxUrl.flatMap(URL.init(string:)) {
+                                Link(destination: link) {
+                                    HStack(spacing: PpSpace.sm) {
+                                        Text("\(hash.prefix(10))…\(hash.suffix(8))")
+                                            .font(.system(.footnote, design: .monospaced))
+                                        Image(systemName: "arrow.up.right.square")
+                                    }
+                                    .foregroundStyle(PathPulseColor.teal700)
+                                }
+                            } else {
+                                Text(
+                                    session.sandbox == true
+                                        ? "Sandbox withdrawal — nothing was sent on the Stellar network."
+                                        : "No Stellar transfer is recorded for this withdrawal yet."
+                                )
+                                .font(PathPulseFont.bodySmall)
+                                .foregroundStyle(PathPulseColor.black60)
+                            }
+                        }
+                    }
+                }
+                .padding(PpSize.screenPadding)
+            }
+            .background(PathPulseColor.background)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Withdrawal receipt")
+                        .font(PathPulseFont.labelLarge)
+                        .foregroundStyle(PathPulseColor.black)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark").foregroundStyle(PathPulseColor.black)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func receiptRow(_ label: String, _ value: String, mono: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: PpSpace.md) {
+            Text(label)
+                .font(PathPulseFont.bodySmall)
+                .foregroundStyle(PathPulseColor.black50)
+            Spacer()
+            Text(value)
+                .font(mono ? .system(.footnote, design: .monospaced) : PathPulseFont.bodyMedium)
+                .foregroundStyle(PathPulseColor.black)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, PpSpace.sm)
+    }
+}
+
+enum ReceiptFormat {
+    private static let parser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let display: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    static func date(_ iso: String) -> String {
+        guard let d = parser.date(from: iso) else { return iso }
+        return display.string(from: d)
     }
 }
 

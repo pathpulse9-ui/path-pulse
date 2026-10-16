@@ -1,10 +1,11 @@
 import Foundation
+import Security
 
 /// URLSession-backed HTTP client — mirrors Android's `network/ApiClient.kt`.
 ///
-/// Cookies (session) persist automatically through `HTTPCookieStorage.shared`,
-/// which is what a default `URLSessionConfiguration` uses. That matches the
-/// Ktor `HttpCookies` plugin behavior on Android.
+/// The session cookie lives in an in-memory cookie store and is mirrored to
+/// the Keychain after every response, so it survives relaunches without ever
+/// touching disk in plaintext.
 ///
 /// The backend returns errors as `{ "error", "message", "requestId" }`, which
 /// we decode into `APIErrorPayload` and rethrow as `APIError`.
@@ -35,6 +36,7 @@ final class APIClient: @unchecked Sendable {
     nonisolated(unsafe) static let shared = APIClient()
 
     private let session: URLSession
+    private let cookies: HTTPCookieStorage
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     let baseURL: URL
@@ -42,13 +44,21 @@ final class APIClient: @unchecked Sendable {
     init(baseURL: URL = Config.apiBaseURL) {
         self.baseURL = baseURL
 
-        let cfg = URLSessionConfiguration.default
+        let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 15
         cfg.timeoutIntervalForResource = 30
         cfg.httpCookieAcceptPolicy = .always
         cfg.httpShouldSetCookies = true
-        cfg.httpCookieStorage = HTTPCookieStorage.shared
+        let store = cfg.httpCookieStorage ?? HTTPCookieStorage()
+        cfg.httpCookieStorage = store
+        self.cookies = store
         self.session = URLSession(configuration: cfg)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-PathPulseResetSession") { SessionKeychain.clear() }
+        #endif
+        if let saved = SessionKeychain.load() ?? SessionKeychain.migrateFromSharedStorage(for: baseURL) {
+            store.setCookie(saved)
+        }
 
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
@@ -68,7 +78,7 @@ final class APIClient: @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await perform(request)
         } catch let err as URLError {
             throw APIError.transport(err)
         }
@@ -99,14 +109,14 @@ final class APIClient: @unchecked Sendable {
     /// is irrelevant. Optional JSON body for endpoints that take one.
     @discardableResult
     func postDiscardingBody(_ path: String, body: Encodable? = nil) async throws -> Int {
-        let (_, response) = try await session.data(for: makeRequest(path: path, method: "POST", body: body))
+        let (_, response) = try await perform(makeRequest(path: path, method: "POST", body: body))
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         return http.statusCode
     }
 
     @discardableResult
     func deleteDiscardingBody(_ path: String) async throws -> Int {
-        let (_, response) = try await session.data(for: makeRequest(path: path, method: "DELETE"))
+        let (_, response) = try await perform(makeRequest(path: path, method: "DELETE"))
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         return http.statusCode
     }
@@ -145,7 +155,7 @@ final class APIClient: @unchecked Sendable {
 
         req.httpBody = body
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await perform(req)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(APIErrorPayload.self, from: data)
@@ -165,6 +175,13 @@ final class APIClient: @unchecked Sendable {
     }
 
     // MARK: - Internals
+
+    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let result = try await session.data(for: request)
+        let current = cookies.cookies(for: baseURL)?.first { $0.name == SessionKeychain.cookieName }
+        if let current { SessionKeychain.save(current) } else { SessionKeychain.clear() }
+        return result
+    }
 
     private func makeRequest(
         path: String,
@@ -193,7 +210,7 @@ final class APIClient: @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await perform(request)
         } catch let err as URLError {
             throw APIError.transport(err)
         }
@@ -220,4 +237,69 @@ private struct AnyEncodable: Encodable {
     let base: Encodable
     init(_ base: Encodable) { self.base = base }
     func encode(to encoder: Encoder) throws { try base.encode(to: encoder) }
+}
+
+enum SessionKeychain {
+    static let cookieName = "pathpulse_session"
+    private static let service = "ai.pathpulse.driver.session"
+
+    private struct Stored: Codable {
+        let name: String
+        let value: String
+        let domain: String
+        let path: String
+        let expires: Date?
+        let secure: Bool
+    }
+
+    private static var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: cookieName]
+    }
+
+    static func load() -> HTTPCookie? {
+        var q = query
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return nil }
+        if let expires = stored.expires, expires <= Date() {
+            clear()
+            return nil
+        }
+        var props: [HTTPCookiePropertyKey: Any] = [
+            .name: stored.name, .value: stored.value, .domain: stored.domain, .path: stored.path,
+        ]
+        if let expires = stored.expires { props[.expires] = expires }
+        if stored.secure { props[.secure] = "TRUE" }
+        return HTTPCookie(properties: props)
+    }
+
+    static func save(_ cookie: HTTPCookie) {
+        let stored = Stored(
+            name: cookie.name, value: cookie.value, domain: cookie.domain, path: cookie.path,
+            expires: cookie.expiresDate, secure: cookie.isSecure
+        )
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        let attrs: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        if SecItemUpdate(query as CFDictionary, attrs as CFDictionary) == errSecItemNotFound {
+            SecItemAdd(query.merging(attrs) { $1 } as CFDictionary, nil)
+        }
+    }
+
+    static func clear() {
+        SecItemDelete(query as CFDictionary)
+    }
+
+    static func migrateFromSharedStorage(for url: URL) -> HTTPCookie? {
+        let shared = HTTPCookieStorage.shared
+        guard let legacy = shared.cookies(for: url)?.first(where: { $0.name == cookieName }) else { return nil }
+        shared.deleteCookie(legacy)
+        save(legacy)
+        return legacy
+    }
 }
