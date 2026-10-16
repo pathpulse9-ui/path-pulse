@@ -385,7 +385,7 @@ export default function SettlementPage() {
         </div>
 
         <p className="text-xs text-black/50">
-          Link the treasury deposit that funds this run so partners can trace it on the gov dashboard. It must pay at
+          Link the funding deposit for this run so partners can trace it on the gov dashboard. It must come from the treasury or an authorised sender. It must pay at
           least the gross amount in {settlementAsset} into the settlement source
           {batches[0]?.sourceAddress ? <span className="font-mono"> {batches[0].sourceAddress}</span> : ''}, and can
           fund only one batch.

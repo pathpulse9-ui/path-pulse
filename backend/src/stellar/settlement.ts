@@ -107,7 +107,7 @@ export async function executeSettlementBatch(
   if (!req.drivers?.length) throw httpError('drivers must be a non-empty array', 400, 'ValidationError');
   if (env.network === 'mainnet' && !req.depositTxHash) {
     throw httpError(
-      'depositTxHash is required on mainnet — every settlement must be traceable to the treasury deposit that funds it',
+      'depositTxHash is required on mainnet — every settlement must be traceable to the funding deposit that pays it',
       400,
       'DepositRequired',
     );
