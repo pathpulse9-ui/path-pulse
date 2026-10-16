@@ -1,19 +1,3 @@
-/**
- * Provision the three protocol-governed distribution accounts on Stellar TESTNET:
- *   - Partner Revenue
- *   - Driver Pool
- *   - PathPulse Treasury
- *
- * Generates keypairs, funds them via Friendbot, and writes PUBLIC keys to stdout
- * plus a `.testnet-accounts.json` file. SECRET keys are printed once for you to
- * store in your secret manager — they are NOT written to disk by this script.
- *
- * The treasury multisig configuration is intentionally NOT applied here: that is
- * human-gated. Run the backend and GET /v1/treasury/config after you set the
- * signer public keys, then review + sign the SetOptions XDR manually.
- *
- *   npm run provision:testnet   (from backend/)
- */
 import { writeFileSync } from 'node:fs';
 import { Keypair } from '@stellar/stellar-sdk';
 import { env } from '../src/config/env.js';

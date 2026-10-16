@@ -1,22 +1,3 @@
-/**
- * Issue the three SCOUT reputation badges on Stellar TESTNET (D6).
- *
- * The SCOUT issuer (GBKGCHRV…) was created and flagged on 2026-08-27 but has
- * never issued a badge — its whole history is create_account plus two
- * set_options, so no driver holds SCOUT1/2/3 and the "tiers visible in Stellar
- * wallets" measure cannot be demonstrated.
- *
- * `assignSampleTier()` in src/stellar/scout.ts mints its driver with
- * Keypair.random() and discards the secret, which is how the original driver
- * pool (GD2J6WSB…) became unusable. This runs the same on-chain sequence —
- * changeTrust → setTrustLineFlags authorize → payment 1 SCOUTn — but persists
- * every seed to secrets/scout-drivers.json (0600, gitignored) BEFORE anything
- * touches the network, and adds a USDC trustline so these drivers can actually
- * receive an SDP payout later.
- *
- *   SIGNER_BACKEND=dev KEY_ENCRYPTION_KEY_CIPHERTEXT= \
- *     pnpm --filter @pathpulse/backend exec tsx scripts/provision-scout-drivers.ts
- */
 import { writeFileSync, chmodSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

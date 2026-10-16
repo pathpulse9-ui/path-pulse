@@ -1,19 +1,3 @@
-/**
- * D6 evidence: one unbroken chain from a validation score to money.
- *
- *   existing driver → score read from the feed → SCOUT assignment tx
- *   → settlement whose payout applies that tier's multiplier
- *
- * No score is entered anywhere. `POST /v1/scout/assign` takes a driver id and
- * nothing else; the score comes from `scoreProvider()`. With PULSEGEN_BASE_URL
- * and PULSEGEN_API_KEY set that is the live PulseGen feed (`source: pulsegen`);
- * without them it resolves from the most recent delivered batch, and failing
- * that from a value derived from the driver id — stable per driver, so no
- * operator can hand-pick a tier.
- *
- *   pnpm --filter @pathpulse/backend exec tsx scripts/demo-pulsegen-to-settlement.ts \
- *     [--drivers a,b,c] [--gross 1] [--reassign]
- */
 import { SCOUT_MULTIPLIER } from '@pathpulse/contract';
 import { migrate, closeDb } from '../src/db/client.js';
 import { resolveAsset } from '../src/routing/assets.js';
