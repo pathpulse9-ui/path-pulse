@@ -3,28 +3,13 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 
-/**
- * Settlement indexer store — dual-mode.
- *
- * With DATABASE_URL set (production, staging, and local Docker Postgres):
- *   → Reads and writes go to the `settlement_batches` table so batches
- *   survive restarts and the gov dashboard can serve query load.
- *
- * Without DATABASE_URL (fast local dev without Docker up):
- *   → Falls back to an in-memory array. Rows lost on restart, but the
- *   backend still boots and every existing test / dev flow keeps working.
- *
- * The store is called from `executeSettlementBatch` (write) and from the
- * route handlers `/v1/settlement/batches[/:id]` (read).
- */
-
 export interface BatchQuery {
   cursor?: string;
   limit?: number;
   network?: string;
   assetCode?: string;
-  since?: string;     // ISO-8601
-  until?: string;     // ISO-8601
+  since?: string;
+  until?: string;
   minAmount?: string;
   maxAmount?: string;
 }
@@ -45,8 +30,9 @@ export async function saveBatch(batch: SettlementBatch): Promise<void> {
        (id, created_at, network, gross_amount, asset_code, asset_issuer,
         authorities_amount, driver_rewards_amount, treasury_amount,
         source_address, authorities_address, driver_pool_address, treasury_address,
-        tx_hash, horizon_url, payout_batch_id, driver_payouts)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        tx_hash, horizon_url, payout_batch_id, driver_payouts, created_by,
+        deposit_tx_hash, deposit_from, deposit_amount, deposit_at, conversion)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
      on conflict (id) do nothing`,
     [
       batch.id,
@@ -66,16 +52,16 @@ export async function saveBatch(batch: SettlementBatch): Promise<void> {
       batch.horizonUrl ?? null,
       batch.payoutBatchId ?? null,
       JSON.stringify(batch.driverPayouts ?? []),
+      batch.createdBy ?? null,
+      batch.deposit?.txHash ?? null,
+      batch.deposit?.from ?? null,
+      batch.deposit?.amount ?? null,
+      batch.deposit?.receivedAt ?? null,
+      batch.conversion ? JSON.stringify(batch.conversion) : null,
     ],
   );
 }
 
-/**
- * Link an already-persisted settlement to the payout batch that fans out its
- * driver-rewards slice. Separate from `saveBatch` because the settlement row is
- * written the moment the on-chain split confirms — before the payout provider
- * is called — so the record can never be lost to a downstream provider failure.
- */
 export async function attachPayoutBatch(batchId: string, payoutBatchId: string): Promise<void> {
   if (!hasDb()) {
     const row = inMemory.find((b) => b.id === batchId);
@@ -113,11 +99,9 @@ export async function listBatches(query: BatchQuery = {}): Promise<SettlementBat
   if (query.minAmount) push('gross_amount::numeric >= ?::numeric', query.minAmount);
   if (query.maxAmount) push('gross_amount::numeric <= ?::numeric', query.maxAmount);
 
-  // Cursor pagination on created_at desc + id tiebreak.
   const cur = decodeCursor(query.cursor);
   if (cur) {
     push('(created_at, id) < (?, ?)', cur.createdAt);
-    // second placeholder for the id half of the tuple:
     params.push(cur.id);
     where[where.length - 1] = where[where.length - 1].replace('?, ?', `$${params.length - 1}, $${params.length}`);
   }
@@ -146,12 +130,18 @@ export async function getBatch(id: string): Promise<SettlementBatch | null> {
   return res.rows[0] ? rowToBatch(res.rows[0]) : null;
 }
 
-/** Only called by test fixtures — never in prod. */
+export async function findBatchIdByDeposit(txHash: string): Promise<string | null> {
+  if (!hasDb()) return inMemory.find((b) => b.deposit?.txHash === txHash)?.id ?? null;
+  const res = await db().query<{ id: string }>(
+    'select id from settlement_batches where deposit_tx_hash = $1 limit 1',
+    [txHash],
+  );
+  return res.rows[0]?.id ?? null;
+}
+
 export function _resetInMemoryForTests(): void {
   inMemory.length = 0;
 }
-
-// ── helpers ────────────────────────────────────────────────────────────────
 
 function filterInMemory(rows: SettlementBatch[], q: BatchQuery): SettlementBatch[] {
   return rows.filter((b) => {
@@ -199,6 +189,12 @@ type Row = {
   horizon_url: string | null;
   payout_batch_id: string | null;
   driver_payouts: SettlementBatch['driverPayouts'];
+  created_by: string | null;
+  deposit_tx_hash: string | null;
+  deposit_from: string | null;
+  deposit_amount: string | null;
+  deposit_at: Date | null;
+  conversion: SettlementBatch['conversion'] | null;
 };
 
 function rowToBatch(r: Row): SettlementBatch {
@@ -221,5 +217,16 @@ function rowToBatch(r: Row): SettlementBatch {
     txHash: r.tx_hash,
     horizonUrl: r.horizon_url ?? '',
     payoutBatchId: r.payout_batch_id ?? '',
+    createdBy: r.created_by ?? undefined,
+    deposit:
+      r.deposit_tx_hash && r.deposit_amount && r.deposit_at
+        ? {
+            txHash: r.deposit_tx_hash,
+            from: r.deposit_from ?? '',
+            amount: r.deposit_amount,
+            receivedAt: r.deposit_at.toISOString(),
+          }
+        : undefined,
+    conversion: r.conversion ?? undefined,
   };
 }

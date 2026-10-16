@@ -58,7 +58,6 @@ export function awsKmsClient(): KmsSignClient {
   };
 }
 
-/** Signs Stellar transactions with an Ed25519 key held in KMS. The seed never leaves KMS. */
 export class AwsKmsSigner implements Signer {
   readonly publicKey: string;
   private readonly keyId: string;

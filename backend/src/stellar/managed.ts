@@ -8,13 +8,6 @@ import { CustodialSigner, type Signer } from './signing.js';
 import { createSponsoredAccount, type ReserveSponsor } from './sponsorship.js';
 import { logger } from '../config/logger.js';
 
-/**
- * Custodial managed wallets. The backend generates and holds the key; this is not
- * self-custody. Seeds are sealed with AES-256-GCM under KEY_ENCRYPTION_KEY and stored
- * in Postgres; the plaintext seed exists only inside this module and only long enough
- * to build a Keypair.
- */
-
 interface WalletRow {
   user_id: string;
   public_key: string;
@@ -25,10 +18,6 @@ interface WalletRow {
 
 let cachedKey: Buffer | null = null;
 
-/**
- * Root of trust for driver-seed encryption. With KEY_ENCRYPTION_KEY_CIPHERTEXT set, the KEK is
- * unwrapped once via KMS and never leaves this module; otherwise it comes from the environment.
- */
 async function encryptionKey(): Promise<Buffer> {
   if (cachedKey) return cachedKey;
   if (env.keyEncryptionKeyCiphertext) {
@@ -147,15 +136,6 @@ export function isServiceAccount(userId: string): boolean {
   return SERVICE_ACCOUNTS.has(userId);
 }
 
-/**
- * Both service and per-user wallets sign with their sealed seed. The original design
- * routed service accounts through SIGNER_BACKEND (KMS), but that requires a key
- * ceremony — add the KMS pubkey as a signer on the service account, then zero the
- * master — which hasn't been run. Until it is, `createSigner()` on `aws-kms` returns
- * a signer bound to the KMS key's own pubkey (not the service account's), producing
- * tx_bad_auth. Per-user wallets never used KMS: a KMS key per driver would cost
- * $1 per driver per month, so the per-user tier is encrypt-at-rest by design.
- */
 export async function serviceAccountMasterSigner(userId: string): Promise<CustodialSigner> {
   if (!isServiceAccount(userId)) throw new Error(`${userId} is not a service account`);
   const row = await findRow(userId);
