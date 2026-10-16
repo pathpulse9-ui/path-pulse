@@ -71,6 +71,7 @@ ios/DerivedData/
 # one-shot evidence scripts — run locally, not part of the product
 backend/scripts/demo-scout-revocation.ts
 backend/scripts/route-converted-to-settlement.ts
+backend/scripts/d8-evidence.ts
 
 # internal operational docs — not part of the reviewer deliverable
 docs/RUNBOOK.md

@@ -96,6 +96,23 @@ driver's funds are stranded. Back up the key policy + ciphertext in
 
 ---
 
+## Hosted Stellar Disbursement Platform
+
+All resources are tagged `app=pathpulse` in `us-east-1`, inside the existing VPC.
+
+| Resource | Name / ID |
+|---|---|
+| EC2 host | `pathpulse-mainnet-sdp`, t3.small, private IP `10.100.10.18`, no public IP |
+| RDS Postgres 14 | `pathpulse-mainnet-sdp-db`, db.t4g.micro, encrypted, private, deletion protection, 7-day backups |
+| Security groups | `sg-0e9c93d1d226b0c5b` (host, port 8000 from the App Runner connector SG), `sg-0ffee4f4d5b139c92` (DB, 5432 from the host SG) |
+| IAM | role and instance profile `pathpulse-mainnet-sdp-role` |
+| Secrets Manager | `pathpulse-mainnet-sdp/env` |
+| CloudWatch logs | `pathpulse-mainnet-sdp`, 30-day retention |
+
+The host runs `stellar/stellar-disbursement-platform-backend:6.6.1` through Docker Compose in `/opt/sdp`. Access is through SSM Session Manager only.
+
+The backend reaches it at `SDP_BASE_URL=http://10.100.10.18:8000`. `DRIVER_POOL_PUBLIC` must be the tenant's distribution account, not the host account.
+
 ## Daily operations
 
 | Task | Command |
@@ -127,7 +144,6 @@ KEY_ENCRYPTION_KEY_CIPHERTEXT=<base64 of KMS-encrypted 32-byte key>
 ACCOUNT_FUNDING=sponsor
 SESSION_SECRET=<64 hex chars>
 OPS_PASSCODE=<24 base64 chars>
-ROUTING_PROVIDERS=none
 PATHPULSE_INTERNAL_SCORER=true
 
 CARRET_BASE_URL=https://prod.carret.in/api/v1/taas
