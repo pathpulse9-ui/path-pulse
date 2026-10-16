@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type {
@@ -12,6 +12,7 @@ import type {
   PartnerLoginResponse,
   OpsLoginResponse,
   AuthMeResponse,
+  OpsStatusResponse,
   BuildTransactionRequest,
   SettlementBatch,
   SettlementBatchPage,
@@ -28,17 +29,24 @@ import { ensureAccountForEmail } from '../services/account.js';
 import { verifyGoogleIdToken } from '../services/googleAuth.js';
 import { buildChallenge, verifyChallenge, serverSigningKey } from '../services/walletAuth.js';
 import {
-  setSessionCookie,
-  clearSessionCookie,
+  replaceSession,
+  endSession,
   getSessionFromRequest,
+  roleOf,
+  withRole,
+  type SessionPayload,
 } from '../services/session.js';
+import { clearFailures, isLockedOut, recordFailure } from '../services/loginGuard.js';
+import { isReplay } from '../services/webhookReplay.js';
+import { executeConvertedSettlement } from '../stellar/convertedSettlement.js';
+import { indexerStatus, listLedger } from '../services/chainIndexer.js';
 import { buildTransaction, submitTransaction } from '../stellar/transactions.js';
 import {
   executeSettlementBatch,
   listSettlementBatches,
   getSettlementBatch,
 } from '../stellar/settlement.js';
-import { batchesToCsv, batchReceiptPdf } from '../services/settlementExport.js';
+import { batchesToCsv, batchReceiptPdf, payoutsToCsv } from '../services/settlementExport.js';
 import {
   executeGroupPayout,
   listGroupPayoutBatches,
@@ -50,9 +58,9 @@ import {
   getWithdrawal,
   applyCallback,
   applyCarretCallback,
+  broadcastCarretDeposit,
   activeProvider,
   quoteWithdrawal,
-  broadcastCarretDeposit,
 } from '../services/offramp.js';
 import {
   getQuote as onrampGetQuote,
@@ -135,8 +143,12 @@ import {
 } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
 import { getRewards } from '../services/payoutHistory.js';
+import { defaultChecks, runChecks, lastMonitorReport } from '../services/health.js';
+import { recentAlerts, DEDUPE_WINDOW_MS } from '../services/alerts.js';
 import { registerDevice, unregisterDevice } from '../services/push.js';
-import { requireSession, requireRole } from '../middleware/requireSession.js';
+import { requireSession, requireRole, callerRole, identifyPartnerKey } from '../middleware/requireSession.js';
+import { createPartnerKey, listPartnerKeys, revokePartnerKey } from '../services/partnerKeys.js';
+import { callbackLimiter, sponsoredTxLimiter } from '../middleware/rateLimit.js';
 import { allRemaining, CARRET_DAILY_LIMIT_INR } from '../services/carretLimits.js';
 import multer from 'multer';
 import {
@@ -145,13 +157,15 @@ import {
   getScoutConfig,
   revokeTier,
   scoreToTier,
+  scoutCurrencyToml,
+  scoutIssuerAddress,
 } from '../stellar/scout.js';
 import { getManagedWallet, provisionManagedWallet } from '../stellar/managed.js';
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { listAttempts } from '../services/payoutAttempts.js';
 import { quoteSwap, executeSwap } from '../routing/aggregator.js';
 import { listRoutableAssets } from '../routing/assets.js';
-import { getTreasuryRoutingPlan } from '../routing/treasury.js';
+import { getTreasuryRoutingPlan, buildTreasuryConversion } from '../routing/treasury.js';
 
 export const router = Router();
 
@@ -165,6 +179,11 @@ const createSettlementSchema = z.object({
   drivers: z
     .array(z.object({ userId: z.string().min(1), address: z.string().min(1), tier: scoutTierSchema.optional() }))
     .min(1),
+  depositTxHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/i, 'depositTxHash must be a 64-character transaction hash')
+    .transform((h) => h.toLowerCase())
+    .optional(),
 });
 function assetRefOptional() {
   return z.object({ code: z.string().min(1), issuer: z.string().optional() }).optional();
@@ -182,18 +201,104 @@ const buildTxSchema = z.object({
 });
 const submitTxSchema = z.object({ xdr: z.string().min(1) });
 
-router.get('/.well-known/stellar.toml', (_req, res) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.type('text/plain').send(
-    [
-      'VERSION="2.0.0"',
-      `NETWORK_PASSPHRASE="${env.networkPassphrase}"`,
-      `HORIZON_URL="${env.horizonUrl}"`,
-      `WEB_AUTH_ENDPOINT="https://${env.sep10.homeDomain}/v1/auth/challenge"`,
-      `SIGNING_KEY="${serverSigningKey()}"`,
-      '',
-    ].join('\n'),
-  );
+router.get('/.well-known/stellar.toml', async (_req, res, next) => {
+  try {
+    const scoutIssuer = await scoutIssuerAddress();
+    res.set('Access-Control-Allow-Origin', '*');
+    res.type('text/plain').send(
+      [
+        'VERSION="2.0.0"',
+        `NETWORK_PASSPHRASE="${env.networkPassphrase}"`,
+        `HORIZON_URL="${env.horizonUrl}"`,
+        `WEB_AUTH_ENDPOINT="https://${env.sep10.homeDomain}/v1/auth/challenge"`,
+        `SIGNING_KEY="${serverSigningKey()}"`,
+        ...(scoutIssuer ? [`ACCOUNTS=["${scoutIssuer}"]`] : []),
+        '',
+        '[DOCUMENTATION]',
+        'ORG_NAME="PathPulse"',
+        `ORG_URL="${env.webAppUrl}"`,
+        ...(scoutIssuer ? scoutCurrencyToml(scoutIssuer) : []),
+        '',
+      ].join('\n'),
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/health/ready', async (_req, res, next) => {
+  try {
+    const report = lastMonitorReport() ?? (await runChecks(defaultChecks()));
+    if (!report.ok) logger.warn({ report }, 'readiness check failed');
+    res.status(report.ok ? 200 : 503).json({
+      ...report,
+      checks: report.checks.map(({ name, ok, latencyMs }) => ({ name, ok, latencyMs })),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+const STARTED_AT = new Date().toISOString();
+
+router.get('/v1/ops/status', requireRole('ops'), async (req, res, next) => {
+  try {
+    const report =
+      req.query.refresh === 'true' ? await runChecks(defaultChecks()) : (lastMonitorReport() ?? (await runChecks(defaultChecks())));
+    const body: OpsStatusResponse = {
+      version: VERSION,
+      startedAt: STARTED_AT,
+      monitor: { intervalMs: env.alerts.healthIntervalMs, report: { ...report, network: env.network } },
+      alerting: { webhookConfigured: !!env.alerts.webhookUrl, dedupeWindowMinutes: DEDUPE_WINDOW_MS / 60_000 },
+      alerts: recentAlerts(),
+    };
+    res.json(body);
+  } catch (e) {
+    next(e);
+  }
+});
+
+const partnerKeySchema = z.object({ name: z.string().min(1).max(80) });
+
+router.post('/v1/ops/partner-keys', requireRole('ops'), async (req, res, next) => {
+  try {
+    const { name } = partnerKeySchema.parse(req.body);
+    res.status(201).json(await createPartnerKey(name, getSessionFromRequest(req)!.userId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/ops/partner-keys', requireRole('ops'), async (_req, res, next) => {
+  try {
+    res.json({ items: await listPartnerKeys() });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.delete('/v1/ops/partner-keys/:id', requireRole('ops'), async (req, res, next) => {
+  try {
+    if (!(await revokePartnerKey(req.params.id))) {
+      res.status(404).json({ error: 'NotFound', message: `No active partner key ${req.params.id}` });
+      return;
+    }
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/gov/ledger', requireRole('partner', 'ops'), async (req, res, next) => {
+  try {
+    const s = (k: string) => (typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined);
+    res.json({
+      indexer: indexerStatus(),
+      ...(await listLedger({ account: s('account'), cursor: s('cursor'), limit: req.query.limit ? Number(req.query.limit) : undefined })),
+    });
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.get('/health', (_req, res) => {
@@ -246,12 +351,6 @@ router.get('/v1/treasury/config', async (_req, res, next) => {
   }
 });
 
-/**
- * Build (but do not sign or submit) the multisig-configuration transaction for
- * the treasury account. Human-gated by design — a signatory reviews the XDR in
- * Stellar Laboratory and signs it out-of-band. The backend never auto-signs
- * treasury reconfiguration.
- */
 router.post('/v1/treasury/multisig/build', requireRole('ops'), async (_req, res, next) => {
   try {
     res.json(await buildTreasuryMultisigTx());
@@ -263,9 +362,13 @@ router.post('/v1/treasury/multisig/build', requireRole('ops'), async (_req, res,
 router.post('/v1/auth/google/verify', async (req, res, next) => {
   try {
     const { idToken } = req.body as GoogleVerifyRequest;
-    const { email } = await verifyGoogleIdToken(idToken);
-    const { userId, wallet } = await ensureAccountForEmail(email);
-    setSessionCookie(res, { userId, method: 'google', email, address: wallet.address });
+    if (typeof idToken !== 'string' || !idToken) {
+      res.status(400).json({ error: 'ValidationError', message: 'idToken is required' });
+      return;
+    }
+    const { email, sub } = await verifyGoogleIdToken(idToken);
+    const { userId, wallet } = await ensureAccountForEmail(email, sub);
+    await replaceSession(req, res, { userId, method: 'google', email, address: wallet.address });
     const body: GoogleVerifyResponse = { userId, wallet };
     res.json(body);
   } catch (e) {
@@ -292,13 +395,13 @@ router.get('/v1/auth/challenge', async (req, res, next) => {
 router.post('/v1/auth/wallet/verify', async (req, res, next) => {
   try {
     const { transaction } = req.body as WalletVerifyRequest;
+    if (typeof transaction !== 'string' || !transaction) {
+      res.status(400).json({ error: 'ValidationError', message: 'transaction is required' });
+      return;
+    }
     const { userId, address } = await verifyChallenge(transaction);
-    setSessionCookie(res, { userId, method: 'wallet', address });
+    await replaceSession(req, res, { userId, method: 'wallet', address });
 
-    // PAT-76: auto-whitelist the driver's Stellar address with Carret if
-    // they already have a sub-account on file. Non-blocking — the sign-in
-    // succeeds even if whitelist fails; a "resync wallet" affordance in
-    // the mobile profile can retry.
     autoWhitelistWallet(userId, address).catch((e) =>
       // eslint-disable-next-line no-console
       console.warn(`[carret] auto-whitelist failed for ${userId}: ${(e as Error).message}`),
@@ -312,73 +415,136 @@ router.post('/v1/auth/wallet/verify', async (req, res, next) => {
   }
 });
 
-/** PAT-76 helper — fire-and-forget wallet whitelist call. */
 async function autoWhitelistWallet(userId: string, address: string): Promise<void> {
   if (!carretLive) return;
   const mapping = await getMapping(userId);
-  if (!mapping) return; // no Carret sub-account yet — whitelisted on first provision
-  if (mapping.walletWhitelistedAt) return; // already done
+  if (!mapping) return;
+  if (mapping.walletWhitelistedAt) return;
   await whitelistWallet(mapping.carretAccountId, address);
   await markWalletWhitelisted(userId);
 }
 
-router.post('/v1/auth/guest', (_req, res) => {
-  const userId = `guest_${randomUUID()}`;
-  setSessionCookie(res, { userId, method: 'guest' });
-  const body: GuestSessionResponse = { userId };
-  res.json(body);
+router.post('/v1/auth/guest', async (req, res, next) => {
+  try {
+    const userId = `guest_${randomUUID()}`;
+    await replaceSession(req, res, { userId, method: 'guest' });
+    const body: GuestSessionResponse = { userId };
+    res.json(body);
+  } catch (e) {
+    next(e);
+  }
 });
 
-/** Constant-time passcode compare — avoids leaking match length via timing. */
 function passcodeMatches(supplied: string, expected: string): boolean {
   const a = Buffer.from(supplied);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-// Gov Settlement Gateway (D8): partner access gate. Shared passcode issued
-// out-of-band to government/partner reviewers — not a per-user identity,
-// just a wall between the public internet and the transparency dashboard.
-router.post('/v1/auth/partner/login', (req, res) => {
-  const { passcode } = req.body as { passcode?: string };
-  if (!env.govPartnerPasscode) {
-    res.status(500).json({ error: 'ConfigError', message: 'GOV_PARTNER_PASSCODE not configured' });
-    return;
+function operatorIdentity(session: SessionPayload): string | null {
+  const identity =
+    session.method === 'google' && session.email
+      ? session.email.toLowerCase()
+      : session.method === 'wallet' && session.address
+        ? session.address
+        : null;
+  if (!identity) return null;
+  if (env.opsOperators.length && !env.opsOperators.includes(identity)) return null;
+  return identity;
+}
+
+function lockedOut(res: Response): void {
+  res.status(429).json({ error: 'LockedOut', message: 'too many failed passcode attempts — try again in 15 minutes' });
+}
+
+router.post('/v1/auth/partner/login', async (req, res, next) => {
+  try {
+    const { passcode } = req.body as { passcode?: string };
+    if (!env.govPartnerPasscode) {
+      res.status(500).json({ error: 'ConfigError', message: 'GOV_PARTNER_PASSCODE not configured' });
+      return;
+    }
+    const identity = req.ip ?? 'unknown';
+    if (isLockedOut('partner', identity)) {
+      lockedOut(res);
+      return;
+    }
+    if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.govPartnerPasscode)) {
+      recordFailure('partner', identity);
+      res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
+      return;
+    }
+    clearFailures('partner', identity);
+    const existing = getSessionFromRequest(req);
+    const session = withRole(existing ?? { userId: `partner_${randomUUID()}`, method: 'partner' }, 'partner');
+    await replaceSession(req, res, session);
+    const body: PartnerLoginResponse = { userId: session.userId };
+    res.json(body);
+  } catch (e) {
+    next(e);
   }
-  if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.govPartnerPasscode)) {
-    res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
-    return;
-  }
-  const userId = `partner_${randomUUID()}`;
-  setSessionCookie(res, { userId, method: 'partner' });
-  const body: PartnerLoginResponse = { userId };
-  res.json(body);
 });
 
-// Operator gate. Everything that moves protocol funds (settlement, group
-// payout, SDP fan-out, SCOUT issuance, treasury reconfiguration) requires this
-// session method — a driver's ordinary session is deliberately not enough.
-router.post('/v1/auth/ops/login', (req, res) => {
-  const { passcode } = req.body as { passcode?: string };
-  if (!env.opsPasscode) {
-    res.status(500).json({ error: 'ConfigError', message: 'OPS_PASSCODE not configured' });
-    return;
+router.post('/v1/auth/ops/login', async (req, res, next) => {
+  try {
+    const { passcode } = req.body as { passcode?: string };
+    if (!env.opsPasscode) {
+      res.status(500).json({ error: 'ConfigError', message: 'OPS_PASSCODE not configured' });
+      return;
+    }
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ error: 'Unauthorized', message: 'sign in before unlocking operator access' });
+      return;
+    }
+    const identity = operatorIdentity(session);
+    if (!identity) {
+      res.status(403).json({
+        error: 'Forbidden',
+        message: 'operator access needs a Google or wallet sign-in that is on the operator allowlist',
+      });
+      return;
+    }
+    if (isLockedOut('ops', identity)) {
+      lockedOut(res);
+      return;
+    }
+    if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.opsPasscode)) {
+      recordFailure('ops', identity);
+      res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
+      return;
+    }
+    clearFailures('ops', identity);
+    await replaceSession(req, res, withRole(session, 'ops'));
+    const body: OpsLoginResponse = { userId: session.userId };
+    res.json(body);
+  } catch (e) {
+    next(e);
   }
-  if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.opsPasscode)) {
-    res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
-    return;
+});
+
+router.post('/v1/auth/ops/exit', async (req, res, next) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session || session.method === 'partner') await endSession(req, res);
+    else await replaceSession(req, res, withRole(session, undefined));
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
   }
-  const userId = `ops_${randomUUID()}`;
-  setSessionCookie(res, { userId, method: 'ops' });
-  const body: OpsLoginResponse = { userId };
-  res.json(body);
 });
 
 router.get('/v1/auth/me', (req, res) => {
   const session = getSessionFromRequest(req);
   const body: AuthMeResponse = {
     user: session
-      ? { userId: session.userId, method: session.method, email: session.email, address: session.address }
+      ? {
+          userId: session.userId,
+          method: session.method,
+          role: roleOf(session),
+          email: session.email,
+          address: session.address,
+        }
       : null,
   };
   res.json(body);
@@ -422,13 +588,16 @@ router.delete('/v1/me/devices/:token', requireSession(), async (req, res, next) 
   }
 });
 
-router.post('/v1/auth/logout', (_req, res) => {
-  clearSessionCookie(res);
-  res.json({ ok: true });
+router.post('/v1/auth/logout', async (req, res, next) => {
+  try {
+    await endSession(req, res);
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
 });
 
-// Delegated signing: build (+delegate-sign) a tx from the caller's managed wallet.
-router.post('/v1/tx/build', async (req, res, next) => {
+router.post('/v1/tx/build', sponsoredTxLimiter, async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
     if (!session) {
@@ -442,8 +611,7 @@ router.post('/v1/tx/build', async (req, res, next) => {
   }
 });
 
-// Submit a signed transaction envelope (managed or external-wallet) to Horizon.
-router.post('/v1/tx/submit', async (req, res, next) => {
+router.post('/v1/tx/submit', requireSession(), async (req, res, next) => {
   try {
     const { xdr } = submitTxSchema.parse(req.body);
     res.json(await submitTransaction(xdr));
@@ -452,78 +620,113 @@ router.post('/v1/tx/submit', async (req, res, next) => {
   }
 });
 
-// Settlement engine (D6): execute a 50/30/20 batch, list + drill down.
 router.post('/v1/settlement/batches', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createSettlementSchema.parse(req.body);
-    res.json(await executeSettlementBatch(parsed));
+    res.json(await executeSettlementBatch(parsed, { createdBy: getSessionFromRequest(req)!.userId }));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/settlement/batches', async (req, res, next) => {
+function visibleBatch(batch: SettlementBatch, req: Request): SettlementBatch {
+  const session = getSessionFromRequest(req);
+  if (callerRole(req)) return batch;
+  return {
+    ...batch,
+    createdBy: undefined,
+    driverPayouts: (batch.driverPayouts ?? []).map((p) =>
+      p.userId === session?.userId ? p : { ...p, userId: 'redacted' },
+    ),
+  };
+}
+
+const createConvertedSettlementSchema = z.object({
+  from: z.string().min(1),
+  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  drivers: z
+    .array(z.object({ userId: z.string().min(1), address: z.string().min(1) }))
+    .min(1),
+});
+
+router.post('/v1/settlement/converted', requireRole('ops'), idempotency(), async (req, res, next) => {
+  try {
+    const parsed = createConvertedSettlementSchema.parse(req.body);
+    res.json(await executeConvertedSettlement(parsed, { createdBy: getSessionFromRequest(req)!.userId }));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/settlement/batches', identifyPartnerKey(), async (req, res, next) => {
   try {
     const s = (k: string): string | undefined =>
       typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
-    res.json(
-      await listSettlementBatches({
-        cursor:    s('cursor'),
-        limit:     req.query.limit ? Number(req.query.limit) : undefined,
-        network:   s('network'),
-        assetCode: s('assetCode'),
-        since:     s('since'),
-        until:     s('until'),
-        minAmount: s('minAmount'),
-        maxAmount: s('maxAmount'),
-      }),
-    );
+    const page = await listSettlementBatches({
+      cursor:    s('cursor'),
+      limit:     req.query.limit ? Number(req.query.limit) : undefined,
+      network:   s('network'),
+      assetCode: s('assetCode'),
+      since:     s('since'),
+      until:     s('until'),
+      minAmount: s('minAmount'),
+      maxAmount: s('maxAmount'),
+    });
+    res.json({ ...page, items: page.items.map((b) => visibleBatch(b, req)) });
   } catch (e) {
     next(e);
   }
 });
 
-// ── Compliance exports (D8 gov dashboard + partner finance) ──────────────
-// IMPORTANT: these more-specific routes must be registered BEFORE the
-// generic `/v1/settlement/batches/:id` matcher, or Express matches `:id`
-// = "export.csv" first and 404s with "Settlement batch export.csv not
-// found" (real bug I caught the first time production hit the endpoint).
+async function collectBatches(req: Request): Promise<SettlementBatch[]> {
+  const s = (k: string): string | undefined =>
+    typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
+  const items: SettlementBatch[] = [];
+  let cursor: string | null | undefined = undefined;
+  for (let i = 0; i < 20; i++) {
+    const page: SettlementBatchPage = await listSettlementBatches({
+      cursor:    cursor ?? undefined,
+      limit:     100,
+      network:   s('network'),
+      assetCode: s('assetCode'),
+      since:     s('since'),
+      until:     s('until'),
+      minAmount: s('minAmount'),
+      maxAmount: s('maxAmount'),
+    });
+    items.push(...page.items);
+    cursor = page.nextCursor;
+    if (!cursor) break;
+  }
+  return items;
+}
 
-router.get('/v1/settlement/batches/export.csv', async (req, res, next) => {
+function sendCsv(res: Response, name: string, csv: string): void {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="pathpulse-${name}-${new Date().toISOString().slice(0, 10)}.csv"`,
+  );
+  res.send(csv);
+}
+
+router.get('/v1/settlement/batches/export.csv', requireRole('partner', 'ops'), async (req, res, next) => {
   try {
-    const s = (k: string): string | undefined =>
-      typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
-    // Pull up to 1000 batches in a single export — walk cursor to gather more.
-    const items: SettlementBatch[] = [];
-    let cursor: string | null | undefined = undefined;
-    for (let i = 0; i < 20; i++) {
-      const page: SettlementBatchPage = await listSettlementBatches({
-        cursor:    cursor ?? undefined,
-        limit:     100,
-        network:   s('network'),
-        assetCode: s('assetCode'),
-        since:     s('since'),
-        until:     s('until'),
-        minAmount: s('minAmount'),
-        maxAmount: s('maxAmount'),
-      });
-      items.push(...page.items);
-      cursor = page.nextCursor;
-      if (!cursor) break;
-    }
-    const csv = batchesToCsv(items);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="pathpulse-settlements-${new Date().toISOString().slice(0, 10)}.csv"`,
-    );
-    res.send(csv);
+    sendCsv(res, 'settlements', batchesToCsv(await collectBatches(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/settlement/batches/:id/receipt.pdf', async (req, res, next) => {
+router.get('/v1/settlement/batches/payouts.csv', requireRole('partner', 'ops'), async (req, res, next) => {
+  try {
+    sendCsv(res, 'driver-payouts', payoutsToCsv(await collectBatches(req)));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/v1/settlement/batches/:id/receipt.pdf', requireRole('partner', 'ops'), async (req, res, next) => {
   try {
     const batch = await getSettlementBatch(req.params.id);
     const pdf = await batchReceiptPdf(batch);
@@ -538,18 +741,14 @@ router.get('/v1/settlement/batches/:id/receipt.pdf', async (req, res, next) => {
   }
 });
 
-// Generic per-batch lookup — registered AFTER the two more-specific
-// routes above so Express's linear route match hits export.csv and
-// receipt.pdf first.
-router.get('/v1/settlement/batches/:id', async (req, res, next) => {
+router.get('/v1/settlement/batches/:id', identifyPartnerKey(), async (req, res, next) => {
   try {
-    res.json(await getSettlementBatch(req.params.id));
+    res.json(visibleBatch(await getSettlementBatch(req.params.id), req));
   } catch (e) {
     next(e);
   }
 });
 
-// Bulk group payout (CSV/Excel upload): flat, exact-amount payments, no split/tier logic.
 const groupPayoutRecipientSchema = z.object({
   name: z.string().min(1),
   address: z.string().min(1),
@@ -562,11 +761,10 @@ const createGroupPayoutSchema = z.object({
   recipients: z.array(groupPayoutRecipientSchema).min(1).max(100),
 });
 
-
 router.post('/v1/settlement/group-payouts', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createGroupPayoutSchema.parse(req.body);
-    res.json(await executeGroupPayout(parsed));
+    res.json(await executeGroupPayout(parsed, { createdBy: getSessionFromRequest(req)!.userId }));
   } catch (e) {
     next(e);
   }
@@ -597,14 +795,17 @@ router.post('/v1/ops/payouts/batches', requireRole('ops'), idempotency(), async 
     const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
     const settlementBatch = await getSettlementBatch(settlementBatchId);
     res.json(
-      await createPayoutBatch(settlementBatch.driverPayouts, settlementBatch.asset, { settlementBatchId }),
+      await createPayoutBatch(settlementBatch.driverPayouts, settlementBatch.asset, {
+        settlementBatchId,
+        createdBy: getSessionFromRequest(req)!.userId,
+      }),
     );
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/ops/payouts/batches', async (req, res, next) => {
+router.get('/v1/ops/payouts/batches', requireRole('ops'), async (req, res, next) => {
   try {
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
@@ -614,7 +815,7 @@ router.get('/v1/ops/payouts/batches', async (req, res, next) => {
   }
 });
 
-router.get('/v1/ops/payouts/batches/:id', async (req, res, next) => {
+router.get('/v1/ops/payouts/batches/:id', requireRole('ops', 'partner'), async (req, res, next) => {
   try {
     res.json(await getPayoutBatch(req.params.id));
   } catch (e) {
@@ -622,8 +823,7 @@ router.get('/v1/ops/payouts/batches/:id', async (req, res, next) => {
   }
 });
 
-// Reconciliation: every SDP call attempt for a batch, including failures and retries.
-router.get('/v1/ops/payouts/batches/:id/attempts', async (req, res, next) => {
+router.get('/v1/ops/payouts/batches/:id/attempts', requireRole('ops'), async (req, res, next) => {
   try {
     res.json({ batchId: req.params.id, attempts: await listAttempts(req.params.id) });
   } catch (e) {
@@ -631,7 +831,6 @@ router.get('/v1/ops/payouts/batches/:id/attempts', async (req, res, next) => {
   }
 });
 
-// Fiat off-ramp (D4 — Mercuryo SEP-24): start an interactive withdrawal, list, poll.
 const createWithdrawalSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
   asset: assetRefOptional(),
@@ -772,11 +971,6 @@ router.post('/v1/ops/offramp/sessions/:id/simulate-missed-webhook', requireSessi
   } catch (e) { next(e); }
 });
 
-/**
- * Operator view of off-ramp sessions. The driver-facing endpoints are scoped
- * to the caller, so this is the only way an operator can inspect a withdrawal
- * that is not their own — including one seeded or stuck mid-flight.
- */
 router.get('/v1/ops/offramp/sessions', requireRole('ops'), async (req, res, next) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
@@ -801,7 +995,6 @@ router.post('/v1/ops/offramp/reconcile', requireRole('ops'), async (_req, res, n
   } catch (e) { next(e); }
 });
 
-// Cross-asset routing (D5): quote across active routers, then execute the best route.
 const routableSchema = z.string().min(1);
 const amountSchema = z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number');
 const routingQuoteSchema = z.object({
@@ -828,7 +1021,7 @@ router.get('/v1/routing/quote', async (req, res, next) => {
   }
 });
 
-router.post('/v1/routing/swap', requireSession(), idempotency(), async (req, res, next) => {
+router.post('/v1/routing/swap', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const { from, to, amount } = routingSwapSchema.parse(req.body);
     res.status(201).json(await executeSwap(from, to, amount));
@@ -837,7 +1030,6 @@ router.post('/v1/routing/swap', requireSession(), idempotency(), async (req, res
   }
 });
 
-// Treasury routing (D5): what non-settlement balances the treasury holds and quotes to convert them.
 router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
   try {
     res.json(await getTreasuryRoutingPlan());
@@ -846,10 +1038,20 @@ router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
   }
 });
 
-// SCOUT reputation assets (D6): config, assign an existing driver the tier their PulseGen score maps to, look up on-chain tier.
-// .strict() so a caller that sends a score gets an explicit 400 rather than
-// having it silently stripped — the guarantee "you cannot supply a score" has
-// to be demonstrable, not merely true.
+const treasuryConversionSchema = z.object({
+  from: z.string().min(1).max(12),
+  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+});
+
+router.post('/v1/routing/treasury/conversions', requireRole('ops'), async (req, res, next) => {
+  try {
+    const { from, amount } = treasuryConversionSchema.parse(req.body);
+    res.json(await buildTreasuryConversion(from, amount));
+  } catch (e) {
+    next(e);
+  }
+});
+
 const assignScoutSchema = z.object({ driverId: z.string().min(1) }).strict();
 
 router.get('/v1/scout', async (_req, res, next) => {
@@ -869,16 +1071,6 @@ router.post('/v1/scout/assign', requireRole('ops'), async (req, res, next) => {
   }
 });
 
-/**
- * PulseGen score delivery (D6). PulseGen is PathPulse.ai's validation engine
- * and an external dependency; until a live endpoint exists its results arrive
- * as batches. Accepts JSON or a `driver_id,score,scored_at` CSV and records
- * provenance — supplier, arrival time, importing operator and a SHA-256 of the
- * exact payload received.
- *
- * The provenance attests to RECEIPT, not correctness: it proves a named party
- * supplied these numbers at a known time, not that the numbers are right.
- */
 function httpFail(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
   e.name = name;
@@ -948,11 +1140,6 @@ router.get('/v1/ops/scores/imports/:id', requireRole('ops'), async (req, res, ne
   }
 });
 
-/**
- * Feed status for the ops console — which source would answer, the batch that
- * delivered the current scores, and the scores themselves. This is what makes
- * a tier's origin visible before any badge is assigned.
- */
 router.get('/v1/scout/feed', requireSession(), async (_req, res, next) => {
   try {
     const imports = await listImports(1);
@@ -978,13 +1165,6 @@ router.get('/v1/scout/score/:driverId', requireSession(), async (req, res, next)
   }
 });
 
-/**
- * Prepare the reviewer demo cohort through the real path: provision each
- * driver's managed wallet, read their score from the feed, and assign the tier
- * that score maps to. Replaces the previous console demo, which invented
- * drivers and asserted their tiers in the settlement request — the exact
- * pattern D6 review objected to.
- */
 const demoDriversSchema = z.object({
   driverIds: z.array(z.string().min(1)).min(1).max(10).optional(),
 });
@@ -1007,9 +1187,6 @@ router.post('/v1/ops/demo/scout-drivers', requireRole('ops'), async (req, res, n
       const expected = scoreToTier(validation.score);
       const current = await getOnchainTier(wallet.address);
 
-      // Idempotent: a badge that already matches its score is not re-issued.
-      // Report the transaction that did issue it, so the assignment is always
-      // traceable rather than reading as though nothing happened.
       let assignmentTx: string | null = null;
       let assignedNow = false;
       if (current.tier !== expected) {
@@ -1059,64 +1236,58 @@ router.get('/v1/scout/:address', async (req, res, next) => {
   }
 });
 
-/**
- * Off-ramp webhook. Provider-shaped:
- *  - Ramp:   verify ECDSA `X-Body-Signature` over the raw body; correlate by `ref` query.
- *  - Carret: verify HMAC-SHA256 `X-Carret-Signature` (scheme assumed — TBD with Carret);
- *            correlate by `order_id` in the JSON body.
- * Both need a 200 to be considered delivered.
- */
-router.post('/v1/offramp/callback', async (req, res) => {
-  const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
+router.post('/v1/offramp/callback', callbackLimiter, async (req, res, next) => {
+  try {
+    const raw = (req as typeof req & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
 
-  if (activeProvider() === 'carret') {
-    const signature = (req.headers['x-carret-signature'] as string) ?? '';
-    if (!verifyCarretWebhook(raw, signature)) {
+    if (activeProvider() === 'carret') {
+      const signature = (req.headers['x-carret-signature'] as string) ?? '';
+      if (!verifyCarretWebhook(raw, signature)) {
+        res.status(401).json({ error: 'InvalidSignature', message: 'webhook signature verification failed' });
+        return;
+      }
+      if (await isReplay('carret', raw)) {
+        res.status(200).json({ ok: true, duplicate: true });
+        return;
+      }
+      const body = req.body as {
+        order_id?: string;
+        status?: string;
+        data?: { order_id?: string; status?: string };
+      };
+      const orderId = body.order_id ?? body.data?.order_id;
+      const status = body.status ?? body.data?.status;
+      if (orderId && status) await applyCarretCallback(orderId, status);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    const signature = (req.headers['x-body-signature'] as string) ?? '';
+    if (!verifyRampWebhook(raw, signature)) {
       res.status(401).json({ error: 'InvalidSignature', message: 'webhook signature verification failed' });
       return;
     }
-    const body = req.body as {
-      order_id?: string;
-      status?: string;
-      data?: { order_id?: string; status?: string };
-    };
-    const orderId = body.order_id ?? body.data?.order_id;
-    const status = body.status ?? body.data?.status;
-    if (orderId && status) await applyCarretCallback(orderId, status);
+    if (await isReplay('ramp', raw)) {
+      res.status(200).json({ ok: true, duplicate: true });
+      return;
+    }
+    const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined;
+    const body = req.body as { type?: string; status?: string; payload?: { status?: string } };
+    const status = body.type ?? body.status ?? body.payload?.status;
+    if (ref && status) await applyCallback(ref, status);
     res.status(200).json({ ok: true });
-    return;
+  } catch (e) {
+    next(e);
   }
-
-  // Ramp (default)
-  const signature = (req.headers['x-body-signature'] as string) ?? '';
-  if (!verifyRampWebhook(raw, signature)) {
-    res.status(401).json({ error: 'InvalidSignature', message: 'webhook signature verification failed' });
-    return;
-  }
-  const ref = typeof req.query.ref === 'string' ? req.query.ref : undefined;
-  const body = req.body as { type?: string; status?: string; payload?: { status?: string } };
-  const status = body.type ?? body.status ?? body.payload?.status;
-  if (ref && status) await applyCallback(ref, status);
-  res.status(200).json({ ok: true });
 });
-
-// ── Carret KYC proxy (D4 dev-onboarding) ──────────────────────────────
-// Thin proxies to Carret Infra's /api/v2.0/taas/kyc/* endpoints so the web
-// UI can drive the full KYC flow (initiate → PAN JSON → Aadhaar XML file →
-// selfie image → poll status) without exposing the API-KEY to the browser.
-// Multer stores files in memory only — they're forwarded to Carret in the
-// same request, never written to disk.
 
 const kycUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 const createSubAccountSchema = z.object({
   email: z.string().email(),
-  // Carret expects a bare 10-digit local number (no `+`, no country code).
-  // Mobile clients strip both before sending. See:
-  // https://carret-fluid.gitbook.io/carret_infra_api_documentation/account-management/sub-account
   phone_number: z.string().regex(/^\d{10}$/, 'phone_number must be 10 digits'),
   first_name: z.string().min(1),
   last_name: z.string().min(1),
@@ -1131,26 +1302,6 @@ const createSubAccountSchema = z.object({
   dob: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/),
 });
 
-/**
- * PAT-75: session-authed find-or-create. Returns the current driver's Carret
- * sub-account id, creating a fresh one on Carret if they don't have one yet.
- * Every downstream KYC / off-ramp call resolves the account id through
- * `getMapping(userId)` instead of the shared env fallback.
- */
-/**
- * Session-authed find-or-create with cross-session resume by email.
- *
- * Resolution order:
- *   1. This session already has a mapping → return it (existed: true)
- *   2. Someone (maybe an earlier install) already registered this email
- *      on Carret and we saved that mapping → adopt it into this
- *      session's userId, return existed: true
- *   3. Neither — create a fresh Carret sub-account and persist the mapping
- *
- * The email-lookup fallback (step 2) is what lets a driver come back on a
- * new install / cleared cookies and continue their KYC without hitting
- * Carret's "user with this email already exists" 4xx.
- */
 router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
@@ -1159,7 +1310,6 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
       return;
     }
 
-    // Step 1 — same session, already has a Carret account.
     const existing = await getMapping(session.userId);
     if (existing) {
       res.json({
@@ -1172,20 +1322,22 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
 
     const parsed = createSubAccountSchema.parse(req.body);
 
-    // Step 2 — different session but same email OR same phone → adopt.
-    // Carret rejects duplicates on both (`user with this email already
-    // exists` and `A user with that username already exists` — where
-    // "username" is derived from phone), so we look up on either.
-    const adoptedRow =
-      (await getMappingByEmail(parsed.email)) ??
-      (await getMappingByPhone(parsed.phone_number));
-    if (adoptedRow) {
+    const verifiedEmail = session.method === 'google' ? session.email?.trim().toLowerCase() : undefined;
+    if (!verifiedEmail || verifiedEmail !== parsed.email.trim().toLowerCase()) {
+      res.status(403).json({
+        error: 'EmailNotVerified',
+        message: 'KYC must use the email of your Google sign-in',
+      });
+      return;
+    }
+    const byEmail = await getMappingByEmail(parsed.email);
+    if (byEmail) {
       const adopted = await upsertMapping({
         userId: session.userId,
-        carretAccountId: adoptedRow.carretAccountId,
-        referenceId: adoptedRow.referenceId,
-        kycStatus: adoptedRow.kycStatus,
-        walletWhitelistedAt: adoptedRow.walletWhitelistedAt,
+        carretAccountId: byEmail.carretAccountId,
+        referenceId: byEmail.referenceId,
+        kycStatus: byEmail.kycStatus,
+        walletWhitelistedAt: byEmail.walletWhitelistedAt,
         email: parsed.email,
         phone: parsed.phone_number,
       });
@@ -1196,15 +1348,18 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
       });
       return;
     }
+    if (await getMappingByPhone(parsed.phone_number)) {
+      res.status(409).json({
+        error: 'CarretAccountExists',
+        message: 'This email or phone is already registered. Sign in with Google using that email to resume.',
+      });
+      return;
+    }
 
-    // Step 3 — genuinely new user + email + phone → create.
-    const clientIp =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.socket.remoteAddress ||
-      '0.0.0.0';
     const account = await createSubAccount({
       ...parsed,
-      user_ip_address: parsed.user_ip_address ?? clientIp,
+      is_email_verified: true,
+      user_ip_address: req.ip ?? '0.0.0.0',
     });
     const mapping = await upsertMapping({
       userId: session.userId,
@@ -1224,12 +1379,6 @@ router.post('/v1/carret/provision-subaccount', async (req, res, next) => {
   }
 });
 
-/**
- * Resume the current session's KYC application (if any). Returns the
- * saved Carret accountId + latest kycStatus, or 204 when the driver has
- * never provisioned a sub-account. Used by the wizard on mount to jump
- * straight to the appropriate step instead of re-asking for name / DOB.
- */
 router.get('/v1/carret/resume', async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
@@ -1243,20 +1392,6 @@ router.get('/v1/carret/resume', async (req, res, next) => {
       return;
     }
 
-    // Authoritative status via GET /account/{id}/ — this is the field
-    // Carret's dashboard shows and the one that reflects verified /
-    // rejected / manual_review transitions, including approvals that
-    // happened without a webhook to us. The alternate /kyc/{id}/
-    // endpoint returns the SESSION state and can sit at "pending"
-    // indefinitely for a verified account whose session was archived,
-    // which would leave the driver re-walking KYC on every mount.
-    //
-    // BUT: Carret's account-level kyc_status is sticky — once it hits
-    // manual_review/rejected, it stays there even after we clean + start
-    // a fresh session. If the driver has initiated a NEW session and
-    // submitted zero docs on it yet, treat the account as `pending` so
-    // the UI lets them walk the wizard instead of trapping them on the
-    // "checking" spinner forever.
     let effectiveStatus = mapping.kycStatus;
     try {
       const acc = await getSubAccount(mapping.carretAccountId);
@@ -1266,23 +1401,18 @@ router.get('/v1/carret/resume', async (req, res, next) => {
       if (effectiveStatus === 'manual_review' || effectiveStatus === 'rejected') {
         try {
           const kyc = await getKycStatus(mapping.carretAccountId);
-          // Carret wraps the real status inside `kyc_info` on this endpoint;
-          // the root-level fields we type for are empty.
           const info = (kyc as unknown as { kyc_info?: CarretKycStatusResponse }).kyc_info ?? kyc;
           const freshSessionPending =
             info?.kyc_status === 'pending' &&
             Array.isArray(info?.ovd_documents) &&
             info.ovd_documents.length === 0;
           if (freshSessionPending) effectiveStatus = 'pending';
-        } catch { /* fall through to the sticky account-level status */ }
+        } catch { }
       }
       if (effectiveStatus !== mapping.kycStatus) {
-        // Best-effort persist; a DB miss doesn't block the response.
         await updateKycStatus(session.userId, effectiveStatus).catch(() => {});
       }
-    } catch {
-      // Carret unreachable / rate-limited — fall back to the stored value.
-    }
+    } catch {}
 
     res.json({
       carretAccountId: mapping.carretAccountId,
@@ -1295,20 +1425,6 @@ router.get('/v1/carret/resume', async (req, res, next) => {
   }
 });
 
-/**
- * "Claim an existing Carret sub-account by id."
- *
- * Real drivers can end up with multiple Carret sub-accounts when a
- * verified account was minted for them out-of-band (Carret operator
- * created it before we had find-or-create in place, or the driver's
- * KYC was re-run on a different email). The mapping table lives on our
- * side — this endpoint lets an authenticated driver point their userId
- * at a specific Carret account_id, provided the account actually
- * exists on Carret's side and is reachable with our API key.
- *
- * Uses the same upsertMapping used by provision-subaccount, so the
- * KYC status snapshot + email/phone come straight from Carret.
- */
 router.post('/v1/carret/claim-account', requireSession(), async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req)!;
@@ -1317,8 +1433,6 @@ router.post('/v1/carret/claim-account', requireSession(), async (req, res, next)
       .parse(req.body);
     const accountId = String(parsed.account_id);
 
-    // Verify with Carret that the account exists + fetch the source-of-truth
-    // fields so we don't persist a mapping the upstream doesn't back.
     const acc = await getSubAccount(accountId);
     if (!acc?.id) {
       res.status(404).json({ error: 'NotFound', message: `Carret account ${accountId} not found` });
@@ -1346,16 +1460,6 @@ router.post('/v1/carret/claim-account', requireSession(), async (req, res, next)
   }
 });
 
-/**
- * "Hard reset" for the wizard's Start-fresh affordance.
- *   1. Cleans up any pending KYC session on Carret for the current mapping
- *      (best-effort — network / no-session errors don't fail the whole reset)
- *   2. Deletes the mapping row so the next /provision creates a genuinely
- *      fresh account. Without this, provision returned the stale accountId
- *      keyed on the (unchanged) guest cookie and silently adopted the driver
- *      back into the old Carret account even after they typed a new email.
- * Idempotent: safe to call when no mapping exists (returns { cleared: false }).
- */
 router.post('/v1/carret/session/reset', async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
@@ -1368,7 +1472,7 @@ router.post('/v1/carret/session/reset', async (req, res, next) => {
       res.json({ cleared: false });
       return;
     }
-    try { await cleanupKyc(mapping.carretAccountId); } catch { /* best-effort */ }
+    try { await cleanupKyc(mapping.carretAccountId); } catch {}
     await deleteMapping(session.userId);
     res.json({ cleared: true, wasAccountId: mapping.carretAccountId });
   } catch (e) {
@@ -1376,12 +1480,6 @@ router.post('/v1/carret/session/reset', async (req, res, next) => {
   }
 });
 
-/**
- * PAT-80: Carret daily limits for the current session user. Returns per-
- * activity remaining budget (₹) so the UI can render a "₹X available today"
- * chip and gray out the submit button when the user's amount exceeds it.
- * 401 when unauth; 404 when no Carret sub-account provisioned yet.
- */
 router.get('/v1/carret/limits', async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
@@ -1408,47 +1506,31 @@ router.get('/v1/carret/limits', async (req, res, next) => {
   }
 });
 
-router.post('/v1/carret/subaccount', requireSession(), async (req, res, next) => {
-  try {
-    const parsed = createSubAccountSchema.parse(req.body);
-    const clientIp =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.socket.remoteAddress ||
-      '0.0.0.0';
-    const account = await createSubAccount({
-      email: parsed.email,
-      phone_number: parsed.phone_number,
-      first_name: parsed.first_name,
-      last_name: parsed.last_name,
-      user_ip_address: parsed.user_ip_address ?? clientIp,
-      annual_income: parsed.annual_income,
-      is_email_verified: parsed.is_email_verified,
-      is_mobile_number_verified: parsed.is_mobile_number_verified,
-      country: parsed.country,
-      gender: parsed.gender,
-      occupation: parsed.occupation,
-      is_politicaly_exposed_person: parsed.is_politicaly_exposed_person,
-      dob: parsed.dob,
-    });
-    res.json(account);
-  } catch (e) {
-    next(e);
-  }
-});
-
 const initiateKycSchema = z.object({ account_id: z.union([z.number(), z.string()]) });
 
-/**
- * Idempotent wrapper over Carret's POST /kyc/initiate/. Carret rejects a
- * second initiate on the same account with 4xx "KYC session already exists
- * in pending state." That's not really an error for us — we just want the
- * current session id. So on that specific failure we fall back to
- * `getKycStatus`, extract the existing `kyc_session`, and hand it back in
- * the same response shape the client expects on a fresh initiate.
- */
+async function ownCarretAccount(userId: string, claimed?: string | number): Promise<string> {
+  const mapping = await getMapping(userId);
+  if (!mapping) throw httpFail('Provision your Carret sub-account first', 422, 'NoMapping');
+  if (claimed !== undefined && String(claimed) !== mapping.carretAccountId) {
+    throw httpFail('That Carret account does not belong to this session', 403, 'Forbidden');
+  }
+  return mapping.carretAccountId;
+}
+
+async function assertOwnKycSession(userId: string, kycSessionId: string): Promise<void> {
+  const status = await getKycStatus(await ownCarretAccount(userId));
+  const info = (status as unknown as { kyc_info?: CarretKycStatusResponse }).kyc_info ?? status;
+  if (!info.kyc_session || String(info.kyc_session) !== kycSessionId) {
+    throw httpFail('That KYC session does not belong to this session', 403, 'Forbidden');
+  }
+}
+
 router.post('/v1/carret/kyc/initiate', requireSession(), async (req, res, next) => {
   try {
-    const { account_id } = initiateKycSchema.parse(req.body);
+    const account_id = await ownCarretAccount(
+      getSessionFromRequest(req)!.userId,
+      initiateKycSchema.parse(req.body).account_id,
+    );
     try {
       res.json(await initiateKyc(account_id));
     } catch (e) {
@@ -1456,10 +1538,7 @@ router.post('/v1/carret/kyc/initiate', requireSession(), async (req, res, next) 
       const status = (e as { status?: number }).status;
       const looksLikeDuplicate = status === 422 && msg.includes('already exists');
       if (!looksLikeDuplicate) throw e;
-      // Pull the still-pending session id off the status endpoint.
       const status_ = await getKycStatus(account_id);
-      // Carret wraps: `{success, kyc_info: {kyc_session, kyc_status, …}}` on
-      // the newer taas v2.0 shape. Handle both wrapped + flat responses.
       const info = (status_ as unknown as { kyc_info?: CarretKycStatusResponse }).kyc_info ?? status_;
       const sessionId = info.kyc_session;
       if (!sessionId) throw e;
@@ -1490,14 +1569,13 @@ const submitDocSchema = z.object({
 router.post('/v1/carret/kyc/document', requireSession(), async (req, res, next) => {
   try {
     const { kyc_session_id, document } = submitDocSchema.parse(req.body);
+    await assertOwnKycSession(getSessionFromRequest(req)!.userId, kyc_session_id);
     res.json(await submitKycDocument({ kycSessionId: kyc_session_id, document }));
   } catch (e) {
     next(e);
   }
 });
 
-// Multipart file upload — multer parses `doc_front` (and optional `doc_back`)
-// alongside the JSON-ish fields (kyc_session, doc_type, file_type).
 router.post(
   '/v1/carret/kyc/file',
   requireSession(),
@@ -1529,6 +1607,7 @@ router.post(
         return;
       }
       const back = files?.doc_back?.[0];
+      await assertOwnKycSession(getSessionFromRequest(req)!.userId, kyc_session);
       res.json(
         await uploadKycFile({
           kycSessionId: kyc_session,
@@ -1550,7 +1629,7 @@ router.post(
 
 router.get('/v1/carret/kyc/status/:accountId', requireSession(), async (req, res, next) => {
   try {
-    res.json(await getKycStatus(req.params.accountId));
+    res.json(await getKycStatus(await ownCarretAccount(getSessionFromRequest(req)!.userId, req.params.accountId)));
   } catch (e) {
     next(e);
   }
@@ -1559,20 +1638,12 @@ router.get('/v1/carret/kyc/status/:accountId', requireSession(), async (req, res
 router.post('/v1/carret/kyc/cleanup', requireSession(), async (req, res, next) => {
   try {
     const { account_id } = initiateKycSchema.parse(req.body);
-    res.json(await cleanupKyc(account_id));
+    res.json(await cleanupKyc(await ownCarretAccount(getSessionFromRequest(req)!.userId, account_id)));
   } catch (e) {
     next(e);
   }
 });
 
-/**
- * DigiLocker Aadhaar flow. Two-step: `/start` returns a hosted DigiLocker URL
- * the driver opens in a new tab; after they finish the consent, `/finish`
- * pulls the signed Aadhaar XML from Carret's /eaadhaar_details and submits it
- * to the active KYC session via /kyc/document_file/submit/ — no file upload
- * from the driver's device needed. Reference id is server-generated and
- * returned so the client echoes it back on finish.
- */
 router.post('/v1/carret/kyc/digilocker/start', requireSession(), async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req)!;
@@ -1630,8 +1701,6 @@ router.post('/v1/carret/kyc/digilocker/finish', requireSession(), async (req, re
       fileType: 'xml',
       filename: 'aadhaar.xml',
       fileBuffer: buf,
-      // Force application/xml — S3 presigns the HyperVerge object as
-      // application/octet-stream which Carret rejects as "No file was submitted".
       contentType: 'application/xml',
     });
     res.json({
@@ -1644,14 +1713,6 @@ router.post('/v1/carret/kyc/digilocker/finish', requireSession(), async (req, re
   }
 });
 
-// ── Banking (production off-ramp destination) ──────────────────────
-//
-// A driver must have a registered + verified bank on Carret before their
-// first withdrawal, otherwise Carret's /place_order/ 400s. These routes let
-// the mobile app + web dashboard collect IFSC + account number in a wizard
-// step and forward to Carret's POST /bank/. Carret runs a ₹1 penny-drop
-// against the account to verify ownership; the returned bank_id is the
-// value we pin to future off-ramp orders (replacing the env fallback).
 const registerBankSchema = z.object({
   bank_account_no: z.string().regex(/^\d{9,18}$/, 'account number must be 9-18 digits'),
   bank_ifsc: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'IFSC must be 11 chars, e.g. HDFC0001234'),

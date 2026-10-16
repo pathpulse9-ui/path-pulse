@@ -1,16 +1,6 @@
-/**
- * @pathpulse/contract — shared API types.
- *
- * These mirror `openapi.yaml` and are the single source of truth consumed by the
- * backend and web. Kotlin/Swift model classes are generated from the OpenAPI spec.
- *
- * Phase 1 (D1) covers: managed accounts, email onboarding, delegated signing.
- * Later phases extend this file (payouts, off-ramp, settlement, SCOUT, gov exports).
- */
 
 export type StellarNetwork = 'testnet' | 'mainnet';
 
-/** Protocol-governed distribution accounts. */
 export type DistributionAccountRole =
   | 'partner_revenue'
   | 'driver_pool'
@@ -19,7 +9,6 @@ export type DistributionAccountRole =
 export interface DistributionAccount {
   role: DistributionAccountRole;
   publicKey: string;
-  /** true once the multisig thresholds/signers are set on-chain (treasury only). */
   multisig: boolean;
   network: StellarNetwork;
 }
@@ -37,8 +26,6 @@ export interface ManagedWallet {
   provisioned: boolean;
   network: StellarNetwork;
 }
-
-// ── Auth ────────────────────────────────────────────────────────────
 
 export interface SessionUser {
   userId: string;
@@ -79,24 +66,18 @@ export interface GuestSessionResponse {
   userId: string;
 }
 
-/** Passcode sign-in for the two privileged roles. */
 export interface PasscodeLoginRequest {
   passcode: string;
 }
 
-/** Partner access to the Government Settlement Gateway (`GOV_PARTNER_PASSCODE`). */
 export interface PartnerLoginResponse {
   userId: string;
 }
 
-/** Operator access to every endpoint that moves protocol funds (`OPS_PASSCODE`). */
 export interface OpsLoginResponse {
   userId: string;
 }
 
-// ── Delegated signing ───────────────────────────────────────────────
-
-/** Client asks the backend to build (and, for managed accounts, sign) a transaction. */
 export interface BuildTransactionRequest {
   userId: string;
   operations: TransactionOperation[];
@@ -110,12 +91,10 @@ export type TransactionOperation =
 
 export interface AssetRef {
   code: string;
-  /** null/omitted = native XLM. */
   issuer?: string;
 }
 
 export interface BuildTransactionResponse {
-  /** base64 XDR of the built (and signed, if delegated) transaction envelope. */
   xdr: string;
   hash: string;
 }
@@ -131,8 +110,6 @@ export interface SubmitTransactionResponse {
   horizonUrl: string;
 }
 
-// ── Common ──────────────────────────────────────────────────────────
-
 export interface ApiError {
   error: string;
   message: string;
@@ -146,26 +123,17 @@ export interface HealthResponse {
   version: string;
 }
 
-// ── Settlement engine & SCOUT reputation (D6) ─────────────────────────
-
-/** SCOUT reputation tiers → on-chain reward multipliers. */
 export type ScoutTier = 1 | 2 | 3;
 export const SCOUT_MULTIPLIER: Record<ScoutTier, number> = { 1: 1.0, 2: 1.2, 3: 1.5 };
 
 export interface SettlementDriverInput {
   userId: string;
   address: string;
-  /**
-   * Optional fallback only. The engine reads the driver's SCOUT badge from
-   * chain; this is used solely when they hold none. Callers should omit it.
-   */
   tier?: ScoutTier;
 }
 
 export interface CreateSettlementBatchRequest {
-  /** Gross revenue to settle, as a 7-decimal string. */
   grossAmount: string;
-  /** Defaults to native XLM on testnet. */
   asset?: AssetRef;
   drivers: SettlementDriverInput[];
   depositTxHash?: string;
@@ -178,11 +146,10 @@ export interface SettlementDeposit {
   receivedAt: string;
 }
 
-/** The deterministic 50 / 30 / 20 split, as 7-decimal strings summing to gross. */
 export interface SettlementSplit {
-  authorities: string; // 50%
-  driverRewards: string; // 30%
-  treasury: string; // 20%
+  authorities: string;
+  driverRewards: string;
+  treasury: string;
 }
 
 export interface SettlementDriverPayout {
@@ -191,20 +158,26 @@ export interface SettlementDriverPayout {
   tier: ScoutTier;
   multiplier: number;
   amount: string;
-  /**
-   * The validation score that justified this multiplier, captured at
-   * settlement time. Absent for drivers with no score on record.
-   */
   score?: number;
   scoreSource?: ScoreSource;
   scoredAt?: string;
   scoreImportId?: string;
 }
 
+export interface SettlementConversion {
+  provider: RoutingProviderName;
+  from: AssetRef;
+  sourceAmount: string;
+  convertedAmount: string;
+  swapTxHashes: string[];
+  transferTxHash: string;
+}
+
 export interface SettlementBatch {
   id: string;
   createdBy?: string;
   deposit?: SettlementDeposit;
+  conversion?: SettlementConversion;
   createdAt: string;
   network: StellarNetwork;
   grossAmount: string;
@@ -217,8 +190,36 @@ export interface SettlementBatch {
   treasuryAddress: string;
   txHash: string;
   horizonUrl: string;
-  /** Absent means the split settled but the payout fan-out has not completed. */
   payoutBatchId?: string;
+}
+
+export interface CreateConvertedSettlementRequest {
+  from: string;
+  amount: string;
+  drivers: CreateSettlementBatchRequest['drivers'];
+}
+
+export interface LedgerEntry {
+  id: string;
+  account: string;
+  role: string;
+  txHash: string;
+  type: string;
+  from: string;
+  to: string;
+  assetCode: string;
+  assetIssuer: string | null;
+  amount: string;
+  createdAt: string;
+  direction: 'in' | 'out';
+  settlementBatchId: string | null;
+  link: 'settlement' | 'deposit' | 'conversion' | null;
+}
+
+export interface LedgerPage {
+  indexer: { at: string; indexed: number; error?: string } | null;
+  items: LedgerEntry[];
+  nextCursor: string | null;
 }
 
 export interface SettlementBatchPage {
@@ -226,35 +227,22 @@ export interface SettlementBatchPage {
   nextCursor: string | null;
 }
 
-// ── SCOUT reputation assets (D6) ──────────────────────────────────────
-
 export interface ScoutTierInfo {
   tier: ScoutTier;
-  /** Classic Asset code, e.g. "SCOUT2". */
   code: string;
   multiplier: number;
 }
 
 export interface ScoutConfig {
-  /** Issuer account of the SCOUT Classic Assets. */
   issuer: string;
   network: StellarNetwork;
   tiers: ScoutTierInfo[];
 }
 
-/**
- * Score-feed contract for SCOUT tier assignment.
- *
- * PulseGen produces a validation score per driver; the tier a driver holds is
- * derived from it (>= 0.8 → SCOUT3, >= 0.5 → SCOUT2, else SCOUT1). The live
- * feed is an external dependency, so `source` records which feed produced a
- * score — `derived` marks the interim fallback used when no feed answers.
- */
 export type ScoreSource = 'pulsegen' | 'derived' | 'pathpulse-internal';
 
 export interface ValidationScore {
   driverId: string;
-  /** 0..1 inclusive. */
   score: number;
   scoredAt: string;
   source: ScoreSource;
@@ -291,7 +279,6 @@ export interface ScoutAssignmentRecord {
 
 export interface ScoreFeedStatus {
   pulseGenLive: boolean;
-  /** Host the configured live feed points at. */
   endpointHost: string | null;
   mode: ScoreFeedMode;
   scoredDrivers: number;
@@ -300,11 +287,6 @@ export interface ScoreFeedStatus {
   assignments: ScoutAssignmentRecord[];
 }
 
-/**
- * Assign a tier to an existing driver. The score is read from the active score
- * provider for that driver — it is never supplied by the caller, so an operator
- * cannot hand-pick a tier.
- */
 export interface AssignScoutTierRequest {
   driverId: string;
 }
@@ -364,10 +346,8 @@ export interface GroupPayoutBatch {
   sourceAddress: string;
   memo?: string;
   receipts: GroupPayoutReceipt[];
-  /** Present when paid directly on-chain; absent when disbursed through SDP. */
   txHash?: string;
   horizonUrl?: string;
-  /** Present when routed through the Stellar Disbursement Platform. */
   payoutBatchId?: string;
   disbursementId?: string;
 }
@@ -383,8 +363,6 @@ export interface GroupPayoutBatchPage {
   nextCursor: string | null;
 }
 
-// ── Fiat off-ramp (D4 — Mercuryo SEP-24) ──────────────────────────────
-
 export type OffRampStatus =
   | 'pending_user_transfer_start'
   | 'pending_anchor'
@@ -393,33 +371,24 @@ export type OffRampStatus =
 
 export interface CreateOffRampWithdrawalRequest {
   amount: string;
-  /** Stablecoin to withdraw (defaults to USDC on testnet). */
   asset?: AssetRef;
-  /** Fiat currency to receive (e.g. "INR"). Defaults to the backend's configured corridor. */
   fiatCurrency?: string;
-  /** Optional link to the settlement batch this withdrawal draws from. */
   settlementBatchId?: string;
 }
 
 export interface OffRampSession {
   id: string;
   provider: 'ramp' | 'mercuryo' | 'carret';
-  /** true when running against the sandbox stub (no live provider credentials). */
   sandbox: boolean;
   status: OffRampStatus;
-  /** Hosted SEP-24 interactive URL (KYC + bank details + conversion). */
   interactiveUrl: string;
   amount: string;
   asset: AssetRef;
   fiatCurrency: string;
-  /** Estimated fiat the user receives, 2-decimal string (indicative). */
   fiatAmountEstimate?: string;
-  /** Anchor / deposit account the user sends the crypto to. */
   anchorAccount?: string;
-  /** Mercuryo merchant_transaction_id (for status polling + callback correlation). */
   merchantTransactionId?: string;
   settlementBatchId?: string;
-  /** Stellar tx of the user's transfer to the anchor, once known. */
   stellarTxHash?: string;
   stellarTxUrl?: string;
   createdAt: string;
@@ -475,8 +444,6 @@ export interface OffRampSessionPage {
   items: OffRampSession[];
   nextCursor: string | null;
 }
-
-// ── Driver payout batches (D2/D3 — Stellar Disbursement Platform) ─────
 
 export type PayoutBatchStatus = 'draft' | 'ready' | 'started' | 'paused' | 'completed' | 'error';
 
@@ -600,7 +567,6 @@ export interface OffRampQuoteFee {
 
 export interface OffRampQuote {
   provider: 'ramp' | 'carret';
-  /** true when priced by the provider's live API; false = indicative estimate. */
   live: boolean;
   quoteId?: string;
   asset: string;

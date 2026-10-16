@@ -1,5 +1,3 @@
-// Sentry must be imported + initialized before anything else so its
-// instrumentation can patch the http/express modules on first use.
 import { initSentry } from './observability/sentry.js';
 initSentry();
 
@@ -7,21 +5,26 @@ import { createServer } from './server.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { migrate } from './db/client.js';
+import { loadRevokedSessions } from './services/session.js';
 import { startOrphanReconciler } from './services/orphanReconciler.js';
 import { sweepExpiredKeys } from './services/idempotency.js';
+import { startHealthMonitor } from './services/health.js';
+import { startChainIndexer } from './services/chainIndexer.js';
 
 const app = createServer();
 
 await migrate();
+await loadRevokedSessions();
 
-// PAT-78: background reconciler for orphaned Carret orders. No-op unless
-// DATABASE_URL is set and Carret credentials are configured.
 startOrphanReconciler();
 
-// PAT-77: hourly sweep of expired idempotency keys (24h TTL).
 setInterval(() => {
   sweepExpiredKeys().catch((e) => logger.warn({ err: e }, 'idempotency sweep failed'));
 }, 60 * 60 * 1000).unref?.();
+
+startHealthMonitor();
+
+startChainIndexer();
 
 app.listen(env.port, '0.0.0.0', () => {
   logger.info(
