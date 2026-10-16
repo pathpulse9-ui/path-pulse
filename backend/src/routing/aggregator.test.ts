@@ -60,7 +60,7 @@ function fake(name: RoutingProviderName, opts: FakeOpts = {}): RoutingProvider {
   };
 }
 
-test('rankQuotes orders by minDestinationStroops descending', () => {
+test('rankQuotes puts Aquarius first then orders by minDestinationStroops', () => {
   const q = (p: RoutingProviderName, min: bigint): ProviderQuote => ({
     provider: p,
     from: 'XLM',
@@ -72,23 +72,23 @@ test('rankQuotes orders by minDestinationStroops descending', () => {
     pools: [],
     route: [],
   });
-  const ranked = rankQuotes([q('aquarius', 90n), q('stellarbroker', 110n)]);
+  const ranked = rankQuotes([q('stellarbroker', 110n), q('aquarius', 90n)]);
   assert.deepEqual(
     ranked.map((r) => r.provider),
-    ['stellarbroker', 'aquarius'],
+    ['aquarius', 'stellarbroker'],
   );
 });
 
-test('runQuote returns the best quote and lists the rest as alternatives', async () => {
+test('runQuote prefers Aquarius and lists the rest as alternatives', async () => {
   const providers = [
     fake('aquarius', { dest: 90n, min: 88n }),
     fake('stellarbroker', { dest: 105n, min: 103n }),
   ];
   const quote = await runQuote(providers, 'XLM', 'USDC', '10');
-  assert.equal(quote.provider, 'stellarbroker');
-  assert.equal(quote.minDestinationAmount, '0.0000103');
+  assert.equal(quote.provider, 'aquarius');
+  assert.equal(quote.minDestinationAmount, '0.0000088');
   assert.equal(quote.alternatives?.length, 1);
-  assert.equal(quote.alternatives?.[0].provider, 'aquarius');
+  assert.equal(quote.alternatives?.[0].provider, 'stellarbroker');
 });
 
 test('runQuote with one provider has no alternatives', async () => {
@@ -135,46 +135,45 @@ test('runQuote rejects identical from/to', async () => {
   await assert.rejects(runQuote([fake('aquarius')], 'XLM', 'XLM', '10'), /must be different assets/);
 });
 
-test('runSwap executes through the best quote provider', async () => {
+test('runSwap executes through Aquarius when it can', async () => {
   const providers = [
     fake('aquarius', { dest: 90n }),
     fake('stellarbroker', { dest: 110n }),
   ];
   const result = await runSwap(providers, 'XLM', 'USDC', '10');
+  assert.equal(result.provider, 'aquarius');
+  assert.equal(result.txHash, 'hash_aquarius');
+});
+
+test('runSwap uses StellarBroker when Aquarius cannot execute', async () => {
+  const providers = [
+    fake('aquarius', { dest: 90n, canExecute: false }),
+    fake('stellarbroker', { dest: 110n }),
+  ];
+  const result = await runSwap(providers, 'XLM', 'USDC', '10');
   assert.equal(result.provider, 'stellarbroker');
-  assert.equal(result.txHash, 'hash_stellarbroker');
 });
 
-test('runSwap falls back when the best provider cannot execute', async () => {
+test('runSwap never falls back when the chosen provider fails on execute', async () => {
+  let brokerExecuted = false;
+  const broker = fake('stellarbroker', { dest: 110n });
+  const original = broker.execute.bind(broker);
+  broker.execute = async (...args) => {
+    brokerExecuted = true;
+    return original(...args);
+  };
   const providers = [
-    fake('stellarbroker', { dest: 110n, canExecute: false }),
-    fake('aquarius', { dest: 90n }),
+    fake('aquarius', { dest: 90n, executeError: routingError('sim failed', 422, 'SorobanFailed') }),
+    broker,
   ];
-  const result = await runSwap(providers, 'XLM', 'USDC', '10');
-  assert.equal(result.provider, 'aquarius');
-});
-
-test('runSwap falls back when the best provider throws on execute', async () => {
-  const providers = [
-    fake('stellarbroker', { dest: 110n, executeError: routingError('sim failed', 422, 'SorobanFailed') }),
-    fake('aquarius', { dest: 90n }),
-  ];
-  const result = await runSwap(providers, 'XLM', 'USDC', '10');
-  assert.equal(result.provider, 'aquarius');
+  await assert.rejects(runSwap(providers, 'XLM', 'USDC', '10'), /sim failed/);
+  assert.equal(brokerExecuted, false);
 });
 
 test('runSwap throws RoutingUnavailable when no provider can execute', async () => {
-  const providers = [fake('stellarbroker', { dest: 110n, canExecute: false })];
+  const providers = [fake('aquarius', { dest: 110n, canExecute: false })];
   await assert.rejects(runSwap(providers, 'XLM', 'USDC', '10'), (e: Error & { status?: number }) => {
     assert.equal(e.status, 502);
     return true;
   });
-});
-
-test('runSwap surfaces the last execution error when all executable providers fail', async () => {
-  const providers = [
-    fake('stellarbroker', { dest: 110n, executeError: new Error('broker boom') }),
-    fake('aquarius', { dest: 90n, executeError: new Error('aqua boom') }),
-  ];
-  await assert.rejects(runSwap(providers, 'XLM', 'USDC', '10'), /aqua boom/);
 });
