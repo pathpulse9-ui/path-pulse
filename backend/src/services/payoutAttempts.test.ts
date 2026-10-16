@@ -17,22 +17,14 @@ function batchId(label: string): string {
   return id;
 }
 
-/**
- * These tests require a live Postgres reachable at DATABASE_URL. We probe the
- * connection in the top-level before-hook; if the DB is unreachable (typical on
- * dev machines without Docker up), we set `dbAvailable = false` and every test
- * calls `t.skip(...)` instead of failing the suite. CI provisions Postgres so
- * this file runs green there.
- */
 let dbAvailable = false;
 
 before(async () => {
-  if (!env.databaseUrl) return; // stays false → tests self-skip
+  if (!env.databaseUrl) return;
   try {
     await migrate();
     dbAvailable = true;
   } catch (e) {
-    // Log-only: this is the intended path when Postgres isn't up locally.
     console.warn(
       `[payoutAttempts.test] DB unreachable at DATABASE_URL, skipping suite: ${(e as Error).message}`,
     );

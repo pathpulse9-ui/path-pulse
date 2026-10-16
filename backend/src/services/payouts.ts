@@ -17,6 +17,7 @@ import {
   getDisbursementReceivers,
   mapDisbursementStatus,
   mapReceivers,
+  assertDistributionIsDriverPool,
 } from './sdp.js';
 import {
   withRetry,
@@ -24,6 +25,8 @@ import {
   attachDisbursement,
   getDisbursementId,
 } from './payoutAttempts.js';
+import { probeSdp } from './health.js';
+import { fromStroops, toStroops } from '../stellar/settlement.js';
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -114,6 +117,7 @@ interface PayoutBatchRow {
   receipts: PayoutReceipt[] | null;
   settlement_batch_id: string | null;
   disbursement_id: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string | null;
 }
@@ -129,6 +133,7 @@ function rowToBatch(r: PayoutBatchRow): PayoutBatch {
     receipts: r.receipts ?? [],
     settlementBatchId: r.settlement_batch_id ?? undefined,
     disbursementId: r.disbursement_id ?? undefined,
+    createdBy: r.created_by ?? undefined,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at ?? r.created_at).toISOString(),
   };
@@ -138,8 +143,8 @@ async function insertBatch(batch: PayoutBatch): Promise<void> {
   await db().query(
     `insert into payout_batches
        (id, provider, sandbox, status, asset_code, asset_issuer, total_amount, receipts,
-        settlement_batch_id, disbursement_id, created_at, updated_at)
-     values ($1, 'sdp', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        settlement_batch_id, disbursement_id, created_by, created_at, updated_at)
+     values ($1, 'sdp', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      on conflict (id) do nothing`,
     [
       batch.id,
@@ -151,6 +156,7 @@ async function insertBatch(batch: PayoutBatch): Promise<void> {
       JSON.stringify(batch.receipts),
       batch.settlementBatchId ?? null,
       batch.disbursementId ?? null,
+      batch.createdBy ?? null,
       batch.createdAt,
       batch.updatedAt,
     ],
@@ -166,13 +172,23 @@ async function saveBatchState(batch: PayoutBatch): Promise<void> {
   );
 }
 
+async function assertSdpReachable(): Promise<void> {
+  try {
+    await probeSdp();
+  } catch (e) {
+    throw httpError(`SDP is unreachable: ${(e as Error).message}`, 503, 'PayoutProviderUnavailable');
+  }
+}
+
 export async function createPayoutBatch(
   payouts: SettlementDriverPayout[],
   asset: AssetRef,
-  opts: { settlementBatchId?: string } = {},
+  opts: { settlementBatchId?: string; createdBy?: string } = {},
 ): Promise<PayoutBatch> {
   if (!payouts.length) throw httpError('payouts must be a non-empty array', 400, 'ValidationError');
-  const totalAmount = payouts.reduce((sum, p) => sum + Number(p.amount), 0).toFixed(7);
+  if (!provider.sandbox) await assertSdpReachable();
+  if (!provider.sandbox && env.network === 'mainnet') await assertDistributionIsDriverPool();
+  const totalAmount = fromStroops(payouts.reduce((sum, p) => sum + toStroops(p.amount), 0n));
   const now = new Date().toISOString();
   const batch: PayoutBatch = {
     id: `pob_${Date.now()}_${randomBytes(4).toString('hex')}`,
@@ -183,11 +199,19 @@ export async function createPayoutBatch(
     totalAmount,
     receipts: [],
     settlementBatchId: opts.settlementBatchId,
+    createdBy: opts.createdBy,
     createdAt: now,
     updatedAt: now,
   };
   await insertBatch(batch);
-  await provider.start(batch, payouts);
+  try {
+    await provider.start(batch, payouts);
+  } catch (e) {
+    batch.status = 'error';
+    batch.updatedAt = new Date().toISOString();
+    await saveBatchState(batch);
+    throw e;
+  }
   batch.status = 'started';
   batch.updatedAt = new Date().toISOString();
   await saveBatchState(batch);
