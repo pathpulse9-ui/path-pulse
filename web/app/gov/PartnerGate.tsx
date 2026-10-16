@@ -3,13 +3,6 @@
 import { useEffect, useState } from 'react';
 import { getSessionUser, partnerLogin } from '../lib/api';
 
-/**
- * Partner access gate for the Government Settlement Gateway (D8).
- *
- * Session is server-verified via the httpOnly `pathpulse_session` cookie
- * (`/v1/auth/partner/login` sets it, `/v1/auth/me` reads it) — the passcode
- * itself is never persisted client-side.
- */
 export function PartnerGate({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'authed' | 'locked'>('checking');
   const [passcode, setPasscode] = useState('');
@@ -20,7 +13,7 @@ export function PartnerGate({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const { user } = await getSessionUser();
-        setStatus(user?.method === 'partner' ? 'authed' : 'locked');
+        setStatus(user?.role === 'partner' ? 'authed' : 'locked');
       } catch {
         setStatus('locked');
       }

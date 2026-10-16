@@ -10,10 +10,9 @@ import type {
 } from '@pathpulse/contract';
 import { getScoutConfig, getScoreFeed, assignScoutTier, getScoutTier, revokeScoutTier } from '../../lib/api';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
+import { explorerTx, explorerAcct } from '../../lib/network';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
-const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
-const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
 function tierFor(score: number): 1 | 2 | 3 {
   if (score >= 0.8) return 3;

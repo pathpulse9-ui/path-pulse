@@ -1,15 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { opsLogin, logout } from '../../lib/api';
+import { ApiError, opsLogin, opsExit } from '../../lib/api';
 import { useSession } from '../../lib/session';
 
-/**
- * Operator gate for the dashboard's fund-moving actions (run a settlement,
- * create a payout batch, assign a SCOUT tier). Those endpoints return 403 to an
- * ordinary driver session, so without this there is no way to drive them from
- * the UI — and no way to tell a permission failure from a bug.
- */
 export function OpsSignIn() {
   const { user, refresh } = useSession();
   const [open, setOpen] = useState(false);
@@ -17,12 +11,14 @@ export function OpsSignIn() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  if (user?.method === 'ops') {
+  if (!user) return null;
+
+  if (user.role === 'ops') {
     return (
       <button
         onClick={async () => {
           setSubmitting(true);
-          await logout();
+          await opsExit();
           await refresh();
           setSubmitting(false);
         }}
@@ -46,8 +42,14 @@ export function OpsSignIn() {
       await refresh();
       setOpen(false);
       setPasscode('');
-    } catch {
-      setError('Incorrect passcode.');
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? 'Operator access needs a Google or wallet sign-in on the operator allowlist.'
+          : err instanceof ApiError && err.status === 429
+            ? 'Too many failed attempts. Try again in 15 minutes.'
+            : 'Incorrect passcode.',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -67,7 +69,7 @@ export function OpsSignIn() {
           className="absolute right-0 top-12 z-30 w-72 rounded-2xl border border-black/5 bg-white p-4 shadow-lg"
         >
           <p className="text-xs text-black/60">
-            Settlement, payouts and SCOUT issuance require an operator session.
+            Settlement, payouts and SCOUT issuance require an operator session. It expires after 15 minutes.
           </p>
           <input
             type="password"

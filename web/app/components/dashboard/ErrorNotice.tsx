@@ -3,13 +3,6 @@
 import { AlertCircle, ShieldAlert, LogIn } from 'lucide-react';
 import { ApiError } from '../../lib/api';
 
-/**
- * One presentation for every failure a dashboard action can produce, so a
- * permission problem reads as a permission problem rather than a red line of
- * JSON. Auth failures get a route out (sign in / Ops access); everything else
- * shows the service's own sentence, which for Carret is the actual reason —
- * "Minimum amount is 10.00" rather than "Validation failed".
- */
 export function ErrorNotice({ error, className = '' }: { error: unknown; className?: string }) {
   if (!error) return null;
 
