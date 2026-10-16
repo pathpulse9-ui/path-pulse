@@ -6,15 +6,6 @@ import { env } from '../config/env.js';
 import { pulseGenEndpointHost, pulseGenLive, pulseGenScoreProvider, resolveScore } from './pulsegen.js';
 import { _resetInMemoryForTests } from './scoreStore.js';
 
-/**
- * Live score-feed client (D6). Until now this path had no coverage at all,
- * because exercising it needs an endpoint. These tests stand one up.
- *
- * What is under test is the client — request shape, bearer auth, error
- * handling and the fallback to the interim feed — against a local server
- * stood up by the test itself.
- */
-
 let server: Server;
 let base: string;
 const KEY = 'test-pulsegen-key';
@@ -24,7 +15,6 @@ let behaviour: (driverId: string) => { status: number; body: unknown; delayMs?: 
   body: { score: 0.83, scored_at: '2026-09-18T09:00:00Z' },
 });
 
-/** `env` is readonly by design; a test is the one place that legitimately redirects it. */
 const feedEnv = env.pulseGen as { baseUrl: string; apiKey: string };
 const original = { baseUrl: feedEnv.baseUrl, apiKey: feedEnv.apiKey };
 
