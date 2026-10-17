@@ -150,7 +150,8 @@ test('GET /v1/routing/assets lists the routable set', async () => {
 });
 
 test('GET /v1/routing/treasury/plan describes the treasury holdings and settlement target', async () => {
-  const res = await get('/v1/routing/treasury/plan');
+  assert.equal((await get('/v1/routing/treasury/plan')).status, 401);
+  const res = await get('/v1/routing/treasury/plan', authed(await opsCookie()));
   assert.equal(res.status, 200);
   const body = await json(res);
   assert.equal(body.settlementAsset.code, 'USDC');
@@ -283,11 +284,16 @@ test('a logged-out cookie no longer authenticates', async () => {
   assert.equal((await get('/v1/me/payouts', authed(cookie))).status, 401);
 });
 
+function recentSince(): string {
+  return new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 test('compliance exports need a partner or operator session', async () => {
   assert.equal((await get('/v1/settlement/batches/export.csv')).status, 401);
   assert.equal((await get('/v1/settlement/batches/payouts.csv', authed(mintedGuest()))).status, 403);
   assert.equal((await get('/v1/settlement/batches/stl_x/receipt.pdf')).status, 401);
-  assert.equal((await get('/v1/settlement/batches/export.csv', authed(await opsCookie()))).status, 200);
+  assert.equal((await get(`/v1/settlement/batches/export.csv?since=${recentSince()}`, authed(await opsCookie()))).status, 200);
+  assert.equal((await get('/v1/settlement/batches/export.csv', authed(await opsCookie()))).status, 400);
 });
 
 test('anonymous settlement reads never expose driver user ids', async () => {
@@ -303,7 +309,7 @@ test('a partner API key opens partner reads until it is revoked', async () => {
   const created = await json(await postJson('/v1/ops/partner-keys', { name: 'ministry-test' }, authedJson(ops)));
   assert.match(created.key, /^pp_[0-9a-f]{16}_/);
   const bearer = { headers: { authorization: `Bearer ${created.key}` } };
-  assert.equal((await get('/v1/settlement/batches/export.csv', bearer)).status, 200);
+  assert.equal((await get(`/v1/settlement/batches/export.csv?since=${recentSince()}`, bearer)).status, 200);
   assert.equal((await get('/v1/gov/ledger?limit=1', bearer)).status, 200);
   assert.equal((await get('/v1/ops/payouts/batches', bearer)).status, 401);
   const partnerView = await json(await get('/v1/settlement/batches?limit=20', bearer));
@@ -447,5 +453,46 @@ test('security headers are present', async () => {
 
 test('unknown route falls through to a 404', async () => {
   const res = await get('/v1/nope');
+  assert.equal(res.status, 404);
+});
+
+test('reconciliation and missed-webhook simulation are operator-only', async () => {
+  const guest = authed(mintedGuest());
+  assert.equal((await postJson('/v1/ops/offramp/reconcile-once', {}, guest)).status, 403);
+  assert.equal((await postJson('/v1/ops/offramp/reconcile-once', {})).status, 401);
+  assert.equal((await postJson('/v1/ops/offramp/sessions/x/simulate-missed-webhook', {}, guest)).status, 403);
+});
+
+test('group payout reads need a partner or operator session', async () => {
+  assert.equal((await get('/v1/settlement/group-payouts')).status, 401);
+  assert.equal((await get('/v1/settlement/group-payouts/grp_x')).status, 401);
+  assert.equal((await get('/v1/settlement/group-payouts', authed(mintedGuest()))).status, 403);
+  assert.equal((await get('/v1/settlement/group-payouts', authed(await opsCookie()))).status, 200);
+});
+
+test('oversized amounts and malformed list params are rejected with 400', async () => {
+  const ops = await opsCookie();
+  const huge = '9'.repeat(40);
+  assert.equal((await get(`/v1/offramp/quotes?amount=${huge}`)).status, 400);
+  assert.equal((await postJson('/v1/settlement/batches', { grossAmount: huge, drivers: [] }, keyed(ops))).status, 400);
+  assert.equal((await get('/v1/settlement/batches?limit=abc')).status, 400);
+  assert.equal((await get('/v1/settlement/batches?limit=-5')).status, 400);
+  assert.equal((await get('/v1/gov/ledger?account=not-a-key', authed(ops))).status, 400);
+});
+
+test('reserved service-account ids cannot be used as drivers', async () => {
+  const res = await postJson(
+    '/v1/settlement/batches',
+    {
+      grossAmount: '1',
+      drivers: [{ userId: '__reserve_sponsor__', address: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' }],
+    },
+    keyed(await opsCookie()),
+  );
+  assert.equal(res.status, 400);
+});
+
+test('the Carret claim-account route is gone', async () => {
+  const res = await postJson('/v1/carret/claim-account', { account_id: '1' }, authedJson(await guestCookie()));
   assert.equal(res.status, 404);
 });

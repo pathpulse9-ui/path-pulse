@@ -1,4 +1,4 @@
-import { env } from '../config/env.js';
+import { env, numEnv } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { carretLive } from '../config/env.js';
 import { carretTimestampMs, listOfframpOrders, mapCarretStatus, type CarretOrder } from './carret.js';
@@ -6,8 +6,8 @@ import { listOrphanCandidates, type OrphanCandidate } from './offRampStore.js';
 import { attachCarretOrder, reconcileSessionStatus } from './offramp.js';
 
 
-const INTERVAL_MS = Number(process.env.CARRET_RECONCILER_INTERVAL_MS ?? 60_000);
-const STALE_SECONDS = Number(process.env.CARRET_RECONCILER_STALE_SECONDS ?? 30);
+const INTERVAL_MS = numEnv('CARRET_RECONCILER_INTERVAL_MS', 60_000, 1);
+const STALE_SECONDS = numEnv('CARRET_RECONCILER_STALE_SECONDS', 30);
 const MATCH_WINDOW_MS = 5 * 60 * 1000;
 
 let timer: NodeJS.Timeout | null = null;

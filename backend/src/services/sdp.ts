@@ -4,7 +4,10 @@ import type { AssetRef,
   PayoutReceiptStatus,
   SettlementDriverPayout,
 } from '@pathpulse/contract';
+import { StrKey } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
+import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 interface DisbursementRef {
   id: string;
@@ -26,14 +29,12 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   headers.Authorization = env.sdp.apiKey;
   if (env.sdp.tenantName) headers['SDP-Tenant-Name'] = env.sdp.tenantName;
 
-  const res = await fetch(url(path), { ...init, headers });
+  const res = await fetchWithTimeout(url(path), { ...init, headers });
   const text = await res.text();
   const json = text ? (JSON.parse(text) as unknown) : undefined;
   if (!res.ok) {
-    const body = json as { message?: string; error?: string; extras?: unknown } | undefined;
-    const detail = body?.extras ? ` ${JSON.stringify(body.extras)}` : '';
-    const message = body?.message ?? body?.error ?? res.statusText;
-    const e = new Error(`SDP ${path} → ${res.status}: ${message}${detail}`) as Error & {
+    logUpstream(`sdp ${path} returned ${res.status}`, new Error(JSON.stringify(json ?? text).slice(0, 500)));
+    const e = new Error(`SDP ${path.split('?')[0]} → ${res.status}`) as Error & {
       status: number;
     };
     e.name = 'SdpError';
@@ -105,6 +106,24 @@ export async function createDisbursement(name: string, asset?: AssetRef): Promis
   });
 }
 
+const USER_ID_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+
+export function assertPayoutRecipient(userId: string, address: string): void {
+  const bad = (m: string) => {
+    const e = new Error(m) as Error & { status: number };
+    e.name = 'ValidationError';
+    e.status = 400;
+    return e;
+  };
+  if (!USER_ID_PATTERN.test(userId)) throw bad('payout userId contains unsupported characters');
+  if (!StrKey.isValidEd25519PublicKey(address)) throw bad('payout address is not a Stellar public key');
+}
+
+function csvCell(value: string): string {
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
 export async function uploadDisbursementInstructions(
   disbursementId: string,
   payouts: SettlementDriverPayout[],
@@ -113,7 +132,10 @@ export async function uploadDisbursementInstructions(
   const contact = (userId: string) =>
     usesEmail ? `${userId}@${env.sdp.contactDomain}` : '';
   const header = `id,${usesEmail ? 'email' : 'phone'},amount,walletAddress`;
-  const rows = payouts.map((p) => `${p.userId},${contact(p.userId)},${p.amount},${p.address}`);
+  const rows = payouts.map((p) => {
+    assertPayoutRecipient(p.userId, p.address);
+    return [p.userId, contact(p.userId), p.amount, p.address].map(csvCell).join(',');
+  });
   const csv = [header, ...rows].join('\n');
 
   const form = new FormData();

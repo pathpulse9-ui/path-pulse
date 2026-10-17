@@ -1,6 +1,7 @@
 import type { OffRampSession, OffRampStatus } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { db } from '../db/client.js';
+import { evictOldest, trimHead } from '../util/bounded.js';
 
 export interface StoredOffRampSession extends OffRampSession {
   ppUserId: string;
@@ -44,6 +45,7 @@ function hasDb(): boolean {
 export async function saveSession(s: StoredOffRampSession): Promise<void> {
   if (!hasDb()) {
     memSessions.set(s.id, { ...s });
+    evictOldest(memSessions, 5_000);
     return;
   }
   await db().query(
@@ -129,6 +131,7 @@ export async function findSessionByCarretOrderId(
 export async function recordEvent(e: OffRampStatusEvent): Promise<void> {
   if (!hasDb()) {
     memEvents.push({ ...e });
+    trimHead(memEvents, 20_000);
     return;
   }
   await db().query(
@@ -173,6 +176,7 @@ export async function listOrphanCandidates(
   if (!hasDb()) {
     return [...memSessions.values()]
       .filter((s) => s.status !== 'completed' && s.status !== 'error')
+      .filter((s) => s.provider === 'carret')
       .filter((s) => {
         const t = new Date(s.createdAt).getTime();
         return t < cutoff && t > floor;
@@ -204,11 +208,12 @@ export async function listOrphanCandidates(
      from off_ramp_sessions s
      left join carret_subaccounts sub on sub.user_id = s.user_id
      where s.status not in ('completed', 'error')
+       and s.provider = 'carret'
        and s.created_at < now() - ($1 || ' seconds')::interval
        and s.created_at > now() - interval '24 hours'
      order by s.created_at asc
-     limit ${limit}`,
-    [String(staleSeconds)],
+     limit $2`,
+    [String(staleSeconds), limit],
   );
 
   return res.rows.map((r) => ({
@@ -240,7 +245,7 @@ export interface OpsSessionRow {
 }
 
 export async function listAllSessions(limit = 100): Promise<OpsSessionRow[]> {
-  const size = Math.min(Math.max(1, limit), 500);
+  const size = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 500) : 100;
 
   if (!hasDb()) {
     return [...memSessions.values()]

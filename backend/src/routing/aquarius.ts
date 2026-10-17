@@ -1,4 +1,6 @@
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
+import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
 import { resolveAsset, type RoutableSymbol } from './assets.js';
 
 function httpError(message: string, status: number, name: string): Error {
@@ -27,6 +29,7 @@ export async function findPath(
   from: RoutableSymbol,
   to: RoutableSymbol,
   sourceStroops: bigint,
+  signal?: AbortSignal,
 ): Promise<RoutePath> {
   if (from === to) {
     throw httpError('from and to must be different assets', 400, 'ValidationError');
@@ -39,16 +42,19 @@ export async function findPath(
 
   let res: Response;
   try {
-    res = await fetch(`${env.routing.aquaApiUrl}/find-path/`, {
+    res = await fetchWithTimeout(`${env.routing.aquaApiUrl}/find-path/`, {
       method: 'POST',
       body,
       headers: { 'Content-Type': 'application/json' },
+      signal,
     });
   } catch (e) {
-    throw httpError(`Aquarius API unreachable: ${String(e)}`, 502, 'RoutingUnavailable');
+    logger.warn({ err: e }, 'aquarius api unreachable');
+    throw httpError('Aquarius API unreachable', 502, 'RoutingUnavailable');
   }
   if (!res.ok) {
-    throw httpError(`Aquarius API HTTP ${res.status}: ${await res.text()}`, 502, 'RoutingUnavailable');
+    logger.warn({ status: res.status, body: await res.text().catch(() => '') }, 'aquarius api error');
+    throw httpError(`Aquarius API HTTP ${res.status}`, 502, 'RoutingUnavailable');
   }
 
   const data = (await res.json()) as FindPathResponse;

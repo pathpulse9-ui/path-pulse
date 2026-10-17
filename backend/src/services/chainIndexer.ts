@@ -189,7 +189,7 @@ export function startChainIndexer(intervalMs = env.indexer.intervalMs): void {
     try {
       lastRun = { at: new Date().toISOString(), indexed: await runIndexerOnce() };
     } catch (e) {
-      lastRun = { at: new Date().toISOString(), indexed: 0, error: (e as Error).message };
+      lastRun = { at: new Date().toISOString(), indexed: 0, error: 'indexer tick failed' };
       logger.error({ err: e }, 'chain indexer tick failed');
     } finally {
       running = false;
@@ -219,7 +219,7 @@ export async function listLedger(query: { account?: string; cursor?: string; lim
   items: LedgerEntry[];
   nextCursor: string | null;
 }> {
-  const size = Math.min(Math.max(1, query.limit ?? 50), 200);
+  const size = Number.isInteger(query.limit) ? Math.min(Math.max(1, query.limit as number), 200) : 50;
   const params: unknown[] = [];
   const where: string[] = [];
   if (query.account) {
@@ -245,8 +245,8 @@ export async function listLedger(query: { account?: string; cursor?: string; lim
        left join settlement_batches c on c.conversion->>'transferTxHash' = p.tx_hash
        ${where.length ? `where ${where.join(' and ')}` : ''}
       order by p.created_at desc, p.id desc
-      limit ${size + 1}`,
-    params,
+      limit $${params.length + 1}`,
+    [...params, size + 1],
   );
   const items = r.rows.slice(0, size).map((row) => ({
     id: row.id,

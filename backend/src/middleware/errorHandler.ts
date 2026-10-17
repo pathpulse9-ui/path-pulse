@@ -30,7 +30,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   if (ALERTING_ERRORS.has(err?.name) || status >= 500) {
     captureException(err, { requestId, path: req.path });
     sendAlertInBackground({
-      key: `error:${err?.name ?? 'InternalError'}:${req.path}`,
+      key: `error:${err?.name ?? 'InternalError'}:${req.method}:${(req.route?.path as string | undefined) ?? 'unmatched'}`,
       severity: 'critical',
       title: `${err?.name ?? 'InternalError'} on ${req.method} ${req.path}`,
       detail: err?.message,

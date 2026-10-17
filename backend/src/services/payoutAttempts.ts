@@ -23,10 +23,23 @@ export interface RetryOptions {
 const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_BASE_DELAY_MS = 500;
 
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
 function isRetryable(e: unknown): boolean {
   const status = (e as { status?: number })?.status;
   if (typeof status === 'number') return status === 408 || status === 429 || status >= 500;
-  return true;
+  const name = (e as { name?: string })?.name;
+  const code = (e as { code?: string; cause?: { code?: string } })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  return code !== undefined && TRANSIENT_NETWORK_CODES.has(code);
 }
 
 function delay(ms: number): Promise<void> {

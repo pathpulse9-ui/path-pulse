@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
+import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
 
 export type AlertSeverity = 'critical' | 'warning' | 'resolved';
 
@@ -19,6 +20,7 @@ export interface AlertRecord extends Alert {
 
 export const DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 const RECENT_LIMIT = 50;
+const MAX_DEDUPE_KEYS = 500;
 const lastSent = new Map<string, number>();
 const recent: AlertRecord[] = [];
 
@@ -43,21 +45,30 @@ export async function sendAlert(alert: Alert, now = Date.now()): Promise<AlertDe
   return record(alert, now, await deliver(alert, now));
 }
 
+function evictStale(now: number): void {
+  for (const [key, at] of lastSent) if (now - at >= DEDUPE_WINDOW_MS) lastSent.delete(key);
+  while (lastSent.size >= MAX_DEDUPE_KEYS) {
+    const oldest = lastSent.keys().next().value;
+    if (oldest === undefined) break;
+    lastSent.delete(oldest);
+  }
+}
+
 async function deliver(alert: Alert, now: number): Promise<AlertDelivery> {
   logger.warn({ alert }, 'alert raised');
   if (!env.alerts.webhookUrl) return 'disabled';
   const dedupeKey = `${alert.key}:${alert.severity}`;
   const previous = lastSent.get(dedupeKey);
   if (previous !== undefined && now - previous < DEDUPE_WINDOW_MS) return 'deduped';
+  evictStale(now);
   lastSent.set(dedupeKey, now);
   const text = formatAlert(alert);
   try {
-    const res = await fetch(env.alerts.webhookUrl, {
+    const res = await fetchWithTimeout(env.alerts.webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text, content: text }),
-      signal: AbortSignal.timeout(5_000),
-    });
+    }, 5_000);
     if (!res.ok) {
       logger.error({ status: res.status }, 'alert webhook rejected the alert');
       return 'failed';

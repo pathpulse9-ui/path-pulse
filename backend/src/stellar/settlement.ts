@@ -27,6 +27,7 @@ import { assertMainnetAllowed } from './networkGuard.js';
 import { logger } from '../config/logger.js';
 import { notifyUserInBackground } from '../services/push.js';
 import { resolveScore } from '../services/pulsegen.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 const STROOPS = 10_000_000n;
 const SETTLEMENT_SOURCE_USER = RESERVE_SPONSOR_USER;
@@ -40,7 +41,7 @@ function httpError(message: string, status: number, name: string): Error {
 }
 
 export function toStroops(amount: string): bigint {
-  if (!/^\d+(\.\d{1,7})?$/.test(amount)) {
+  if (!/^\d{1,15}(\.\d{1,7})?$/.test(amount)) {
     throw httpError(`Invalid amount "${amount}" (max 7 decimals)`, 400, 'ValidationError');
   }
   const [whole, frac = ''] = amount.split('.');
@@ -162,8 +163,9 @@ export async function executeSettlementBatch(
   } catch (e: unknown) {
     const codes = (e as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response?.data?.extras
       ?.result_codes;
+    if (!codes) logUpstream('settlement submit failed', e);
     throw httpError(
-      codes ? `Settlement rejected by Horizon: ${JSON.stringify(codes)}` : `Settlement submit failed: ${String(e)}`,
+      codes ? `Settlement rejected by Horizon: ${JSON.stringify(codes)}` : 'Settlement submit failed',
       422,
       'HorizonRejected',
     );
@@ -232,7 +234,7 @@ export async function executeSettlementBatch(
     );
     throw httpError(
       `Settlement ${batchId} settled on-chain (tx ${res.hash}) but the driver payout batch failed: ` +
-        `${(e as Error).message}. The settlement is recorded — retry the fan-out with ` +
+        `${(e as Error).name}. The settlement is recorded — retry the fan-out with ` +
         `POST /v1/ops/payouts/batches {"settlementBatchId":"${batchId}"}.`,
       502,
       'PayoutProviderUnavailable',

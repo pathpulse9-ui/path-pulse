@@ -147,6 +147,16 @@ async function confirmedOnChain(hashes: string[]): Promise<string[]> {
   return landed;
 }
 
+function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 function brokerAsset(symbol: RoutableSymbol): string {
   const { ref } = resolveAsset(symbol);
   return ref.issuer ? `${ref.code}-${ref.issuer}` : 'XLM';
@@ -164,7 +174,7 @@ export const stellarBrokerProvider: RoutingProvider = {
     return env.network === 'mainnet';
   },
 
-  async quote(from, to, sourceStroops): Promise<ProviderQuote> {
+  async quote(from, to, sourceStroops, signal): Promise<ProviderQuote> {
     const params = {
       sellingAsset: brokerAsset(from),
       buyingAsset: brokerAsset(to),
@@ -175,11 +185,12 @@ export const stellarBrokerProvider: RoutingProvider = {
 
     let result;
     try {
-      result = await estimateSwap(params);
+      result = await abortable(estimateSwap(params), signal);
     } catch (e) {
       const code = (e as { code?: number }).code;
+      logger.warn({ err: e }, 'stellarbroker quote failed');
       throw routingError(
-        `StellarBroker quote failed: ${(e as Error).message ?? String(e)}`,
+        'StellarBroker quote failed',
         code ? 422 : 502,
         code ? 'NoRoute' : 'RoutingUnavailable',
       );

@@ -38,7 +38,8 @@ import {
   type CarretOrder,
 } from './carret.js';
 import { getMapping } from './carretSubAccountStore.js';
-import { assertUnderLimit, recordUsage } from './carretLimits.js';
+import { reserveUsage, releaseUsage } from './carretLimits.js';
+import { decodeKeyset, encodeKeyset } from '../db/keyset.js';
 import { notifyUserInBackground } from './push.js';
 import {
   findSessionByCarretOrderId,
@@ -198,50 +199,53 @@ const carretLiveProvider: OffRampProvider = {
 
     const fiatInr = Number(quote.output_amount.amount);
     if (mapping) {
-      await assertUnderLimit(mapping.carretAccountId, 'withdraw_inr', fiatInr);
+      await reserveUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
     }
 
-    let bankId: number | string | undefined = env.carret.bankId || undefined;
-    if (mapping) {
-      try {
-        const banks = await listBanks(mapping.carretAccountId);
-        const preferred =
-          banks.find((b) => String(b.status).toLowerCase() === 'verified') ?? banks[0];
-        if (preferred) bankId = preferred.id;
-      } catch { }
-    }
-    if (!bankId) {
-      throw httpError(
-        'No verified bank on your Carret account. Register a bank first, then retry.',
-        422,
-        'NoBankRegistered',
-      );
-    }
-
-    const order = await placeOfframpOrder({ quoteId: quote.id, bankId, accountId });
-    s.carretQuoteId = String(quote.id);
-    s.carretOrderId = String(order.id);
-    session.fiatAmountEstimate = fiatInr.toFixed(2);
-    session.merchantTransactionId = String(order.id);
-    session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
-
-    if (env.network === 'mainnet' && s.ppUserId) {
-      try {
-        const txHash = await broadcastCarretDeposit({
-          userId: s.ppUserId,
-          destination: deposit.address,
-          memo: deposit.memo_label ?? undefined,
-          amount: session.amount,
-        });
-        s.stellarTxHash = txHash;
-        s.network = 'mainnet';
-      } catch (e) {
-        logger?.warn?.({ err: e, sessionId: session.id }, 'carret deposit broadcast failed');
+    let orderPlaced = false;
+    try {
+      let bankId: number | string | undefined = env.carret.bankId || undefined;
+      if (mapping) {
+        try {
+          const banks = await listBanks(mapping.carretAccountId);
+          const preferred =
+            banks.find((b) => String(b.status).toLowerCase() === 'verified') ?? banks[0];
+          if (preferred) bankId = preferred.id;
+        } catch { }
       }
-    }
+      if (!bankId) {
+        throw httpError(
+          'No verified bank on your Carret account. Register a bank first, then retry.',
+          422,
+          'NoBankRegistered',
+        );
+      }
 
-    if (mapping) {
-      await recordUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
+      const order = await placeOfframpOrder({ quoteId: quote.id, bankId, accountId });
+      orderPlaced = true;
+      s.carretQuoteId = String(quote.id);
+      s.carretOrderId = String(order.id);
+      session.fiatAmountEstimate = fiatInr.toFixed(2);
+      session.merchantTransactionId = String(order.id);
+      session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
+
+      if (env.network === 'mainnet' && s.ppUserId) {
+        try {
+          const txHash = await broadcastCarretDeposit({
+            userId: s.ppUserId,
+            destination: deposit.address,
+            memo: deposit.memo_label ?? undefined,
+            amount: session.amount,
+          });
+          s.stellarTxHash = txHash;
+          s.network = 'mainnet';
+        } catch (e) {
+          logger?.warn?.({ err: e, sessionId: session.id }, 'carret deposit broadcast failed');
+        }
+      }
+    } catch (e) {
+      if (mapping && !orderPlaced) await releaseUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
+      throw e;
     }
   },
   async status(session) {
@@ -430,14 +434,19 @@ export async function listWithdrawals(
   cursor?: string,
   limit = 50,
 ): Promise<OffRampSessionPage> {
-  const owned = await listSessionsByUser(userId);
-  const all = await Promise.all(owned.map(refresh));
-  all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
-  const size = Math.min(Math.max(1, limit), 100);
-  const items = all.slice(start, start + size);
-  const next = start + size < all.length ? String(start + size) : null;
-  return { items, nextCursor: next };
+  const key = decodeKeyset(cursor);
+  const size = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 100) : 50;
+  const ordered = (await listSessionsByUser(userId)).sort(
+    (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+  );
+  const iso = (s: { createdAt: string }) => new Date(s.createdAt).toISOString();
+  const after = key
+    ? ordered.filter((s) => iso(s) < key.createdAt || (iso(s) === key.createdAt && s.id < key.id))
+    : ordered;
+  const page = after.slice(0, size);
+  const items = await Promise.all(page.map(refresh));
+  const last = page[page.length - 1];
+  return { items, nextCursor: after.length > size && last ? encodeKeyset(last.createdAt, last.id) : null };
 }
 
 export async function applyCallback(sessionId: string, rampStatus: string): Promise<boolean> {

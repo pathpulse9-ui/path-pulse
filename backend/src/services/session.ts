@@ -65,6 +65,17 @@ export function verifySessionToken(token: string): SessionPayload | null {
   }
 }
 
+const MAX_REVOKED_IN_MEMORY = 50_000;
+
+function pruneRevoked(now = Date.now()): void {
+  for (const [jti, until] of revoked) if (until <= now) revoked.delete(jti);
+  while (revoked.size >= MAX_REVOKED_IN_MEMORY) {
+    const oldest = revoked.keys().next().value;
+    if (oldest === undefined) break;
+    revoked.delete(oldest);
+  }
+}
+
 function isRevoked(jti: string, now = Date.now()): boolean {
   const until = revoked.get(jti);
   if (until === undefined) return false;
@@ -78,6 +89,7 @@ function isRevoked(jti: string, now = Date.now()): boolean {
 export async function revokeSession(session: SessionPayload | null): Promise<void> {
   if (!session?.jti) return;
   const expiresAt = (session.exp ?? Math.floor(Date.now() / 1000) + env.session.maxAgeSeconds) * 1000;
+  pruneRevoked();
   revoked.set(session.jti, expiresAt);
   if (!env.databaseUrl) return;
   try {
@@ -88,6 +100,12 @@ export async function revokeSession(session: SessionPayload | null): Promise<voi
   } catch (e) {
     logger.error({ err: e }, 'failed to persist session revocation');
   }
+}
+
+export async function isSessionRevokedInDb(session: SessionPayload): Promise<boolean> {
+  if (!env.databaseUrl || !session.jti) return false;
+  const r = await db().query('select 1 from revoked_sessions where jti = $1', [session.jti]);
+  return (r.rowCount ?? 0) > 0;
 }
 
 export async function loadRevokedSessions(): Promise<void> {

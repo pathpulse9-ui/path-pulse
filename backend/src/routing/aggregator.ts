@@ -1,5 +1,6 @@
 import type { RoutingQuote, RoutingSwapResult } from '@pathpulse/contract';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import { toStroops, fromStroops } from '../stellar/settlement.js';
 import { resolveAsset, isRoutableSymbol, type RoutableSymbol } from './assets.js';
 import { routingError, type ProviderQuote, type RoutingProvider } from './provider.js';
@@ -10,16 +11,18 @@ function activeProviders(): RoutingProvider[] {
   return [aquariusProvider, stellarBrokerProvider];
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>, ms: number, label: string): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(
-      () => reject(routingError(`${label} quote timed out after ${ms}ms`, 504, 'RoutingTimeout')),
-      ms,
-    );
+    timer = setTimeout(() => {
+      const error = routingError(`${label} quote timed out after ${ms}ms`, 504, 'RoutingTimeout');
+      controller.abort(error);
+      reject(error);
+    }, ms);
     timer.unref?.();
   });
-  return Promise.race([p.finally(() => clearTimeout(timer)), timeout]);
+  return Promise.race([run(controller.signal).finally(() => clearTimeout(timer)), timeout]);
 }
 
 export function rankQuotes(quotes: ProviderQuote[]): ProviderQuote[] {
@@ -45,7 +48,7 @@ async function gatherQuotes(
     throw routingError('No routing providers can produce a quote', 500, 'ConfigError');
   }
   const settled = await Promise.allSettled(
-    quoting.map((p) => withTimeout(p.quote(from, to, sourceStroops), timeoutMs, p.name)),
+    quoting.map((p) => withTimeout((signal) => p.quote(from, to, sourceStroops, signal), timeoutMs, p.name)),
   );
   const ok = settled
     .filter((s): s is PromiseFulfilledResult<ProviderQuote> => s.status === 'fulfilled')
@@ -54,7 +57,8 @@ async function gatherQuotes(
     const reasons = settled
       .map((s) => (s.status === 'rejected' ? String((s.reason as Error)?.message ?? s.reason) : ''))
       .filter(Boolean);
-    throw routingError(`No route found for ${from} → ${to} (${reasons.join(' · ')})`, 422, 'NoRoute');
+    logger.info({ from, to, reasons }, 'no routing provider produced a quote');
+    throw routingError(`No route found for ${from} → ${to}`, 422, 'NoRoute');
   }
   return rankQuotes(ok);
 }

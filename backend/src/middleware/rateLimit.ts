@@ -1,5 +1,6 @@
 import rateLimit, { ipKeyGenerator, type Options } from 'express-rate-limit';
 import type { Request } from 'express';
+import { numEnv } from '../config/env.js';
 import { getSessionFromRequest } from '../services/session.js';
 import { parsePartnerKey } from '../services/partnerKeys.js';
 
@@ -12,13 +13,13 @@ const shared: Partial<Options> = {
 export const authLimiter = rateLimit({
   ...shared,
   windowMs: 15 * 60 * 1000,
-  limit: Number(process.env.AUTH_RATE_LIMIT ?? 20),
+  limit: numEnv('AUTH_RATE_LIMIT', 20, 1),
 });
 
 export const writeLimiter = rateLimit({
   ...shared,
   windowMs: 60 * 1000,
-  limit: Number(process.env.WRITE_RATE_LIMIT ?? 60),
+  limit: numEnv('WRITE_RATE_LIMIT', 60, 1),
   skip: (req: Request) =>
     req.method === 'GET' ||
     req.method === 'HEAD' ||
@@ -31,7 +32,14 @@ export const partnerKeyLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 300,
   skip: (req: Request) => !parsePartnerKey(req.headers.authorization),
-  keyGenerator: (req: Request) => parsePartnerKey(req.headers.authorization)?.id ?? ipKeyGenerator(req.ip ?? ''),
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip ?? ''),
+});
+
+export const verifiedPartnerKeyLimiter = rateLimit({
+  ...shared,
+  windowMs: 60 * 1000,
+  limit: 300,
+  keyGenerator: (req: Request) => (req as Request & { partnerKeyId?: string }).partnerKeyId ?? ipKeyGenerator(req.ip ?? ''),
 });
 
 export const callbackLimiter = rateLimit({

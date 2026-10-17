@@ -25,7 +25,13 @@ let cache: Map<string, RoutableAsset> | null = null;
 
 function registry(): Map<string, RoutableAsset> {
   if (!cache) {
-    cache = new Map(env.routing.assets.map((ref) => [ref.code.toUpperCase(), build(ref)]));
+    const built = new Map<string, RoutableAsset>();
+    for (const ref of env.routing.assets) {
+      const symbol = ref.code.toUpperCase();
+      if (built.has(symbol)) throw new Error(`ROUTING_ASSETS lists ${symbol} more than once`);
+      built.set(symbol, build(ref));
+    }
+    cache = built;
   }
   return cache;
 }
@@ -37,9 +43,7 @@ export function isRoutableSymbol(v: string): boolean {
 export function resolveAsset(symbol: string): RoutableAsset {
   const found = registry().get(symbol.toUpperCase());
   if (!found) {
-    throw new Error(
-      `Asset "${symbol}" is not routable — configured: ${[...registry().keys()].join(', ')}`,
-    );
+    throw new Error(`Asset "${symbol}" is not routable`);
   }
   return found;
 }

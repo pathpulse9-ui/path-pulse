@@ -33,11 +33,8 @@ export function idempotency() {
       return;
     }
     if (!env.databaseUrl) {
-      if (env.nodeEnv === 'production') {
-        reject(res, 503, 'IdempotencyUnavailable', 'Idempotency storage is not configured. Nothing was executed.');
-        return;
-      }
-      return next();
+      reject(res, 503, 'IdempotencyUnavailable', 'Idempotency storage is not configured. Nothing was executed.');
+      return;
     }
 
     const userId = session.userId;
@@ -96,6 +93,18 @@ export function idempotency() {
         .catch((e) => logger.error({ err: e, userId, key }, 'idempotency result store failed'));
       return origJson(body);
     }) as typeof res.json;
+    res.on('finish', () => {
+      if (captured) return;
+      captured = true;
+      db()
+        .query(
+          `update idempotency_requests
+           set status_code = $3, response_json = $4, completed_at = now()
+           where user_id = $1 and key = $2`,
+          [userId, key, res.statusCode || 200, JSON.stringify(null)],
+        )
+        .catch((e) => logger.error({ err: e, userId, key }, 'idempotency result store failed'));
+    });
 
     next();
   };

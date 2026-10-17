@@ -3,6 +3,7 @@ import type { CreateConvertedSettlementRequest, SettlementBatch } from '@pathpul
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { executeSwap } from '../routing/aggregator.js';
+import { withSwapLock } from '../routing/swapLock.js';
 import { resolveAsset } from '../routing/assets.js';
 import { SWAP_SOURCE_USER } from '../routing/aquarius-provider.js';
 import { getManagedSigner, provisionManagedWallet, RESERVE_SPONSOR_USER } from './managed.js';
@@ -26,12 +27,19 @@ async function heldStroops(address: string, code: string, issuer?: string): Prom
       ? 'asset_code' in b && b.asset_code === code && b.asset_issuer === issuer
       : b.asset_type === 'native',
   );
-  return line ? toStroops(Number(line.balance).toFixed(7)) : 0n;
+  return line ? toStroops(line.balance) : 0n;
 }
 
-export async function executeConvertedSettlement(
+export function executeConvertedSettlement(
   req: CreateConvertedSettlementRequest,
   opts: { createdBy?: string } = {},
+): Promise<SettlementBatch> {
+  return withSwapLock(() => runConvertedSettlement(req, opts));
+}
+
+async function runConvertedSettlement(
+  req: CreateConvertedSettlementRequest,
+  opts: { createdBy?: string },
 ): Promise<SettlementBatch> {
   assertMainnetAllowed('converted settlement');
   if (!req.drivers?.length) throw httpError('drivers must be a non-empty array', 400, 'ValidationError');
@@ -44,7 +52,9 @@ export async function executeConvertedSettlement(
   const settlementSource = await provisionManagedWallet(SETTLEMENT_SOURCE_USER);
   const before = await heldStroops(swapSource.address, target.ref.code, target.ref.issuer);
   const swap = await executeSwap(req.from, env.routing.settlementAssetCode, req.amount);
-  const converted = (await heldStroops(swapSource.address, target.ref.code, target.ref.issuer)) - before;
+  const converted = swap.destinationAmount
+    ? toStroops(swap.destinationAmount)
+    : (await heldStroops(swapSource.address, target.ref.code, target.ref.issuer)) - before;
   if (converted <= 0n) {
     throw httpError(`Swap ${swap.txHash} delivered no ${target.ref.code} to the routing source`, 502, 'RoutingUnavailable');
   }
@@ -78,7 +88,7 @@ export async function executeConvertedSettlement(
     logger.error({ err: e, conversion }, 'converted funds moved to the settlement source but the settlement failed');
     throw httpError(
       `Converted ${convertedAmount} ${target.ref.code} reached the settlement source (tx ${moved.hash}) but the ` +
-        `settlement failed: ${(e as Error).message}. Retry POST /v1/settlement/batches with depositTxHash ${moved.hash}.`,
+        `settlement failed (${(e as Error).name}). Retry POST /v1/settlement/batches with depositTxHash ${moved.hash}.`,
       502,
       'SettlementAfterConversionFailed',
     );
