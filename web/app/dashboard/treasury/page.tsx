@@ -6,18 +6,22 @@ import type {
   TreasuryConfig,
   RoutingQuote,
   RoutingSwapResult,
+  TreasuryConversionTx,
+  SubmitTransactionResponse,
 } from '@pathpulse/contract';
 import {
   API_BASE_URL,
   getRoutingQuote,
   executeRoutingSwap,
   getRoutableAssets,
+  buildTreasuryConversion,
+  submitSignedTransaction,
 } from '../../lib/api';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
+import { STELLAR_NETWORK, explorerAcct, explorerTx } from '../../lib/network';
 
-const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
 const FALLBACK_ROUTABLE = ['XLM', 'USDC', 'EURC'];
 
@@ -109,12 +113,12 @@ function ConversionPanel() {
           <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
             Liquidity conversion{' '}
             <span className="align-middle text-xs font-medium rounded-full border border-blue-300 bg-blue-100 text-blue-700 px-2 py-0.5">
-              MULTI-SOURCE · TESTNET
+              MULTI-SOURCE · {STELLAR_NETWORK.toUpperCase()}
             </span>
           </h2>
           <p className="text-sm text-black/60 mt-1">
             Convert operating balances between routable assets. Aquarius and StellarBroker are
-            quoted in parallel; best execution wins. Routed and settled by Backend Core.
+            quoted in parallel. Aquarius is chosen when it can execute. StellarBroker executes on mainnet only.
           </p>
         </div>
       </div>
@@ -181,7 +185,7 @@ function ConversionPanel() {
             <span className="text-xs text-black/50">
               {quoting
                 ? 'refreshing…'
-                : `via ${quote.provider} · ${quote.hops} hop${quote.hops === 1 ? '' : 's'}`}
+                : `via ${quote.provider} · ${quote.hops} hop${quote.hops === 1 ? '' : 's'} · aquarius + stellarbroker`}
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
@@ -237,9 +241,27 @@ function ConversionPanel() {
         <div className="rounded-xl border border-green-300 bg-green-50 p-4 text-sm space-y-1">
           <div>
             Converted {trimAmount(result.sourceAmount)} {assetLabel(result.from)} →{' '}
-            {trimAmount(result.estimatedDestinationAmount)} {assetLabel(result.to)} ·{' '}
-            {result.hops} hop{result.hops === 1 ? '' : 's'}
+            {trimAmount(result.destinationAmount ?? result.estimatedDestinationAmount)} {assetLabel(result.to)} via{' '}
+            {result.provider}
+            {result.destinationAmount ? '' : ' (estimated)'}
           </div>
+          {result.txHashes && result.txHashes.length > 1 && (
+            <div className="text-black/60">
+              {result.txHashes.length} transactions:{' '}
+              {result.txHashes.map((h, i) => (
+                <a
+                  key={h}
+                  href={explorerTx(h)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs underline hover:text-black"
+                >
+                  {i > 0 ? ', ' : ''}
+                  {h.slice(0, 8)}
+                </a>
+              ))}
+            </div>
+          )}
           <div className="text-black/60">
             Source <span className="font-mono text-xs">{result.sourceAddress}</span>
           </div>
@@ -250,6 +272,149 @@ function ConversionPanel() {
             className="underline hover:text-black transition-colors duration-200"
           >
             view on stellar.expert
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MultisigConversionPanel() {
+  const [from, setFrom] = useState('EURC');
+  const [amount, setAmount] = useState('');
+  const [built, setBuilt] = useState<TreasuryConversionTx | null>(null);
+  const [building, setBuilding] = useState(false);
+  const [signedXdr, setSignedXdr] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState<SubmitTransactionResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const valid = /^\d+(\.\d{1,7})?$/.test(amount) && Number(amount) > 0;
+
+  const build = async () => {
+    setBuilding(true);
+    setError(null);
+    setBuilt(null);
+    setSubmitted(null);
+    try {
+      setBuilt(await buildTreasuryConversion(from, amount));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not build the conversion');
+    } finally {
+      setBuilding(false);
+    }
+  };
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      setSubmitted(await submitSignedTransaction(signedXdr.trim()));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Submit failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl bg-white p-6 space-y-5">
+      <div>
+        <h2 className="text-black text-lg font-medium tracking-[-0.02em]">Convert treasury funds to the settlement asset</h2>
+        <p className="text-sm text-black/60 mt-1">
+          Builds an unsigned Stellar DEX path payment from the multisig treasury back to itself. Treasury signers sign it
+          in their own wallets; nothing is signed here.
+        </p>
+      </div>
+
+      <div className="flex items-end gap-4 flex-wrap">
+        <label className="flex flex-col gap-2">
+          <span className="text-xs text-black/50">Asset held</span>
+          <input
+            value={from}
+            onChange={(e) => setFrom(e.target.value.toUpperCase())}
+            className="w-32 rounded-full border border-black/10 px-4 h-10 text-sm outline-none focus:border-black/30 transition-colors duration-200"
+          />
+        </label>
+        <label className="flex flex-col gap-2">
+          <span className="text-xs text-black/50">Amount</span>
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            placeholder="0.00"
+            className="w-40 rounded-full border border-black/10 px-4 h-10 text-sm outline-none focus:border-black/30 transition-colors duration-200"
+          />
+        </label>
+        <button onClick={build} disabled={!valid || building} className={T.buttonPrimary}>
+          {building ? 'Building…' : 'Build transaction'}
+        </button>
+      </div>
+
+      {error && <p className="text-sm text-red-600 break-words">{error}</p>}
+
+      {built && (
+        <div className="rounded-xl bg-black/[0.03] p-4 space-y-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <div className="text-xs text-black/50">Sends</div>
+              <div className="text-black mt-1">
+                {trimAmount(built.sendAmount)} {assetLabel(built.from)}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-black/50">Receives at least</div>
+              <div className="text-black mt-1">
+                {trimAmount(built.minDestinationAmount)} {assetLabel(built.to)}
+              </div>
+              <div className="text-xs text-black/40">≈ {trimAmount(built.estimatedDestinationAmount)} expected</div>
+            </div>
+            <div>
+              <div className="text-xs text-black/50">Signatures needed · expires</div>
+              <div className="text-black mt-1">
+                weight {built.signaturesRequired} · {new Date(built.expiresAt).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-black/50">Unsigned XDR · hash {built.hash.slice(0, 12)}…</div>
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(built.xdr).then(() => setCopied(true));
+                }}
+                className="text-xs underline hover:text-black"
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <textarea
+              readOnly
+              value={built.xdr}
+              rows={3}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-white p-3 font-mono text-[11px] text-black/70"
+            />
+          </div>
+          <div>
+            <div className="text-xs text-black/50">Paste the XDR once enough signers have signed</div>
+            <textarea
+              value={signedXdr}
+              onChange={(e) => setSignedXdr(e.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded-xl border border-black/10 bg-white p-3 font-mono text-[11px] outline-none focus:border-black/30"
+            />
+            <button onClick={submit} disabled={!signedXdr.trim() || submitting} className={`${T.buttonSecondary} mt-2`}>
+              {submitting ? 'Submitting…' : 'Submit signed transaction'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {submitted && (
+        <div className="rounded-xl border border-green-300 bg-green-50 p-4 text-sm">
+          Submitted ·{' '}
+          <a href={submitted.horizonUrl} target="_blank" rel="noopener noreferrer" className="underline">
+            {submitted.hash.slice(0, 12)}… on stellar.expert
           </a>
         </div>
       )}
@@ -329,6 +494,8 @@ export default function TreasuryPage() {
       </div>
 
       <ConversionPanel />
+
+      <MultisigConversionPanel />
 
       {config && (
         <div className="rounded-2xl bg-white p-6">

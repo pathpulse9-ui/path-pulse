@@ -13,6 +13,14 @@ interface SessionContextValue {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
+function clearKycDrafts() {
+  for (const store of [window.sessionStorage, window.localStorage]) {
+    try {
+      for (const key of Object.keys(store)) if (key.startsWith('kyc_')) store.removeItem(key);
+    } catch {}
+  }
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +42,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await apiLogout().catch(() => undefined);
+    clearKycDrafts();
     setUser(null);
   }, []);
 

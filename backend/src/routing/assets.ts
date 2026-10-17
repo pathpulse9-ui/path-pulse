@@ -24,9 +24,6 @@ function build(ref: AssetRef): RoutableAsset {
 let cache: Map<string, RoutableAsset> | null = null;
 
 function registry(): Map<string, RoutableAsset> {
-  if (env.network !== 'testnet') {
-    throw new Error('Cross-asset routing is testnet-only — mainnet pools are gated behind Phase 5');
-  }
   if (!cache) {
     cache = new Map(env.routing.assets.map((ref) => [ref.code.toUpperCase(), build(ref)]));
   }

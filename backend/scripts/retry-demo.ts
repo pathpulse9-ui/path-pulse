@@ -117,7 +117,7 @@ async function main() {
 }
 
 main().catch(async (e) => {
-  try { sh(`docker start ${CONTAINER}`); } catch { /* already running */ }
+  try { sh(`docker start ${CONTAINER}`); } catch {}
   console.error('FAILED:', e.message);
   process.exit(1);
 });

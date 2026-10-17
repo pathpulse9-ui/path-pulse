@@ -2,26 +2,30 @@
 
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { SettlementBatch } from '@pathpulse/contract';
-import { getSettlementBatch, settlementReceiptPdfUrl } from '../../../lib/api';
+import type { PayoutBatch, PayoutReceipt, SettlementBatch } from '@pathpulse/contract';
+import { getPayoutBatch, getSettlementBatch, settlementReceiptPdfUrl } from '../../../lib/api';
 
-/**
- * Full traceability for one settlement batch:
- *   Treasury source → Split → SDP payout batch → per-driver receipts.
- * Everything with a hash links to stellar.expert; PDF receipt is a
- * one-click download from the compliance export endpoint.
- */
 export default function GovSettlementDetailPage(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = use(params);
   const [batch, setBatch] = useState<SettlementBatch | null>(null);
+  const [payout, setPayout] = useState<PayoutBatch | null>(null);
+  const [payoutError, setPayoutError] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        setBatch(await getSettlementBatch(id));
+        const loaded = await getSettlementBatch(id);
+        setBatch(loaded);
+        if (loaded.payoutBatchId) {
+          try {
+            setPayout(await getPayoutBatch(loaded.payoutBatchId));
+          } catch {
+            setPayoutError(true);
+          }
+        }
       } catch (e) {
         setError((e as Error).message);
       }
@@ -37,6 +41,8 @@ export default function GovSettlementDetailPage(
 
   const gross = Number(batch.grossAmount);
   const asset = batch.asset.code;
+  const explorer = `https://stellar.expert/explorer/${batch.network === 'mainnet' ? 'public' : 'testnet'}`;
+  const receipts = new Map((payout?.receipts ?? []).map((r) => [r.userId, r]));
   const legs = [
     { pct: '50%', label: 'Authorities',    color: '#03C394',            amount: batch.split.authorities,    addr: batch.authoritiesAddress },
     { pct: '30%', label: 'Driver rewards', color: 'rgba(3,195,148,.60)', amount: batch.split.driverRewards, addr: batch.driverPoolAddress },
@@ -49,7 +55,7 @@ export default function GovSettlementDetailPage(
         <Link href="/gov/settlements" className="text-xs text-black/50 hover:text-black">
           ← All settlements
         </Link>
-        <div className="mt-2 flex items-baseline gap-3">
+        <div className="mt-2 flex flex-wrap items-baseline gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{batch.grossAmount} {asset}</h1>
           <span className="text-sm text-black/50">gross settled</span>
           <a
@@ -63,20 +69,65 @@ export default function GovSettlementDetailPage(
       </div>
 
       <section className="rounded-3xl bg-white p-6">
-        <div className="text-sm font-semibold">On-chain proof</div>
+        <div className="text-sm font-semibold">1 · Treasury deposit</div>
+        {batch.deposit ? (
+          <>
+            <div className="mt-1 text-xs text-black/50">
+              Verified on Horizon when the batch ran: this transaction paid the settlement source at least the gross
+              amount, and no other batch has claimed it. On mainnet it must come from the treasury or, for a converted
+              settlement, the routing source.
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+              <Kv label="Amount" value={`${batch.deposit.amount} ${asset}`} />
+              <Kv label="Received" value={batch.deposit.receivedAt} />
+              <Kv label="From" value={batch.deposit.from} mono />
+              <Kv label="Deposit tx" value={batch.deposit.txHash} mono link={`${explorer}/tx/${batch.deposit.txHash}`} />
+            </div>
+          </>
+        ) : (
+          <div className="mt-2 rounded-2xl bg-amber-50 px-4 py-3 text-xs text-amber-800">
+            No deposit linked. This batch was paid from the settlement source&apos;s existing balance, so it cannot be
+            traced to a specific treasury deposit.
+          </div>
+        )}
+      </section>
+
+      {batch.conversion && (
+        <section className="rounded-3xl bg-white p-6">
+          <div className="text-sm font-semibold">1b · Cross-asset conversion</div>
+          <div className="mt-1 text-xs text-black/50">
+            {batch.conversion.sourceAmount} {batch.conversion.from.code} converted via {batch.conversion.provider} and moved
+            into the settlement source; the transfer is the deposit above.
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+            <Kv label="Converted" value={`${batch.conversion.convertedAmount} ${asset}`} />
+            <Kv label="Router" value={batch.conversion.provider} />
+            {batch.conversion.swapTxHashes.map((h, i) => (
+              <Kv key={h} label={`Swap tx ${i + 1}`} value={h} mono link={`${explorer}/tx/${h}`} />
+            ))}
+            <Kv
+              label="Transfer tx"
+              value={batch.conversion.transferTxHash}
+              mono
+              link={`${explorer}/tx/${batch.conversion.transferTxHash}`}
+            />
+          </div>
+        </section>
+      )}
+
+      <section className="rounded-3xl bg-white p-6">
+        <div className="text-sm font-semibold">2 · Settlement transaction</div>
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
           <Kv label="Network" value={batch.network} />
           <Kv label="Created" value={batch.createdAt} />
           <Kv label="Source"       value={batch.sourceAddress} mono />
-          <Kv label="Tx hash"      value={batch.txHash} mono link={
-            `https://stellar.expert/explorer/${batch.network === 'mainnet' ? 'public' : 'testnet'}/tx/${batch.txHash}`
-          } />
+          <Kv label="Tx hash"      value={batch.txHash} mono link={`${explorer}/tx/${batch.txHash}`} />
           {batch.payoutBatchId && <Kv label="SDP payout" value={batch.payoutBatchId} mono />}
         </div>
       </section>
 
       <section className="rounded-3xl bg-white p-6">
-        <div className="text-sm font-semibold">Deterministic split</div>
+        <div className="text-sm font-semibold">3 · Deterministic split</div>
         <div className="mt-1 text-xs text-black/50">Enforced atomically in one Stellar transaction.</div>
         <div className="mt-6 flex h-3 gap-[2px] overflow-hidden rounded-full">
           {legs.map((l) => (
@@ -87,9 +138,9 @@ export default function GovSettlementDetailPage(
           {legs.map((l) => (
             <li key={l.label} className="flex items-center gap-3">
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: l.color }} />
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <div className="font-medium">{l.label} ({l.pct})</div>
-                {l.addr && <div className="font-mono text-[11px] text-black/50">{l.addr}</div>}
+                {l.addr && <div className="break-all font-mono text-[11px] text-black/50">{l.addr}</div>}
               </div>
               <div className="font-medium">{l.amount} {asset}</div>
             </li>
@@ -100,62 +151,101 @@ export default function GovSettlementDetailPage(
       {(batch.driverPayouts?.length ?? 0) > 0 && (
         <section className="overflow-hidden rounded-3xl bg-white">
           <div className="border-b border-black/5 p-6">
-            <div className="text-sm font-semibold">Driver payouts</div>
+            <div className="text-sm font-semibold">4 · Driver payouts</div>
             <div className="mt-1 text-xs text-black/50">
-              {batch.driverPayouts.length} driver{batch.driverPayouts.length === 1 ? '' : 's'} — fanned out from
-              driver_pool via SDP. Each multiplier is the driver&apos;s on-chain SCOUT badge, and the score
-              shown is the validation result recorded when this batch settled.
+              {batch.driverPayouts.length} driver{batch.driverPayouts.length === 1 ? '' : 's'} — paid by SDP.
+              {batch.network === 'mainnet'
+                ? ' On mainnet the SDP distribution account is the driver pool, so these payments spend the 30% leg above.'
+                : ' On testnet SDP pays from its own distribution account, not the driver pool.'}{' '}
+              Each multiplier is the driver&apos;s on-chain SCOUT badge (no badge = 1.0×), and the score shown is the
+              PulseGen validation result recorded when this batch settled.
             </div>
+            {payout?.sandbox && (
+              <div className="mt-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                Paid through the SDP sandbox — no on-chain payment exists for these drivers.
+              </div>
+            )}
+            {payoutError && (
+              <div className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-xs text-red-700">
+                Could not load payment status for {batch.payoutBatchId}.
+              </div>
+            )}
           </div>
-          <table className="w-full text-sm">
-            <thead className="bg-black/[.03] text-left text-[11px] uppercase tracking-wide text-black/50">
-              <tr>
-                <th className="px-5 py-3">User</th>
-                <th className="px-5 py-3">Address</th>
-                <th className="px-5 py-3">Tier</th>
-                <th className="px-5 py-3">Multiplier</th>
-                <th className="px-5 py-3">Validation score</th>
-                <th className="px-5 py-3 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/5">
-              {batch.driverPayouts.map((p) => (
-                <tr key={p.userId}>
-                  <td className="px-5 py-3">{p.userId}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-black/60">
-                    {p.address.slice(0, 6)}…{p.address.slice(-6)}
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className="rounded-full bg-[#03C394]/25 px-2 py-0.5 text-[11px] font-medium text-[#032018]">
-                      SCOUT{p.tier}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3">{p.multiplier.toFixed(1)}×</td>
-                  <td className="px-5 py-3 text-xs">
-                    {p.score === undefined ? (
-                      <span className="text-black/40">no score on record</span>
-                    ) : (
-                      <>
-                        <div className="font-medium text-black/80">{p.score.toFixed(4)}</div>
-                        <div className="text-black/45">
-                          {p.scoreSource}
-                          {p.scoredAt ? ` · ${new Date(p.scoredAt).toLocaleDateString()}` : ''}
-                        </div>
-                        {p.scoreImportId && (
-                          <div className="font-mono text-[10px] text-black/35">{p.scoreImportId}</div>
-                        )}
-                      </>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 text-right font-medium">{p.amount} {asset}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-black/[.03] text-left text-[11px] uppercase tracking-wide text-black/50">
+                <tr>
+                  <th className="px-5 py-3">User</th>
+                  <th className="px-5 py-3">Address</th>
+                  <th className="px-5 py-3">Tier</th>
+                  <th className="px-5 py-3">Multiplier</th>
+                  <th className="px-5 py-3">Validation score</th>
+                  <th className="px-5 py-3 text-right">Amount</th>
+                  <th className="px-5 py-3">Payment</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-black/5">
+                {batch.driverPayouts.map((p) => (
+                  <tr key={p.userId}>
+                    <td className="px-5 py-3">{p.userId}</td>
+                    <td className="px-5 py-3 font-mono text-xs text-black/60">
+                      {p.address.slice(0, 6)}…{p.address.slice(-6)}
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className="rounded-full bg-[#03C394]/25 px-2 py-0.5 text-[11px] font-medium text-[#032018]">
+                        SCOUT{p.tier}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">{p.multiplier.toFixed(1)}×</td>
+                    <td className="px-5 py-3 text-xs">
+                      {p.score === undefined ? (
+                        <span className="text-black/40">no score on record</span>
+                      ) : (
+                        <>
+                          <div className="font-medium text-black/80">{p.score.toFixed(4)}</div>
+                          <div className="text-black/45">
+                            {p.scoreSource}
+                            {p.scoredAt ? ` · ${new Date(p.scoredAt).toLocaleDateString()}` : ''}
+                          </div>
+                          {p.scoreImportId && (
+                            <div className="font-mono text-[10px] text-black/35">{p.scoreImportId}</div>
+                          )}
+                        </>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-right font-medium">{p.amount} {asset}</td>
+                    <td className="px-5 py-3 text-xs">
+                      <PaymentCell receipt={receipts.get(p.userId)} explorer={explorer} hasBatch={!!batch.payoutBatchId} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </div>
   );
+}
+
+function PaymentCell(
+  { receipt, explorer, hasBatch }: { receipt?: PayoutReceipt; explorer: string; hasBatch: boolean },
+) {
+  if (!hasBatch) return <span className="text-black/40">not paid out yet</span>;
+  if (!receipt) return <span className="text-black/40">—</span>;
+  if (receipt.stellarTxHash) {
+    return (
+      <a
+        href={`${explorer}/tx/${receipt.stellarTxHash}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-mono text-blue-700 hover:underline"
+      >
+        {receipt.stellarTxHash.slice(0, 8)}…{receipt.stellarTxHash.slice(-6)}
+      </a>
+    );
+  }
+  return <span className="text-black/50">{receipt.status}</span>;
 }
 
 function Kv({ label, value, mono, link }: { label: string; value: string; mono?: boolean; link?: string }) {

@@ -111,6 +111,7 @@ alter table settlement_batches add column if not exists deposit_tx_hash text;
 alter table settlement_batches add column if not exists deposit_from text;
 alter table settlement_batches add column if not exists deposit_amount text;
 alter table settlement_batches add column if not exists deposit_at timestamptz;
+alter table settlement_batches add column if not exists conversion jsonb;
 create index if not exists settlement_batches_deposit_idx on settlement_batches (deposit_tx_hash);
 alter table group_payout_batches add column if not exists created_by text;
 
@@ -288,6 +289,52 @@ create table if not exists scout_assignments (
 
 create index if not exists scout_assignments_driver_idx on scout_assignments (driver_id, created_at desc);
 create index if not exists scout_assignments_created_idx on scout_assignments (created_at desc);
+
+alter table users add column if not exists google_sub text;
+
+create table if not exists chain_cursors (
+  account text primary key,
+  cursor text not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists chain_payments (
+  id text not null,
+  account text not null,
+  role text not null,
+  tx_hash text not null,
+  type text not null,
+  from_address text not null,
+  to_address text not null,
+  asset_code text not null,
+  asset_issuer text,
+  amount text not null,
+  created_at timestamptz not null,
+  primary key (id, account)
+);
+
+create index if not exists chain_payments_tx_idx on chain_payments (tx_hash);
+create index if not exists chain_payments_account_idx on chain_payments (account, created_at desc);
+
+create table if not exists partner_api_keys (
+  id text primary key,
+  name text not null,
+  key_hash text not null unique,
+  created_by text,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  last_used_at timestamptz
+);
+
+create table if not exists webhook_receipts (
+  hash text primary key,
+  received_at timestamptz not null default now()
+);
+
+create table if not exists revoked_sessions (
+  jti text primary key,
+  expires_at timestamptz not null
+);
 `;
 
 export async function migrate(): Promise<void> {

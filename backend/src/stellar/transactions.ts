@@ -49,10 +49,6 @@ function toOperation(op: TransactionOperation) {
   }
 }
 
-/**
- * Build a transaction from the caller's managed wallet and delegate-sign it.
- * The client never holds the key — the backend signs on the managed account's behalf.
- */
 export async function buildTransaction(req: BuildTransactionRequest): Promise<BuildTransactionResponse> {
   const wallet = await getManagedWallet(req.userId);
   if (!wallet || !wallet.provisioned) {
@@ -72,13 +68,12 @@ export async function buildTransaction(req: BuildTransactionRequest): Promise<Bu
   if (req.memo) builder.addMemo(Memo.text(req.memo));
 
   let tx = builder.setTimeout(180).build();
-  tx = (await (await getManagedSigner(req.userId)).sign(tx)) as typeof tx; // delegated signing
+  tx = (await (await getManagedSigner(req.userId)).sign(tx)) as typeof tx;
 
   const envelope = env.accountFunding === 'sponsor' ? await sponsorFees(await getReserveSponsor(), tx) : tx;
   return { xdr: envelope.toXDR(), hash: envelope.hash().toString('hex') };
 }
 
-/** Submit a signed transaction envelope (managed or external-wallet) to Horizon. */
 export async function submitTransaction(xdr: string): Promise<SubmitTransactionResponse> {
   assertMainnetAllowed('transaction submit');
   let tx;

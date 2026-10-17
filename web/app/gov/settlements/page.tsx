@@ -3,19 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { SettlementBatch } from '@pathpulse/contract';
-import { listSettlementBatches, settlementCsvUrl, type BatchListParams } from '../../lib/api';
+import { listSettlementBatches, settlementCsvUrl, payoutsCsvUrl, type BatchListParams } from '../../lib/api';
 
-/**
- * Filterable settlement list. Filters are sent to /v1/settlement/batches so
- * Postgres does the filtering; the CSV export button hands the same params
- * to /v1/settlement/batches/export.csv for a matching download.
- */
 export default function GovSettlementsPage() {
   const [batches, setBatches] = useState<SettlementBatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Filter inputs (bound to form; committed to `params` on submit).
   const [assetCode, setAssetCode] = useState('');
   const [since, setSince] = useState('');
   const [until, setUntil] = useState('');
@@ -24,6 +18,7 @@ export default function GovSettlementsPage() {
   const [params, setParams] = useState<BatchListParams>({ limit: 200 });
 
   const csvHref = useMemo(() => settlementCsvUrl(params), [params]);
+  const payoutsHref = useMemo(() => payoutsCsvUrl(params), [params]);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,13 +54,14 @@ export default function GovSettlementsPage() {
       <div className="flex items-baseline gap-4">
         <h1 className="text-3xl font-semibold tracking-tight">Settlements</h1>
         <span className="text-sm text-black/50">{batches.length} shown</span>
-        <a
-          href={csvHref}
-          className="ml-auto rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-medium text-black hover:bg-black/5"
-          download
-        >
-          Export CSV
-        </a>
+        <div className="ml-auto flex gap-2">
+          <a href={csvHref} className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-medium text-black hover:bg-black/5" download>
+            Export settlements CSV
+          </a>
+          <a href={payoutsHref} className="rounded-full border border-black/15 bg-white px-4 py-2 text-xs font-medium text-black hover:bg-black/5" download>
+            Export driver payouts CSV
+          </a>
+        </div>
       </div>
 
       <form onSubmit={apply} className="rounded-3xl bg-white p-5">
@@ -130,7 +126,7 @@ export default function GovSettlementsPage() {
                 <td className="px-5 py-3 text-right text-black/70">{b.split.treasury}</td>
                 <td className="px-5 py-3">
                   <a
-                    href={`https://stellar.expert/explorer/testnet/tx/${b.txHash}`}
+                    href={`https://stellar.expert/explorer/${b.network === 'mainnet' ? 'public' : 'testnet'}/tx/${b.txHash}`}
                     target="_blank" rel="noopener noreferrer"
                     className="font-mono text-[11px] text-blue-700 hover:underline"
                   >

@@ -11,7 +11,7 @@ import type {
   OffRampStatus,
 } from '@pathpulse/contract';
 import { env, rampLive, carretLive } from '../config/env.js';
-import { getSettlementBatch } from '../stellar/settlement.js';
+import { getSettlementBatch, toStroops, fromStroops } from '../stellar/settlement.js';
 import { buildOfframpUrl, mapRampStatus } from './ramp.js';
 import type { OffRampQuote } from '@pathpulse/contract';
 
@@ -50,17 +50,6 @@ import {
   type StoredOffRampSession,
 } from './offRampStore.js';
 
-/**
- * Fiat off-ramp orchestration (D4 — Ramp Network).
- *
- * Ramp is a widget-based ramp: the driver opens a signed off-ramp widget URL, Ramp runs
- * KYC + shows a deposit address + pays fiat to their bank. Status arrives via ECDSA-signed
- * V3 webhooks (see routes `/v1/offramp/callback`), correlated to the session by a `ref` param.
- *
- * Behind an `OffRampProvider` interface. Live provider builds the Ramp URL; sandbox stub
- * simulates the URL + status progression so the flow is demoable until a Ramp host API key
- * + webhook public key land (external onboarding).
- */
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -69,19 +58,6 @@ function httpError(message: string, status: number, name: string): Error {
   return e;
 }
 
-/**
- * Carret mainnet off-ramp — Stellar leg.
- *
- * `placeOfframpOrder` only tells Carret "I will send you USDC"; the on-chain
- * transfer is still on us. Build a payment from the driver's managed wallet
- * to Carret's deposit address (with the memo they returned so they can
- * correlate on their side), sign via KMS/managed signer, submit to Horizon.
- *
- * USDC on Stellar mainnet is issued by Circle at
- * `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`. Overridable via
- * `CARRET_USDC_ISSUER` for Carret-specific wrapped assets if that ever
- * changes.
- */
 export async function broadcastCarretDeposit(params: {
   userId: string;
   destination: string;
@@ -106,11 +82,6 @@ export async function broadcastCarretDeposit(params: {
     amount: params.amount,
   }));
   if (params.memo) {
-    // Carret's memo_label on XLM is a purely-numeric string that identifies
-    // the sub-account. Stellar exchanges that use numeric correlators expect
-    // MEMO_ID (uint64), not MEMO_TEXT with the digits as string — the
-    // reconciler on the other side keys on the ID and silently drops text
-    // memos. Use MEMO_ID when the memo is all digits and fits uint64.
     const digitsOnly = /^\d{1,20}$/.test(params.memo);
     builder.addMemo(
       digitsOnly ? Memo.id(params.memo) : Memo.text(params.memo),
@@ -126,7 +97,6 @@ export async function broadcastCarretDeposit(params: {
 export interface OffRampContext {
   email?: string;
   userIp?: string;
-  /** The driver's Stellar address (the crypto being sold). */
   userAddress?: string;
 }
 
@@ -141,10 +111,8 @@ type SessionInternal = StoredOffRampSession;
 
 const callbackBase = `${process.env.PUBLIC_API_URL ?? `http://localhost:${env.port}`}/v1/offramp/callback`;
 
-// A stable dev "anchor" account for the sandbox (where the user would send funds).
 const sandboxAnchor = Keypair.random().publicKey();
 
-// ── Ramp providers (widget-based) ─────────────────────────────────────
 
 const rampSandboxProvider: OffRampProvider = {
   name: 'ramp',
@@ -155,7 +123,6 @@ const rampSandboxProvider: OffRampProvider = {
     session.anchorAccount = sandboxAnchor;
   },
   async status(session) {
-    // Time-based simulation so polling shows real progression.
     const elapsed = (Date.now() - new Date(session.createdAt).getTime()) / 1000;
     if (elapsed < 8) return 'pending_user_transfer_start';
     if (elapsed < 16) return 'pending_anchor';
@@ -176,20 +143,12 @@ const rampLiveProvider: OffRampProvider = {
       finalUrl: `${env.webAppUrl}/dashboard/offramp?session=${session.id}`,
     });
   },
-  // Ramp status is webhook-driven (see applyCallback); polling just returns the last known state.
   async status(session) {
     return session.status;
   },
 };
 
-// ── Carret providers (server-driven REST) ─────────────────────────────
 
-/**
- * Carret has no widget: the driver's flow is entirely backend-orchestrated.
- * The `interactiveUrl` we set is a page in our own web app that shows the
- * order status + Carret's crypto deposit address (fetched from the trading
- * wallet endpoint in a later pass — mocked here for now).
- */
 const carretSandboxProvider: OffRampProvider = {
   name: 'carret',
   sandbox: true,
@@ -207,7 +166,6 @@ const carretSandboxProvider: OffRampProvider = {
   async status(session) {
     const s = session as SessionInternal;
     if (!s.carretOrderId) return session.status;
-    // Simulate the order lifecycle from Carret's status vocabulary.
     const carretStatus = carretMocks.advanceOrder(session.createdAt);
     return mapCarretStatus(carretStatus) ?? session.status;
   },
@@ -218,13 +176,6 @@ const carretLiveProvider: OffRampProvider = {
   sandbox: false,
   async start(session) {
     const s = session as SessionInternal;
-    // Refuse to run on Stellar testnet — Carret has no testnet, their dev env
-    // uses REAL mainnet USDC + real INR banking. Sending testnet USDC to their
-    // mainnet deposit address would silently vanish (no trustline on the
-    // testnet side). Fail loud unless CARRET_ALLOW_TESTNET=true is set as an
-    // explicit dev override (lets devs click the UI end-to-end without any
-    // real crypto sends — every Carret API call still runs, but no on-chain
-    // deposit is expected).
     if (env.network === 'testnet' && !env.carret.allowTestnet) {
       throw httpError(
         'Carret off-ramp is mainnet-only (their dev uses real mainnet USDC). ' +
@@ -235,31 +186,21 @@ const carretLiveProvider: OffRampProvider = {
         'ConfigError',
       );
     }
-    // 1. Fetch Carret's deposit address for our corridor (must include memo);
-    // 2. resolve route id; 3. lock a quote; 4. place order.
     const deposit = await getConfiguredDepositAddress();
     session.anchorAccount = deposit.address;
     s.carretDepositMemo = deposit.memo_label;
 
-    // Resolve the driver's own Carret account_id up front — every
-    // downstream call (quote, listBanks, place_order) must use the SAME
-    // account_id or Carret rejects with "Bank does not belong to this
-    // account." The env-configured account is only a shared-dev fallback.
     const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
     const accountId: number | string | undefined = mapping?.carretAccountId ?? env.carret.accountId;
 
     const routeId = await resolveOfframpRouteId();
     const quote = await createOfframpQuote({ routeId, amount: session.amount, accountId });
 
-    // PAT-80: refuse upfront if this order would push the driver's Carret
-    // sub-account over the ₹30K/day withdraw_inr cap.
     const fiatInr = Number(quote.output_amount.amount);
     if (mapping) {
       await assertUnderLimit(mapping.carretAccountId, 'withdraw_inr', fiatInr);
     }
 
-    // Prefer the driver's own registered + verified bank; fall back to
-    // the env shared test bank when they haven't added one (dev/legacy).
     let bankId: number | string | undefined = env.carret.bankId || undefined;
     if (mapping) {
       try {
@@ -267,7 +208,7 @@ const carretLiveProvider: OffRampProvider = {
         const preferred =
           banks.find((b) => String(b.status).toLowerCase() === 'verified') ?? banks[0];
         if (preferred) bankId = preferred.id;
-      } catch { /* Carret unreachable — env fallback stays */ }
+      } catch { }
     }
     if (!bankId) {
       throw httpError(
@@ -284,16 +225,6 @@ const carretLiveProvider: OffRampProvider = {
     session.merchantTransactionId = String(order.id);
     session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
 
-    // On-chain USDC deposit — the piece Stellar's T2 review flagged as
-    // missing. We hold the driver's funds in a managed wallet, so the
-    // backend signs + submits a payment to the deposit address Carret
-    // returned, with Carret's memo attached so they can correlate.
-    //
-    // Guarded on STELLAR_NETWORK=mainnet. The CARRET_ALLOW_TESTNET escape
-    // hatch continues to skip the broadcast so devs can click the flow
-    // without needing real USDC. The ppUserId gate skips the broadcast
-    // when there is no managed wallet (external-wallet drivers still
-    // deposit via the anchor webview themselves).
     if (env.network === 'mainnet' && s.ppUserId) {
       try {
         const txHash = await broadcastCarretDeposit({
@@ -305,14 +236,10 @@ const carretLiveProvider: OffRampProvider = {
         s.stellarTxHash = txHash;
         s.network = 'mainnet';
       } catch (e) {
-        // Log and continue — Carret still has an open order; the orphan
-        // reconciler will keep it in sight and ops can retry the deposit
-        // out of band. Better than crashing the whole place_order.
         logger?.warn?.({ err: e, sessionId: session.id }, 'carret deposit broadcast failed');
       }
     }
 
-    // PAT-80: record the successful order against the daily bucket.
     if (mapping) {
       await recordUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
     }
@@ -330,7 +257,6 @@ const carretLiveProvider: OffRampProvider = {
   },
 };
 
-// ── Provider selection ────────────────────────────────────────────────
 
 function pickProvider(): OffRampProvider {
   if (env.offrampProvider === 'carret') {
@@ -348,7 +274,56 @@ function assetOf(ref?: AssetRef): AssetRef {
   return { code };
 }
 
-export async function createWithdrawal(
+export function checkWithdrawalEntitlement(
+  userId: string,
+  settlementBatchId: string,
+  amount: string,
+  payouts: Array<{ userId: string; amount: string }>,
+  priorSessions: Array<{ settlementBatchId?: string; status: string; amount: string }>,
+): void {
+  const paid = payouts.filter((p) => p.userId === userId).reduce((sum, p) => sum + toStroops(p.amount), 0n);
+  if (paid === 0n) {
+    throw httpError(`Settlement batch ${settlementBatchId} paid nothing to this account`, 403, 'NotEntitled');
+  }
+  const already = priorSessions
+    .filter((s) => s.settlementBatchId === settlementBatchId && s.status !== 'error')
+    .reduce((sum, s) => sum + toStroops(s.amount), 0n);
+  if (already + toStroops(amount) > paid) {
+    throw httpError(
+      `Withdrawal exceeds this account's ${fromStroops(paid)} payout from batch ${settlementBatchId} (${fromStroops(already)} already withdrawn)`,
+      422,
+      'ExceedsEntitlement',
+    );
+  }
+}
+
+async function assertWithdrawalEntitlement(userId: string, settlementBatchId: string, amount: string): Promise<void> {
+  const batch = await getSettlementBatch(settlementBatchId);
+  checkWithdrawalEntitlement(userId, settlementBatchId, amount, batch.driverPayouts ?? [], await listSessionsByUser(userId));
+}
+
+const withdrawalLocks = new Map<string, Promise<unknown>>();
+
+function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = withdrawalLocks.get(userId) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(fn);
+  const tail = run.catch(() => undefined);
+  withdrawalLocks.set(userId, tail);
+  void tail.then(() => {
+    if (withdrawalLocks.get(userId) === tail) withdrawalLocks.delete(userId);
+  });
+  return run;
+}
+
+export function createWithdrawal(
+  userId: string,
+  req: CreateOffRampWithdrawalRequest,
+  ctx: OffRampContext = {},
+): Promise<OffRampSession> {
+  return withUserLock(userId, () => createWithdrawalUnlocked(userId, req, ctx));
+}
+
+async function createWithdrawalUnlocked(
   userId: string,
   req: CreateOffRampWithdrawalRequest,
   ctx: OffRampContext = {},
@@ -363,7 +338,7 @@ export async function createWithdrawal(
       'ValidationError',
     );
   }
-  await getSettlementBatch(req.settlementBatchId);
+  await assertWithdrawalEntitlement(userId, req.settlementBatchId, req.amount);
 
   const now = new Date().toISOString();
   const fiatFallback = provider.name === 'carret' ? env.carret.fiat : env.ramp.fiat;
@@ -399,11 +374,6 @@ export async function createWithdrawal(
   return session;
 }
 
-/**
- * Persist a status transition and append the event. Terminal states are sticky:
- * `completed` and `error` never move again, so a late webhook or a reconciler
- * pass cannot regress a settled session.
- */
 async function applyStatus(
   session: SessionInternal,
   next: OffRampStatus,
@@ -447,11 +417,6 @@ async function refresh(session: SessionInternal): Promise<SessionInternal> {
   return applyStatus(session, next, 'poll');
 }
 
-/**
- * Sessions are per-driver: a caller may only read their own. An id owned by
- * someone else is reported as 404 rather than 403 so the endpoint doesn't
- * confirm that the id exists.
- */
 export async function getWithdrawal(id: string, userId: string): Promise<OffRampSession> {
   const s = await getSession(id);
   if (!s || s.ppUserId !== userId) {
@@ -475,7 +440,6 @@ export async function listWithdrawals(
   return { items, nextCursor: next };
 }
 
-/** Apply a verified Ramp webhook to the session identified by the `ref` query param. */
 export async function applyCallback(sessionId: string, rampStatus: string): Promise<boolean> {
   const s = await getSession(sessionId);
   if (!s) return false;
@@ -484,10 +448,6 @@ export async function applyCallback(sessionId: string, rampStatus: string): Prom
   return true;
 }
 
-/**
- * Apply a verified Carret webhook. Carret webhooks carry the order_id (not our
- * session id), so we look up the session by the persisted carretOrderId.
- */
 export async function applyCarretCallback(
   orderId: string,
   carretStatus: string,
@@ -499,11 +459,6 @@ export async function applyCarretCallback(
   return true;
 }
 
-/**
- * Drive a session to a status discovered out of band — used by the orphan
- * reconciler when a webhook never arrived and Carret's order list is the only
- * source of truth for where the order actually ended up.
- */
 export async function reconcileSessionStatus(
   sessionId: string,
   next: OffRampStatus,
@@ -514,7 +469,6 @@ export async function reconcileSessionStatus(
   return applyStatus(s, next, 'reconciler', detail);
 }
 
-/** Attach the Carret order the reconciler matched to an orphaned session. */
 export async function attachCarretOrder(
   sessionId: string,
   orderId: string,
@@ -527,11 +481,6 @@ export async function attachCarretOrder(
   await saveSession(s);
 }
 
-/**
- * Price a withdrawal without committing anything. Carret quotes are read-only —
- * no order, no funds — so this stays available on testnet even though placing an
- * order does not.
- */
 export async function quoteWithdrawal(amount: string): Promise<OffRampQuote> {
   if (activeProvider() === 'carret' && carretLive) {
     const routeId = await resolveOfframpRouteId();
@@ -572,7 +521,6 @@ export async function quoteWithdrawal(amount: string): Promise<OffRampQuote> {
   };
 }
 
-/** Expose the active provider name for the `/health` payload + routing decisions. */
 export function activeProvider(): 'ramp' | 'carret' {
   return provider.name;
 }

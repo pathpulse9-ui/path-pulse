@@ -14,34 +14,7 @@ function carretFetchOptions(init: RequestInit): RequestInit {
   return opts as RequestInit;
 }
 
-/**
- * Carret Infra off-ramp (D4 · alt provider).
- *
- * Carret Infra is a full-stack crypto↔fiat backend for the Indian corridor
- * (KYC + custodial wallets + INR banking + ramp). Base path is
- * `/api/v1/taas/` (Transactions-as-a-Service).
- *
- * Off-ramp flow (all server-driven, `API-KEY` header, no widget):
- *   1. GET  /offramp/supported_routes/    → DRF page of { id, from_asset, to_asset }[]
- *   2. GET  /exchange_rate/               → indicative rate (optional)
- *   3. POST /offramp/quote/               → { id: quote_id, output_amount, ... }
- *   4. POST /offramp/place_order/         → { id: order_id, status }
- *   5. GET  /offramp/orders/{id}/         → poll; status: open|filled|cancelled|...
- *   ↳ webhook (Partner Dashboard) fires on status transitions
- *
- * Corridor: prod target is USDC on Stellar; dev is USDT/TRX until Carret
- * activates USDC/Stellar on the dev environment (per their Supported Assets
- * page, which lists it — the dev route list currently omits it).
- *
- * Behind an `OffRampProvider` interface (see services/offramp.ts). Live mode
- * (`carretLive`) hits the real REST API; sandbox mode returns shape-accurate
- * mocked responses so the flow is demoable + testable without live creds.
- */
-
-// ── Types (shape-faithful to Carret's REST responses) ─────────────────
-
 export interface CarretRoute {
-  /** Carret returns numeric ids in staging; loosened to string|number for safety. */
   id: number | string;
   from_asset: string;
   from_chain?: string;
@@ -49,7 +22,6 @@ export interface CarretRoute {
   is_active: boolean;
 }
 
-/** Carret returns amounts as `{ amount, currency }` objects, not strings. */
 export interface CarretAmount {
   amount: number;
   currency: string;
@@ -59,7 +31,6 @@ export interface CarretQuote {
   id: number | string;
   route_id?: number | string;
   route_type?: string;
-  /** Epoch seconds (float) from the live API, e.g. 1786713764.782149. */
   created_at?: number | string;
   amount?: number | string;
   base_rate?: number;
@@ -76,22 +47,14 @@ export interface CarretQuote {
   expires_at?: string;
 }
 
-// ── Deposit addresses (where PathPulse sends crypto for off-ramp) ─────
-
 export interface CarretDepositAddress {
   id: number;
   address: string;
   chain: string;
   asset: string;
-  /**
-   * Stellar-style memo used to identify our account when we deposit. On
-   * Stellar this is a numeric string; other chains may return null.
-   * If present, EVERY deposit tx MUST include it or Carret can't credit us.
-   */
   memo_label: string | null;
 }
 
-/** GET /deposit_addresses/?asset=X&chain=Y — Carret's crypto deposit surface. */
 export async function getDepositAddresses(
   asset: string,
   chain: string,
@@ -105,11 +68,6 @@ export async function getDepositAddresses(
   return res.data ?? [];
 }
 
-/**
- * Fetch the single deposit address for our configured corridor. Throws with
- * a helpful message if Carret has no active wallet for the asset/chain (e.g.
- * "No active wallet address found for USDC on stellar" — hint: use 'XLM').
- */
 export async function getConfiguredDepositAddress(): Promise<CarretDepositAddress> {
   const list = await getDepositAddresses(env.carret.crypto, env.carret.chain);
   if (!list.length) {
@@ -121,17 +79,6 @@ export async function getConfiguredDepositAddress(): Promise<CarretDepositAddres
   return list[0];
 }
 
-/**
- * POST /crypto_deposit/ — register a crypto deposit transaction so Carret
- * credits the trading wallet. Carret validates against the on-chain tx and
- * applies Travel Rule compliance. Without this call, a raw on-chain transfer
- * to the deposit address silently sits uncredited.
- *
- * Own-wallet case only (we always deposit from the driver's managed wallet,
- * which legally belongs to the driver's sub-account). For third-party wallets
- * Carret requires counterparty_name / counterparty_pan / counterparty_dob —
- * add when PathPulse surfaces external-wallet deposits.
- */
 export interface CarretCryptoDeposit {
   id: number;
   account_id: number;
@@ -177,7 +124,6 @@ export async function createCryptoDeposit(params: {
   return (res as { data?: CarretCryptoDeposit }).data ?? (res as CarretCryptoDeposit);
 }
 
-// ── Banking ────────────────────────────────────────────────────────────
 
 export interface CarretBank {
   id: number;
@@ -209,7 +155,6 @@ export interface CarretOrder {
   filled_time?: string | number;
 }
 
-/** DRF-style pagination envelope Carret returns for list endpoints. */
 interface CarretPage<T> {
   count: number;
   next: string | null;
@@ -217,14 +162,6 @@ interface CarretPage<T> {
   results: T[];
 }
 
-// ── HTTP client ────────────────────────────────────────────────────────
-
-// ── Rate limiter (PAT-78) ────────────────────────────────────────────
-//
-// Simple token bucket to keep us under Carret's per-API-key rate limits.
-// 10 req/s default, configurable via CARRET_RATE_LIMIT_QPS. On 429 we back
-// off exponentially and retry once. Confirm actual limits with Carret and
-// tune once known.
 const RATE_QPS = Number(process.env.CARRET_RATE_LIMIT_QPS ?? 10);
 let tokens = RATE_QPS;
 let lastRefill = Date.now();
@@ -268,25 +205,17 @@ async function carretFetch<T>(
       }),
     );
   let res = await doFetch();
-  // Retry once on 429 with a small back-off.
   if (res.status === 429) {
     const retryAfter = Number(res.headers.get('retry-after') ?? '1');
     await new Promise((r) => setTimeout(r, Math.min(5000, retryAfter * 1000)));
     res = await doFetch();
   }
   if (!res.ok) {
-    // Same friendly-wrapper as v2: 4xx passes Carret's `detail` through as
-    // HTTP 422 so the mobile app shows a real reason, 5xx becomes HTTP 503
-    // with our own copy. Full upstream body still goes to server logs via
-    // `err.upstream`.
     throw carretHttpError(res.status, await res.text().catch(() => ''), `${method} ${path}`);
   }
   return (await res.json()) as T;
 }
 
-// ── Live API surface ───────────────────────────────────────────────────
-
-/** GET /offramp/supported_routes/ — DRF-paged list of active off-ramp routes. */
 export async function getSupportedRoutes(): Promise<CarretRoute[]> {
   const res = await carretFetch<CarretPage<CarretRoute> | CarretRoute[]>(
     'GET',
@@ -295,12 +224,6 @@ export async function getSupportedRoutes(): Promise<CarretRoute[]> {
   return Array.isArray(res) ? res : res.results ?? [];
 }
 
-/**
- * Find our configured `from_asset → to_asset` route id from the live list.
- * Chain match is best-effort: staging responses omit `from_chain`, so we only
- * enforce it when the route object carries it. Chain is really determined by
- * the deposit wallet we later fund, not by the route.
- */
 export async function resolveOfframpRouteId(): Promise<number | string> {
   const routes = await getSupportedRoutes();
   const from = env.carret.crypto.toUpperCase();
@@ -322,20 +245,12 @@ export async function resolveOfframpRouteId(): Promise<number | string> {
   return match.id;
 }
 
-/**
- * Normalize a PathPulse 7-decimal Stellar amount to Carret's ≤2-decimal wire
- * format. Truncates (does NOT round up) so we never send more crypto than the
- * user requested. `"12.5000000"` → `"12.50"`, `"0.0000001"` → `"0.00"`.
- */
 export function toCarretAmount(amount: string): string {
   const [whole, frac = ''] = amount.split('.');
   const truncated = (frac + '00').slice(0, 2);
   return `${whole || '0'}.${truncated}`;
 }
 
-/** POST /offramp/quote/ — locks a rate for 10 minutes; returns quote_id.
- *  Prefer the driver's own Carret account_id (from the mapping table); fall
- *  back to env for the shared-account dev path. */
 export async function createOfframpQuote(params: {
   routeId: number | string;
   amount: string;
@@ -350,10 +265,6 @@ export async function createOfframpQuote(params: {
   });
 }
 
-/** POST /offramp/place_order/ — commits the quote against a registered bank_id.
- *  The bank_id must belong to the same account_id — passing env.carret.accountId
- *  here would mismatch the driver's bank_id and Carret returns "Bank does not
- *  belong to this account." */
 export async function placeOfframpOrder(params: {
   quoteId: number | string;
   bankId: number | string;
@@ -369,12 +280,6 @@ export async function placeOfframpOrder(params: {
   });
 }
 
-/**
- * GET /offramp/orders/?account_id=<id> — Carret has no single-order-by-id
- * retrieval endpoint; we list orders for the account and filter by id. Wasteful
- * on accounts with many orders but works today; a targeted endpoint would be
- * nice-to-have.
- */
 export async function listOfframpOrders(
   accountId: number | string = env.carret.accountId,
 ): Promise<CarretOrder[]> {
@@ -401,12 +306,6 @@ export async function getOfframpOrder(
   return match;
 }
 
-// ── On-ramp (INR → crypto) ───────────────────────────────────────────
-//
-// Mirror of the off-ramp trio. Carret's on-ramp routes let the driver top
-// up their trading wallet with INR from a registered bank. Same {quote →
-// place_order → poll} shape as off-ramp, just direction-reversed: INR is
-// `from_asset`, USDC (or whatever chain we target) is `to_asset`.
 
 export async function resolveOnrampRouteId(): Promise<number | string> {
   const routes = await getSupportedRoutes();
@@ -429,10 +328,9 @@ export async function resolveOnrampRouteId(): Promise<number | string> {
   return match.id;
 }
 
-/** POST /onramp/quote/ — locks an INR-buy rate; returns quote_id + validity. */
 export async function createOnrampQuote(params: {
   routeId: number | string;
-  amount: string;  // INR
+  amount: string;
   accountId?: number | string;
 }): Promise<CarretQuote> {
   return carretFetch<CarretQuote>('POST', '/onramp/quote/', {
@@ -444,9 +342,6 @@ export async function createOnrampQuote(params: {
   });
 }
 
-/** POST /onramp/place_order/ — commits the quote; INR debits the bank_id.
- *  Same account/bank matching rule as off-ramp — bank_id must live under
- *  the account_id we pass. */
 export async function placeOnrampOrder(params: {
   quoteId: number | string;
   bankId: number | string;
@@ -474,7 +369,6 @@ export async function getOnrampOrder(orderId: number | string): Promise<CarretOr
   return match;
 }
 
-/** POST /bank/ — register a bank on the given account; returns the new bank id. */
 export async function registerBank(params: {
   accountId: number | string;
   bankAccountNo: string;
@@ -493,22 +387,11 @@ export async function registerBank(params: {
   });
 }
 
-/**
- * GET /wallet/?account_id=<id> — driver's trading-wallet balances across
- * every asset Carret custodies for us. Powers the "9.00 USDC available"
- * chip on the off-ramp tab, so the driver sees why an amount is refused
- * before they type it.
- *
- * Carret's exact wire shape varies a touch between account_id sub-accounts
- * (we've seen `balance`, `available_balance`, and nested `balances[]`), so
- * this normalizer accepts anything reasonable and hands back a single flat
- * list. Failure is soft — callers treat "no wallet" as "hide the chip".
- */
 export interface CarretWalletBalance {
   asset: string;                     // "USDC"
   chain?: string;                    // "stellar"
-  balance: string;                   // decimal string
-  available?: string;                // decimal string
+  balance: string;
+  available?: string;
 }
 
 export async function listWalletBalances(accountId: number | string): Promise<CarretWalletBalance[]> {
@@ -530,8 +413,6 @@ function normalizeWallets(res: unknown): CarretWalletBalance[] {
       const asset = String(w.asset ?? w.currency ?? w.symbol ?? '').toUpperCase();
       if (!asset) return null;
       const chain = w.chain ?? w.network;
-      // Carret's /wallet/ docs show `current_balance` as the actual field name;
-      // older staging responses used `balance`. Try both before giving up.
       const balance = String(w.current_balance ?? w.balance ?? w.total ?? w.total_balance ?? '0');
       const available = w.available ?? w.available_balance ?? w.spendable ?? w.current_balance;
       return {
@@ -544,7 +425,6 @@ function normalizeWallets(res: unknown): CarretWalletBalance[] {
     .filter((v): v is CarretWalletBalance => v !== null);
 }
 
-/** GET /bank/?account_id=<id> — list registered banks for an account. */
 export async function listBanks(accountId: number | string): Promise<CarretBank[]> {
   const res = await carretFetch<CarretPage<CarretBank> | CarretBank[]>('GET', '/bank/', {
     query: { account_id: String(accountId) },
@@ -552,13 +432,6 @@ export async function listBanks(accountId: number | string): Promise<CarretBank[
   return Array.isArray(res) ? res : res.results ?? [];
 }
 
-// ── Status mapping (Carret → PathPulse OffRampStatus lifecycle) ───────
-
-/**
- * Carret timestamps come back as Unix epoch **seconds** (a float), not ISO
- * strings — `new Date(1787125834.93)` would be read as milliseconds and land in
- * 1970. Normalise both shapes to epoch milliseconds.
- */
 export function carretTimestampMs(v: string | number | undefined): number | null {
   if (v === undefined || v === null) return null;
   if (typeof v === 'number') return Math.round(v * 1000);
@@ -572,7 +445,7 @@ export function mapCarretStatus(status: string): OffRampStatus | null {
   switch (status) {
     case 'open':
     case 'partially_filled':
-      return 'pending_anchor'; // Carret has custody; converting/paying fiat
+      return 'pending_anchor';
     case 'filled':
       return 'completed';
     case 'cancelled':
@@ -583,37 +456,9 @@ export function mapCarretStatus(status: string): OffRampStatus | null {
   }
 }
 
-// ── Webhook verification ──────────────────────────────────────────────
-
-/**
- * Verify a Carret webhook (PAT-40, confirmed by Carret partners team).
- *
- * Spec — from https://carret-fluid.gitbook.io/carret_infra_api_documentation/
- *              carret-infrastructure-api-documentation/webhook-reference
- *   • Header:    `X-Carret-Signature`
- *   • Algorithm: HMAC-SHA256
- *   • Encoding:  hex
- *   • Signed over: the raw JSON body Carret sent (Python `json.dumps(payload)`).
- *     Express captures the raw body in `req.rawBody` before parsing, so we
- *     verify against those exact bytes.
- *   • Signing secret: created on the Carret Partner Dashboard → Webhooks
- *     section, pasted here as env `CARRET_WEBHOOK_SECRET`.
- *   • Event types: deposit_transaction_success/failed, withdraw_transaction_
- *     success/failed, withdrawal_transaction_initiated, deposit, withdraw,
- *     order_filled, order_cancelled, deposit_address_created/updated,
- *     kyc_document_status_update.
- *
- * Fail-closed: without `CARRET_WEBHOOK_SECRET` or without a signature header
- * we reject the request (same policy that caught the earlier Mercuryo bug).
- *
- * Idempotency note: Carret's docs recommend deduping by the webhook `id`
- * field. The callback route handler in routes/index.ts writes each event id
- * to the idempotency_keys table before applying the event.
- */
 export function verifyCarretWebhook(rawBody: string, signatureHex: string): boolean {
   if (!env.carret.webhookSecret || !signatureHex) return false;
   try {
-    // Normalize: Carret sends lowercase hex, but be defensive.
     const sig = signatureHex.trim().toLowerCase();
     const expected = createHmac('sha256', env.carret.webhookSecret).update(rawBody).digest();
     const got = Buffer.from(sig, 'hex');
@@ -624,13 +469,6 @@ export function verifyCarretWebhook(rawBody: string, signatureHex: string): bool
   }
 }
 
-// ── Mocked responses (sandbox stub — used when `carretLive` is false) ─
-
-/**
- * Deterministic-per-call mocks that match the live JSON shape so the rest of
- * the code path is exercised identically. Every id gets a fresh random suffix
- * so successive quotes/orders don't collide in the in-memory session index.
- */
 function mockId(prefix: string): string {
   return `${prefix}_${Date.now()}_${randomBytes(3).toString('hex')}`;
 }
@@ -677,7 +515,6 @@ export const carretMocks = {
       quote_id: quoteId,
     };
   },
-  /** Time-based status progression so polling shows realistic transitions. */
   advanceOrder(createdAtIso: string): CarretOrderStatus {
     const elapsed = (Date.now() - new Date(createdAtIso).getTime()) / 1000;
     if (elapsed < 8) return 'open';
@@ -686,14 +523,6 @@ export const carretMocks = {
   },
 };
 
-// ── KYC (Carret Infra v2.0 — user-onboarding endpoints) ───────────────
-//
-// KYC lives under /api/v2.0/taas/ (NOT /v1/ like everything else). We derive
-// the v2 base URL from the configured v1 base by string swap — same host,
-// same auth header. Every KYC call needs an accountId that's already
-// registered but still `kyc_status: pending`.
-
-/** Compute the v2.0 base URL from the configured v1 one (same host). */
 function carretV2Base(): string {
   return env.carret.baseUrl.replace(/\/v1\//, '/v2.0/').replace(/\/+$/, '');
 }
@@ -762,35 +591,16 @@ async function carretV2Fetch<T>(
   return (await res.json()) as T;
 }
 
-/**
- * Wrap an upstream Carret error into an Error our route middleware will send
- * back with a helpful HTTP status + a driver-safe message.
- *
- *   - Carret 4xx w/ `{"detail": "..."}` (DRF standard)  → status 422, message
- *     = detail (surfaces PAN name mismatches, invalid file, etc.)
- *   - Carret 4xx w/ `{"message": "..."}` or a bare string → same
- *   - Carret 5xx → status 503 "Payments partner is briefly unavailable"
- *
- * The raw upstream body still goes into `err.upstream` for our own logs.
- */
 function carretHttpError(status: number, rawText: string, ctx: string): Error {
   const e = new Error() as Error & { status: number; upstream?: string };
   e.name = 'CarretUpstreamError';
   e.upstream = `${status} ${ctx}: ${rawText}`;
   const parsed = safeParseJson(rawText);
-  // Carret returns three shapes:
-  //   1. {"detail": "human sentence"}                        — auth/permission errors
-  //   2. {"message": "..."} or {"error": "..."}              — some endpoints
-  //   3. {"field": ["human sentence", ...], "field2": [...]} — DRF field errors
-  // Try known keys first; otherwise treat parsed as case (3) and pull the
-  // first non-empty string from any field's array.
   const human = extractHumanMessage(parsed) || (typeof parsed === 'string' ? parsed : rawText);
   if (status >= 500) {
     e.status = 503;
     e.message = 'Payments partner is briefly unavailable. Please try again in a few minutes.';
   } else {
-    // 4xx: pass Carret's own message through (they surface things like
-    // "PAN name doesn't match" or "Aadhaar signature verification failed").
     e.status = 422;
     e.message = human && human.length <= 240 ? human : 'Some of the details couldn\'t be accepted.';
   }
@@ -801,12 +611,6 @@ function safeParseJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/**
- * Extract a single human sentence from a Carret error body. Handles DRF's
- * three common shapes: `{detail: "..."}`, `{message|error: "..."}`, or
- * `{field: ["msg", ...]}`. Returns "" when nothing readable is found —
- * caller falls back to a generic sentence.
- */
 function firstString(v: unknown): string {
   if (typeof v === 'string' && v.trim()) return v.trim();
   if (Array.isArray(v)) {
@@ -844,13 +648,6 @@ function extractHumanMessage(parsed: unknown): string {
   return '';
 }
 
-/**
- * POST /wallet-address/ — whitelist a Stellar address for a Carret sub-account.
- * PAT-76. Carret's exact endpoint path/shape is not yet in their public docs;
- * this is our best-guess shape based on the /bank/ endpoint and needs
- * confirmation from partners team. Failure here is non-fatal on the calling
- * side — driver can retry via a "resync wallet" button.
- */
 export async function whitelistWallet(
   accountId: number | string,
   address: string,
@@ -865,17 +662,12 @@ export async function whitelistWallet(
   });
 }
 
-/** POST /kyc/initiate/ — creates a session for the given account. */
 export async function initiateKyc(accountId: number | string): Promise<CarretKycInitiateResponse> {
   return carretV2Fetch<CarretKycInitiateResponse>('POST', '/kyc/initiate/', {
     account_id: Number(accountId),
   });
 }
 
-/**
- * POST /kyc/document/submit/ — number-based document (PAN, Voter ID, Passport,
- * Driving License). Aadhaar is XML-file-based, use uploadKycFile for that.
- */
 export async function submitKycDocument(params: {
   kycSessionId: string;
   document: CarretKycDocument;
@@ -886,11 +678,6 @@ export async function submitKycDocument(params: {
   });
 }
 
-/**
- * POST /kyc/document_file/submit/ — multipart upload for Aadhaar XML,
- * selfie, or scanned images. Uses global FormData/Blob (Node 18+).
- * `docBack` is optional; used for double-sided IDs like Aadhaar images.
- */
 export async function uploadKycFile(params: {
   kycSessionId: string;
   docType: CarretKycDocType;
@@ -929,7 +716,7 @@ export async function uploadKycFile(params: {
       method: 'POST',
       headers: {
         'API-KEY': env.carret.apiKey,
-        ...form.getHeaders(), // Content-Type: multipart/form-data; boundary=...
+        ...form.getHeaders(),
         'Content-Length': String(form.getLengthSync()),
         Accept: 'application/json',
       },
@@ -943,23 +730,14 @@ export async function uploadKycFile(params: {
   return res.json();
 }
 
-/** GET /kyc/{account_id}/ — poll for status transitions. */
 export async function getKycStatus(accountId: number | string): Promise<CarretKycStatusResponse> {
   return carretV2Fetch<CarretKycStatusResponse>('GET', `/kyc/${accountId}/`);
 }
 
-/** POST /kyc/cleanup/ — wipes session + docs for a failed KYC attempt. */
 export async function cleanupKyc(accountId: number | string): Promise<unknown> {
   return carretV2Fetch<unknown>('POST', '/kyc/cleanup/', { account_id: Number(accountId) });
 }
 
-// ── DigiLocker eAadhaar (Carret utility v1) ──────────────────────────
-//
-// Carret proxies DigiLocker so drivers don't have to leave the flow for
-// digilocker.gov.in to fetch a signed Aadhaar XML. Two calls: /start/ returns
-// a hosted login URL the driver opens, then (after they consent)
-// /eaadhaar_details/ returns a presigned XML URL our KYC path feeds to
-// /kyc/document_file/submit/. Reference_id is our correlator across both.
 
 export interface CarretDigilockerStart {
   success: boolean;
@@ -976,9 +754,9 @@ export interface CarretEaadhaarDetails {
     dob: string;
     address: string;
     maskedAadhaarNumber: string;
-    photo: string;         // base64 jpeg
-    xmlAadhaarFile: string; // presigned URL
-    aadhaarFile: string;    // presigned URL (PDF)
+    photo: string;
+    xmlAadhaarFile: string;
+    aadhaarFile: string;
   };
 }
 
@@ -994,7 +772,6 @@ export async function fetchEaadhaarDetails(referenceId: string): Promise<CarretE
   });
 }
 
-// ── Sub-account creation (v1) ─────────────────────────────────────────
 
 export interface SubAccountInput {
   email: string;
@@ -1009,7 +786,7 @@ export interface SubAccountInput {
   gender: 'male' | 'female' | 'other';
   occupation: string;
   is_politicaly_exposed_person: boolean;
-  dob: string; // dd/mm/yyyy
+  dob: string;
 }
 
 export interface CarretSubAccount {
@@ -1025,26 +802,12 @@ export interface CarretSubAccount {
   [k: string]: unknown;
 }
 
-/** POST /register/ — creates a sub-account under the main API-KEY. Irreversible (no DELETE endpoint).
- *
- * Carret's docs example (`"phone_number": 815880XXX`) shows the value as an
- * unquoted JSON number. We accept the input as a string of 10 digits, then
- * forward it as a number so DRF's IntegerField happily accepts it. */
 export async function createSubAccount(input: SubAccountInput): Promise<CarretSubAccount> {
   const phoneDigits = String(input.phone_number).replace(/\D/g, '');
   const body = { ...input, phone_number: Number(phoneDigits) };
   return carretFetch<CarretSubAccount>('POST', '/register/', { body });
 }
 
-/**
- * GET /account/{account_id}/ — account-level details, including the
- * driver-facing `kyc_status` field that Carret's dashboard uses.
- *
- * Distinct from `getKycStatus` (which hits /kyc/{account_id}/ under v2 and
- * returns the STATE OF THE CURRENT KYC SESSION — stays "pending" for
- * verified accounts whose session was archived). For resume-on-mount and
- * off-ramp gating, we want the account-level truth, i.e. this endpoint.
- */
 export async function getSubAccount(accountId: number | string): Promise<CarretSubAccount> {
   return carretFetch<CarretSubAccount>('GET', `/account/${accountId}/`);
 }

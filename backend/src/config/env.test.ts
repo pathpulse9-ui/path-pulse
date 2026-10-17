@@ -24,17 +24,33 @@ test('an unknown funding mode is rejected at boot on any network', () => {
   assert.match(r.stderr, /ACCOUNT_FUNDING must be friendbot\|sponsor/);
 });
 
-test('mainnet refuses Aquarius routing without its RPC and router configured', () => {
-  const r = bootOnMainnet({ ROUTING_PROVIDERS: 'aquarius,stellarbroker', SOROBAN_RPC_URL: '', AQUA_ROUTER_CONTRACT: '' });
+test('mainnet refuses to boot without the Aquarius RPC and router', () => {
+  const r = bootOnMainnet({ SOROBAN_RPC_URL: '', AQUA_ROUTER_CONTRACT: '' });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /Aquarius routing on mainnet needs SOROBAN_RPC_URL and AQUA_ROUTER_CONTRACT/);
-  const brokerOnly = bootOnMainnet({ ROUTING_PROVIDERS: 'stellarbroker', SOROBAN_RPC_URL: '', AQUA_ROUTER_CONTRACT: '' });
-  assert.doesNotMatch(brokerOnly.stderr, /Aquarius routing on mainnet/);
 });
 
-test('the PulseGen pilot override lets mainnet boot past the missing-credentials check only', () => {
-  const blocked = bootOnMainnet({ PULSEGEN_BASE_URL: '', PULSEGEN_API_KEY: '', PULSEGEN_PILOT_SYNTHETIC: '' });
-  assert.match(blocked.stderr, /PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet/);
-  const pilot = bootOnMainnet({ PULSEGEN_BASE_URL: '', PULSEGEN_API_KEY: '', PULSEGEN_PILOT_SYNTHETIC: 'true' });
-  assert.doesNotMatch(pilot.stderr, /PULSEGEN_BASE_URL and PULSEGEN_API_KEY/);
+test('mainnet does not require a StellarBroker partner key', () => {
+  const r = bootOnMainnet({ STELLARBROKER_PARTNER_KEY: '' });
+  assert.doesNotMatch(r.stderr, /STELLARBROKER_PARTNER_KEY/);
+});
+
+test('mainnet boots on imported PulseGen batches without live credentials', () => {
+  const r = bootOnMainnet({ PULSEGEN_BASE_URL: '', PULSEGEN_API_KEY: '' });
+  assert.doesNotMatch(r.stderr, /PULSEGEN/);
+});
+
+test('mainnet refuses to boot without the SDP credentials', () => {
+  const missing = bootOnMainnet({ SDP_BASE_URL: '', SDP_API_KEY: '', SDP_WALLET_ID: '', SDP_ASSET_ID: '' });
+  assert.notEqual(missing.status, 0);
+  for (const name of ['SDP_BASE_URL', 'SDP_API_KEY', 'SDP_WALLET_ID', 'SDP_ASSET_ID']) {
+    assert.match(missing.stderr, new RegExp(`${name} must be set on mainnet`));
+  }
+  const set = bootOnMainnet({ SDP_BASE_URL: 'https://sdp.example', SDP_API_KEY: 'k', SDP_WALLET_ID: 'w', SDP_ASSET_ID: 'a' });
+  assert.doesNotMatch(set.stderr, /SDP_[A-Z_]+ must be set on mainnet/);
+});
+
+test('mainnet refuses a localhost home domain for the SCOUT issuer', () => {
+  const r = bootOnMainnet({ SEP10_HOME_DOMAIN: 'localhost:8080' });
+  assert.match(r.stderr, /SEP10_HOME_DOMAIN must be the public API host on mainnet/);
 });

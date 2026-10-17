@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Networks } from '@stellar/stellar-sdk';
-import type { StellarNetwork, RoutingProviderName, AssetRef } from '@pathpulse/contract';
+import type { StellarNetwork, AssetRef } from '@pathpulse/contract';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rootEnv = resolve(here, '../../../.env');
@@ -68,6 +68,10 @@ export const env = {
     partnerRevenue: process.env.PARTNER_REVENUE_PUBLIC ?? '',
     driverPool: process.env.DRIVER_POOL_PUBLIC ?? '',
     treasury: process.env.TREASURY_PUBLIC ?? '',
+    extraDepositSenders: (process.env.SETTLEMENT_DEPOSIT_SENDERS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   },
 
   treasury: {
@@ -89,11 +93,6 @@ export const env = {
     keyId: process.env.KMS_KEY_ID ?? '',
   },
 
-  // Mainnet safety gate — when STELLAR_NETWORK=mainnet, every path that
-  // constructs or submits a transaction consults `mainnetAllow` and refuses
-  // unless it is explicitly true. Bypassed only by setting the flag to
-  // "true" out-of-band. This is the human gate the plan requires: no mainnet
-  // tx is constructed or signed without explicit sign-off.
   mainnetAllow: process.env.STELLAR_MAINNET_ALLOW === 'true',
 
   databaseUrl: process.env.DATABASE_URL ?? '',
@@ -106,12 +105,7 @@ export const env = {
     `USDC:${network === 'mainnet' ? CIRCLE_MAINNET_USDC : CIRCLE_TESTNET_USDC}`,
   ).filter((a) => a.issuer),
 
-  // Multi-source cross-asset routing (D5).
   routing: {
-    providers: (process.env.ROUTING_PROVIDERS ?? 'aquarius')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean) as RoutingProviderName[],
     quoteTimeoutMs: Number(process.env.ROUTING_QUOTE_TIMEOUT_MS ?? 3000),
     assets: parseRoutingAssets(process.env.ROUTING_ASSETS, network === 'mainnet' ? MAINNET_ROUTING_ASSETS : DEFAULT_ROUTING_ASSETS),
     settlementAssetCode: (process.env.ROUTING_SETTLEMENT_ASSET ?? 'USDC').toUpperCase(),
@@ -129,16 +123,9 @@ export const env = {
     },
   },
 
-  // PulseGen validation-score feed (D6). When unset, scores resolve from the
-  // most recent delivered batch.
   pulseGen: {
     baseUrl: process.env.PULSEGEN_BASE_URL ?? '',
     apiKey: process.env.PULSEGEN_API_KEY ?? '',
-    pilotSynthetic: process.env.PULSEGEN_PILOT_SYNTHETIC === 'true',
-    // Internal driver-signal scorer that reads from PathPulse's own tables
-    // (settlement participation, off-ramp activity, KYC + bank verification,
-    // account age, payout attempts). Covers v1 until a live external feed
-    // partnership lands. See services/pathpulseInternalScore.ts.
     internal: process.env.PATHPULSE_INTERNAL_SCORER === 'true',
   },
 
@@ -148,6 +135,24 @@ export const env = {
     secret: process.env.SESSION_SECRET ?? 'dev-insecure-session-secret-change-me',
     cookieName: 'pathpulse_session',
     maxAgeSeconds: 7 * 24 * 60 * 60,
+    opsRoleTtlSeconds: Number(process.env.OPS_ROLE_TTL_SECONDS ?? 15 * 60),
+    partnerRoleTtlSeconds: Number(process.env.PARTNER_ROLE_TTL_SECONDS ?? 8 * 60 * 60),
+  },
+
+  opsOperators: (process.env.OPS_OPERATORS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => (s.includes('@') ? s.toLowerCase() : s)),
+
+  indexer: {
+    intervalMs: Number(process.env.INDEXER_INTERVAL_MS ?? 60_000),
+  },
+
+  sponsor: {
+    maxAccountsPerHour: Number(process.env.SPONSOR_MAX_ACCOUNTS_PER_HOUR ?? 20),
+    maxFeeBumpsPerHour: Number(process.env.SPONSOR_MAX_FEE_BUMPS_PER_HOUR ?? 300),
+    minBalanceXlm: Number(process.env.SPONSOR_MIN_BALANCE_XLM ?? 2),
   },
 
   govPartnerPasscode: process.env.GOV_PARTNER_PASSCODE ?? '',
@@ -163,8 +168,6 @@ export const env = {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
 
-  // Ramp Network off-ramp (D4). Widget/SDK-based: we build a signed off-ramp widget
-
   ramp: {
     apiKey: process.env.RAMP_API_KEY ?? '',
     widgetUrl: process.env.RAMP_WIDGET_URL ?? 'https://app.demo.ramp.network',
@@ -176,45 +179,20 @@ export const env = {
     indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 30),
   },
 
-  // Carret Infra off-ramp (D4 · alt provider). Pure REST, server-driven — no widget.
-  // Corridor: USDC on Stellar → INR (bank_transfer). All optional — absent an API key
-  // ⇒ in-process sandbox stub that returns shape-accurate mocked Carret responses.
-  //
-  // Onboarding (external — PAT-27): email contact@carret.in for `dev.carret.in` sandbox
-  // API-KEY + Partner Dashboard access; then register the webhook URL there.
   carret: {
     apiKey: process.env.CARRET_API_KEY ?? '',
-    // Staging: dev.carret.in ; production: prod.carret.in. Path prefix is
-    // /api/v1/taas/ (confirmed via `GET .../taas/main_account/` returning 200).
     baseUrl: process.env.CARRET_BASE_URL ?? 'https://dev.carret.in/api/v1/taas',
-    // The Partner account id (main or sub) that owns the trading wallet + orders.
     accountId: process.env.CARRET_ACCOUNT_ID ?? '',
-    // Corridor. Carret uses the *token symbol* for `chain` (XLM = Stellar,
-    // TRX = Tron, ETH = Ethereum, etc.), not the network name. USDC/XLM is
-    // active in both dev and prod as of 2026-08 (routes ids: off-ramp 7,
-    // on-ramp 8).
     crypto: process.env.CARRET_CRYPTO ?? 'USDC',
     chain: process.env.CARRET_CHAIN ?? 'XLM',
     fiat: process.env.CARRET_FIAT ?? 'INR',
-    // Registered bank_id used for the off-ramp order's bank_transfer payout.
     bankId: process.env.CARRET_BANK_ID ?? '',
-    // Optional webhook shared secret (signature scheme TBD — pending Carret docs/team).
     webhookSecret: process.env.CARRET_WEBHOOK_SECRET ?? '',
-    // Forward-proxy URL for Carret calls only (Carret IP-blocks cloud egress).
     httpsProxy: process.env.CARRET_HTTPS_PROXY ?? '',
-    // Indicative fiat per 1 crypto unit — sandbox stub estimate only (live: Carret quote).
     indicativeRate: Number(process.env.CARRET_INDICATIVE_RATE ?? 84),
-    // DEV-ONLY escape hatch. Carret is mainnet-only (their dev env uses real
-    // mainnet USDC). The provider refuses to run when STELLAR_NETWORK=testnet
-    // to prevent testnet USDC vanishing into a mainnet deposit address. Setting
-    // CARRET_ALLOW_TESTNET=true lets the guard through so devs can click the
-    // web UI end-to-end without shipping mainnet — the send just won't reach
-    // Carret, but every Carret API call still fires and the order flow works.
-    // Never set this in production.
     allowTestnet: process.env.CARRET_ALLOW_TESTNET === 'true',
   },
 
-  // Which off-ramp provider is active: 'ramp' (default, current) or 'carret'.
   offrampProvider: (process.env.OFFRAMP_PROVIDER ?? 'ramp') as 'ramp' | 'carret',
 
   sdp: {
@@ -233,6 +211,10 @@ export const env = {
   alerts: {
     webhookUrl: process.env.ALERT_WEBHOOK_URL ?? '',
     healthIntervalMs: Number(process.env.HEALTH_CHECK_INTERVAL_MS ?? 60_000),
+  },
+
+  sentry: {
+    dsn: process.env.SENTRY_DSN ?? '',
   },
 
   push: {
@@ -256,7 +238,6 @@ export const apnsLive =
 
 export const fcmLive = !!env.push.fcm.projectId && !!env.push.fcm.clientEmail && !!env.push.fcm.privateKey;
 
-/** Live Ramp requires a host API key; otherwise the sandbox stub runs. */
 export const rampLive = !!process.env.RAMP_API_KEY;
 
 export const carretLive = !!process.env.CARRET_API_KEY && !!process.env.CARRET_ACCOUNT_ID;
@@ -271,6 +252,14 @@ if (process.env.NODE_ENV === 'production' && !process.env.GOV_PARTNER_PASSCODE) 
   throw new Error('GOV_PARTNER_PASSCODE must be set in production');
 }
 
+if (process.env.NODE_ENV === 'production' && !process.env.SEP10_SIGNING_SECRET) {
+  throw new Error('SEP10_SIGNING_SECRET must be set in production');
+}
+
+if (process.env.NODE_ENV === 'production' && !process.env.OPS_OPERATORS) {
+  throw new Error('OPS_OPERATORS must be set in production');
+}
+
 if (process.env.NODE_ENV === 'production' && !process.env.OPS_PASSCODE) {
   throw new Error('OPS_PASSCODE must be set in production');
 }
@@ -281,13 +270,6 @@ if (env.accountFunding !== 'friendbot' && env.accountFunding !== 'sponsor') {
 
 export const isMainnet = env.network === 'mainnet';
 
-/**
- * Mainnet preflight (D7). Every one of these is a way the cutover can go wrong
- * quietly — an in-memory settlement store that loses batches on the next
- * deploy, an unset distribution account that sends a real 50% share nowhere, a
- * KMS backend with no key id. Failing at boot is the whole point: a mainnet
- * deploy that starts is a mainnet deploy someone will send funds through.
- */
 if (isMainnet) {
   const problems: string[] = [];
 
@@ -318,16 +300,24 @@ if (isMainnet) {
     problems.push('ACCOUNT_FUNDING must be "sponsor" on mainnet — Friendbot does not exist there');
   }
   if (!env.opsPasscode) problems.push('OPS_PASSCODE must be set on mainnet');
-  if (env.routing.providers.includes('aquarius') && (!env.routing.sorobanRpcUrl || !env.routing.aquaRouterContract)) {
-    problems.push('Aquarius routing on mainnet needs SOROBAN_RPC_URL and AQUA_ROUTER_CONTRACT — or drop it from ROUTING_PROVIDERS');
+  if (!env.opsOperators.length) problems.push('OPS_OPERATORS must be set on mainnet');
+  if (!env.sep10.signingSecret) problems.push('SEP10_SIGNING_SECRET must be set on mainnet');
+  if (!process.env.SEP10_HOME_DOMAIN || /localhost|127\.0\.0\.1/.test(env.sep10.homeDomain)) {
+    problems.push('SEP10_HOME_DOMAIN must be the public API host on mainnet — it becomes the SCOUT issuer home_domain');
+  }
+  if (!env.routing.sorobanRpcUrl || !env.routing.aquaRouterContract) {
+    problems.push('Aquarius routing on mainnet needs SOROBAN_RPC_URL and AQUA_ROUTER_CONTRACT');
+  }
+  for (const [name, value] of [
+    ['SDP_BASE_URL', process.env.SDP_BASE_URL],
+    ['SDP_API_KEY', env.sdp.apiKey],
+    ['SDP_WALLET_ID', env.sdp.walletId],
+    ['SDP_ASSET_ID', env.sdp.assetId],
+  ] as const) {
+    if (!value) problems.push(`${name} must be set on mainnet`);
   }
   if (env.carret.allowTestnet) {
     problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');
-  }
-  if ((!env.pulseGen.baseUrl || !env.pulseGen.apiKey) && !env.pulseGen.pilotSynthetic && !env.pulseGen.internal) {
-    problems.push(
-      'PULSEGEN_BASE_URL and PULSEGEN_API_KEY must be set on mainnet',
-    );
   }
 
   if (problems.length) {

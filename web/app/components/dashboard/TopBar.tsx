@@ -52,7 +52,7 @@ export function TopBar() {
     : 'Not signed in';
 
   return (
-    <header className="sticky top-0 z-20 shrink-0 flex items-start justify-between gap-6 px-6 pt-6 pb-5 bg-[#F5F5F5]">
+    <header className="sticky top-0 z-20 shrink-0 flex flex-wrap items-start justify-between gap-x-6 gap-y-4 px-4 pt-6 pb-5 bg-[#F5F5F5] sm:px-6">
       <div className="min-w-0 flex-1">
         <h1 className={T.pageTitle}>{section?.label ?? 'Dashboard'}</h1>
         {section?.description && (
@@ -60,7 +60,7 @@ export function TopBar() {
         )}
       </div>
 
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex flex-wrap items-center gap-3 sm:shrink-0">
         {pageActions}
         {health ? (
           <span className="inline-flex items-center gap-2 rounded-full bg-white border border-black/5 px-4 h-10 text-sm text-black/60">

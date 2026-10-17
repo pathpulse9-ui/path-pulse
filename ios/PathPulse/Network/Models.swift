@@ -104,6 +104,13 @@ struct OffRampSession: Codable, Equatable, Hashable, Identifiable {
     let asset: AssetRef
     let fiatCurrency: String
     let createdAt: String
+    var updatedAt: String? = nil
+    var sandbox: Bool? = nil
+    var fiatAmountEstimate: String? = nil
+    var merchantTransactionId: String? = nil
+    var settlementBatchId: String? = nil
+    var stellarTxHash: String? = nil
+    var stellarTxUrl: String? = nil
 }
 
 struct OffRampSessionPage: Codable {

@@ -13,7 +13,7 @@ let base = '';
 let executions = 0;
 let cookieName = '';
 let closeDb: () => Promise<void> = async () => {};
-let createSessionToken: (p: { userId: string; method: 'ops' | 'guest' }) => string = () => '';
+let createSessionToken: (p: { userId: string; method: 'google' | 'guest' }) => string = () => '';
 
 before(async () => {
   if (skip) return;
@@ -46,7 +46,7 @@ after(async () => {
 });
 
 function send(userId: string, key: string, amount: string) {
-  const token = createSessionToken({ userId, method: 'ops' });
+  const token = createSessionToken({ userId, method: 'google' });
   return fetch(`${base}/move`, {
     method: 'POST',
     headers: {

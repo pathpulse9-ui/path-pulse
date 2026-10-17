@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { useSession } from '../../lib/session';
 import WalletConnect from '../../components/WalletConnect';
+import { explorerAcct } from '../../lib/network';
 
 const METHOD_LABEL = { google: 'Google', wallet: 'Stellar wallet', guest: 'Guest', partner: 'Partner', ops: 'Operator' } as const;
 
-const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
 export default function ProfilePage() {
   const router = useRouter();

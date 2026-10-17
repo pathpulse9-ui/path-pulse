@@ -3,22 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-/**
- * Same shape as useState<string> but round-trips through localStorage under
- * `key`. Values survive tab close and force-reload. SSR-safe: seeds with
- * `initial` and reads localStorage only after mount.
- */
 function usePersistedString(key: string, initial: string): [string, (v: string) => void] {
   const [value, setValue] = useState(initial);
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem(key);
+      const stored = window.sessionStorage.getItem(key);
       if (stored !== null) setValue(stored);
-    } catch { /* private mode etc — fall back to memory */ }
+    } catch {}
   }, [key]);
   const write = useCallback((v: string) => {
     setValue(v);
-    try { window.localStorage.setItem(key, v); } catch { /* ignore */ }
+    try { window.sessionStorage.setItem(key, v); } catch {}
   }, [key]);
   return [value, write];
 }
@@ -35,14 +30,6 @@ import {
   type CarretKycStatus,
   type CarretSubAccountInput,
 } from '../../lib/api';
-
-/**
- * Polished multi-step KYC wizard — mirrors iOS `KycView` and Android
- * `KycScreen`. Every step is a focused card with a hero mint circle icon,
- * one big question or action, and a sticky primary CTA at the bottom.
- * Backend still proxies every Carret call so the API-KEY never touches
- * the browser.
- */
 
 type WizardPage =
   | 'welcome' | 'name' | 'contact' | 'bornWhen' | 'about'
@@ -86,16 +73,13 @@ const DIAL_CODES = [
   { code: '61',  flag: '🇦🇺', name: 'Australia' },
 ] as const;
 
-// dd/mm/yyyy — Carret's required format.
 function formatDob(iso: string): string {
-  // <input type="date"> gives us YYYY-MM-DD; Carret wants DD/MM/YYYY.
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
   if (!y || !m || !d) return '';
   return `${d}/${m}/${y}`;
 }
 
-// 18 years ago today — youngest allowed.
 function maxDobIso(): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
@@ -109,10 +93,6 @@ function minDobIso(): string {
 
 export default function KycPage() {
   const router = useRouter();
-  // Every field the user types is persisted to localStorage under `kyc_*`
-  // so that reloading, dismissing the tab, or a backend error never wipes
-  // their progress. Files (Aadhaar + selfie) are the only exception —
-  // they're re-picked when the user returns.
   const [pageStr, setPageStr]     = usePersistedString('kyc_page', 'welcome');
   const page = pageStr as WizardPage;
   const setPage = (p: WizardPage) => setPageStr(p);
@@ -139,9 +119,6 @@ export default function KycPage() {
   const [panName,   setPanName]   = usePersistedString('kyc_panName', '');
   const [panDobIso, setPanDobIso] = usePersistedString('kyc_panDobIso', '');
 
-  // Secondary ID (Aadhaar / Voter ID / Passport / Driving License) — mirror
-  // of the iOS wizard's Secondary state. Aadhaar is XML/file, the rest are
-  // number-based via /kyc/document/submit/.
   const [secondaryTypeRaw, setSecondaryTypeRaw] = usePersistedString('kyc_secondaryType', 'aadhaar');
   const secondaryType = secondaryTypeRaw as SecondaryDocType;
   const setSecondaryType = (t: SecondaryDocType) => setSecondaryTypeRaw(t);
@@ -163,9 +140,8 @@ export default function KycPage() {
       'kyc_secondaryDobIso', 'kyc_secondarySurname',
       'kyc_secondaryFileNumber', 'kyc_secondaryIssueIso',
     ]) {
-      try { window.localStorage.removeItem(k); } catch { /* ignore */ }
+      try { window.sessionStorage.removeItem(k); } catch {}
     }
-    // Reset in-memory state to defaults so the current tab flips back too.
     setPageStr('welcome');
     setAccountId(''); setSessionId('');
     setFirstName(''); setLastName('');
@@ -180,7 +156,6 @@ export default function KycPage() {
     setSecondarySurname(''); setSecondaryFileNumber(''); setSecondaryDateOfIssueIso('');
   }
 
-  // Files
   const panFileRef     = useRef<HTMLInputElement>(null);
   const aadhaarFileRef = useRef<HTMLInputElement>(null);
   const selfieFileRef  = useRef<HTMLInputElement>(null);
@@ -188,19 +163,16 @@ export default function KycPage() {
   const [aadhaarName,   setAadhaarName]   = useState<string>('');
   const [selfieName, setSelfieName] = useState<string>('');
 
-  // Poll
   const [status, setStatus] = useState<CarretKycStatus | null>(null);
 
   const dob = useMemo(() => formatDob(dobIso), [dobIso]);
   const panDob = useMemo(() => formatDob(panDobIso), [panDobIso]);
 
-  // ── Actions ─────────────────────────────────────────────────
-
   async function doCreateSubAccount(): Promise<boolean> {
     try {
       const input: CarretSubAccountInput = {
         email,
-        phone_number: phone.replace(/\D/g, ''), // bare 10 digits — Carret contract
+        phone_number: phone.replace(/\D/g, ''),
         first_name: firstName,
         last_name: lastName,
         dob,
@@ -211,9 +183,6 @@ export default function KycPage() {
       };
       const acc = await createCarretSubAccount(input);
       setAccountId(acc.carretAccountId);
-      // If the backend adopted an existing account that's already verified /
-      // rejected, jump straight to the outcome page — no point re-walking
-      // PAN/Aadhaar/selfie.
       if (acc.existed) {
         if (acc.kycStatus === 'verified') { setPage('verified'); return false; }
         if (acc.kycStatus === 'rejected') { setPage('rejected'); return false; }
@@ -236,7 +205,6 @@ export default function KycPage() {
     }
   }
 
-  /** Carret's idempotent-"already-added" reply — treat as success. */
   function isAlreadyAdded(e: unknown): boolean {
     const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
     return m.includes('already added') || m.includes('already exists in pending');
@@ -327,7 +295,6 @@ export default function KycPage() {
     }
   }
 
-  // Sticky CTA click.
   const performAction = useCallback(async () => {
     setSubmitting(true); setError(null);
     try {
@@ -340,8 +307,6 @@ export default function KycPage() {
           if (!panDobIso) setPanDobIso(dobIso);
           break;
         case 'about':
-          // Resume-safe: skip re-registering if we already have IDs from
-          // an earlier attempt (e.g. user hit an error at PAN and came back).
           const created = accountId ? true : await doCreateSubAccount();
           if (created) {
             const initiated = sessionId ? true : await doInitiate();
@@ -366,14 +331,6 @@ export default function KycPage() {
     secondarySurname, secondaryFileNumber, secondaryDateOfIssueIso,
   ]);
 
-  // ── Resume on mount ─────────────────────────────────────────
-  // Hydrates accountId + routes to the right step from the backend's
-  // saved application. The tricky bit: `page` is persisted to localStorage,
-  // so terminal pages (.checking / .verified / .rejected) survive a hard
-  // refresh — a stale one leaves the driver watching a spinner that never
-  // resolves. If we can't back the persisted terminal state with an
-  // authoritative status from the backend, snap to welcome so the wizard
-  // is usable again. Mirrors iOS 1379e34.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -392,9 +349,6 @@ export default function KycPage() {
         else if (s === 'rejected' || s === 're_kyc' || s === 'failed') setPage('rejected');
         else if (s === 'manual_review')                              setPage('checking');
         else {
-          // pending — snap stale terminal pages (including a leftover
-          // 'checking' from a previous attempt that's since been cleaned up)
-          // back to welcome so the driver can walk the wizard again.
           if (page === 'verified' || page === 'rejected' || page === 'checking') {
             setPage('welcome');
             setError(null);
@@ -405,11 +359,9 @@ export default function KycPage() {
       }
     })();
     return () => { cancelled = true; };
-    // Run once on mount — deps intentionally empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Polling — driven by page === 'checking' ─────────────────
   useEffect(() => {
     if (page !== 'checking' || !accountId) return;
     let cancelled = false;
@@ -420,7 +372,7 @@ export default function KycPage() {
         setStatus(s);
         if (s.kyc_status === 'verified') setPage('verified');
         else if (s.kyc_status === 'rejected' || s.kyc_status === 'failed') setPage('rejected');
-      } catch { /* keep polling */ }
+      } catch {}
     };
     void tick();
     const t = setInterval(tick, 3000);
@@ -456,7 +408,7 @@ export default function KycPage() {
 
   return (
     <div className="max-w-3xl">
-      {/* Toolbar */}
+      {}
       <div className="flex items-center gap-2 pb-2">
         <button
           type="button"
@@ -477,7 +429,7 @@ export default function KycPage() {
         <div className="w-9" />
       </div>
 
-      {/* Progress bar */}
+      {}
       {stepIdx >= 0 && (
         <div className="flex items-center gap-3 pb-4">
           <div className="flex-1 h-1 rounded-full bg-black/10 overflow-hidden">
@@ -492,7 +444,7 @@ export default function KycPage() {
         </div>
       )}
 
-      {/* Error banner */}
+      {}
       {error && (
         <div className="rounded-2xl bg-red-50 border border-red-100 p-3 flex gap-2 items-start mb-3">
           <WarnIcon className="text-red-600 mt-0.5 shrink-0" />
@@ -500,7 +452,7 @@ export default function KycPage() {
         </div>
       )}
 
-      {/* Content */}
+      {}
       <div>
         {page === 'welcome' && (
           <PageShell icon={<ShieldIcon />} title="Let's verify your identity" subtitle="A one-time check so you can withdraw to your bank. Takes about 3 minutes.">
@@ -682,9 +634,6 @@ export default function KycPage() {
             subtitle="All set. You can now withdraw your USDC rewards to your bank."
             primary="Start using PathPulse"
             onPrimary={() => {
-              // Wizard's done — clear the local draft so a future revisit
-              // doesn't reopen on the Verified page, then land the driver
-              // where verified drivers actually go: the withdrawal tab.
               clearDraft();
               router.push('/dashboard/offramp');
             }}
@@ -702,7 +651,7 @@ export default function KycPage() {
         )}
       </div>
 
-      {/* Primary action */}
+      {}
       {action && (
         <div className="sticky bottom-0 mt-6 border-t border-black/5 bg-[#F3F7F5]">
           <div className="py-3">
@@ -721,8 +670,6 @@ export default function KycPage() {
     </div>
   );
 }
-
-// ─── Wizard chrome ─────────────────────────────────────────────
 
 function previousPage(p: WizardPage): WizardPage | null {
   switch (p) {
@@ -762,10 +709,6 @@ function actionFor(p: WizardPage): { label: string; busy: string } | null {
   }
 }
 
-// ─── Reusable chunks ───────────────────────────────────────────
-
-// ─── Secondary ID picker + fields ─────────────────────────────
-
 type SecondaryDocType = 'aadhaar' | 'voter_id' | 'passport' | 'driving_license';
 
 const SECONDARY_OPTIONS: { value: SecondaryDocType; label: string }[] = [
@@ -802,9 +745,6 @@ function SecondaryIdPage(props: {
     kycSessionId, onDigilockerDone, onError,
   } = props;
 
-  // Prefill name + DOB from earlier steps — only when the target field is
-  // empty. Manual edits are never overwritten. Runs on mount + when the
-  // type changes so switching from Aadhaar → Voter ID re-seeds if needed.
   useEffect(() => {
     if (!secondaryName && (firstName || lastName)) {
       const full = [firstName, lastName].map((s) => s.trim()).filter(Boolean).join(' ');
@@ -1025,8 +965,6 @@ function DatePickerField({
   label: string; iso: string; onIso: (v: string) => void;
   kind?: 'dob' | 'issue';
 }) {
-  // Passport / DL issue dates sit in the recent past — the 18-100 born-date
-  // window would silently reject any valid choice. Widen the range per kind.
   const min = kind === 'issue' ? isoYearsAgo(30) : minDobIso();
   const max = kind === 'issue' ? new Date().toISOString().slice(0, 10) : maxDobIso();
   return (
@@ -1249,8 +1187,6 @@ function OutcomePage({
   );
 }
 
-// ─── Icons (inline SVG — matches the app icon vibe) ────────────
-
 function Spinner({ className = '' }: { className?: string }) {
   return (
     <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1301,13 +1237,6 @@ function IconSvg({ size, className, paths }: { size: number; className?: string;
   );
 }
 
-// ─── Country picker ───────────────────────────────────────────
-
-/**
- * ISO-3166-1 alpha-2 list. Uses `Intl.DisplayNames` when available so
- * the label localises to the browser's language, with a static English
- * fallback for very old browsers / SSR consistency.
- */
 const COUNTRY_CODES: readonly string[] = [
   'AD','AE','AF','AG','AI','AL','AM','AO','AQ','AR','AS','AT','AU','AW','AX','AZ',
   'BA','BB','BD','BE','BF','BG','BH','BI','BJ','BL','BM','BN','BO','BQ','BR','BS',

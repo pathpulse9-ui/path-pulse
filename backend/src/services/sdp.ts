@@ -24,8 +24,6 @@ function url(path: string): string {
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...(init.headers as Record<string, string>) };
   headers.Authorization = env.sdp.apiKey;
-  // Routing by tenant header avoids depending on a per-tenant hostname, whose
-  // .local resolution is unreliable on macOS and caused spurious retries.
   if (env.sdp.tenantName) headers['SDP-Tenant-Name'] = env.sdp.tenantName;
 
   const res = await fetch(url(path), { ...init, headers });
@@ -51,10 +49,6 @@ interface SdpAsset {
   issuer: string;
 }
 
-/**
- * Resolve the SDP asset id for the batch's asset. Without this the disbursement would
- * always use SDP_ASSET_ID, so a batch in one asset could be paid out in another.
- */
 export async function resolveAssetId(ref?: AssetRef): Promise<string> {
   if (!ref) return env.sdp.assetId;
   const assets = await call<SdpAsset[]>('/assets');
@@ -73,9 +67,29 @@ export async function resolveAssetId(ref?: AssetRef): Promise<string> {
   return match.id;
 }
 
+export async function getDistributionAccount(): Promise<string> {
+  const org = await call<{ distribution_account_public_key?: string; distribution_account?: { address?: string } }>(
+    '/organization',
+  );
+  const address = org.distribution_account?.address ?? org.distribution_account_public_key;
+  if (!address) throw new Error('SDP /organization returned no distribution account');
+  return address;
+}
+
+export async function assertDistributionIsDriverPool(): Promise<void> {
+  const address = await getDistributionAccount();
+  if (address !== env.distribution.driverPool) {
+    const e = new Error(
+      `SDP pays from ${address}, but DRIVER_POOL_PUBLIC is ${env.distribution.driverPool}. On mainnet the driver pool ` +
+        'must be the SDP distribution account so the 30% leg and the driver payments are the same funds on-chain.',
+    ) as Error & { status: number };
+    e.name = 'DriverPoolMismatch';
+    e.status = 500;
+    throw e;
+  }
+}
+
 export async function createDisbursement(name: string, asset?: AssetRef): Promise<DisbursementRef> {
-  // Receiver-supplied addresses pick the user-managed wallet themselves; SDP
-  // rejects an explicit wallet_id for those contact types.
   const receiverSuppliesAddress = env.sdp.registrationContactType.endsWith('_AND_WALLET_ADDRESS');
   const assetId = await resolveAssetId(asset);
   return call<DisbursementRef>('/disbursements', {
@@ -95,8 +109,6 @@ export async function uploadDisbursementInstructions(
   disbursementId: string,
   payouts: SettlementDriverPayout[],
 ): Promise<void> {
-  // SDP always requires a receiver contact alongside the wallet address. Settlement
-  // carries no phone/email, so derive a stable per-driver address from the userId.
   const usesEmail = env.sdp.registrationContactType.startsWith('EMAIL');
   const contact = (userId: string) =>
     usesEmail ? `${userId}@${env.sdp.contactDomain}` : '';

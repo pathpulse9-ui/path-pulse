@@ -1,21 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { PayoutBatch, PayoutReceiptStatus, SettlementBatch } from '@pathpulse/contract';
+import type { PayoutBatch, PayoutReceiptStatus, SettlementBatch, StatusCheck } from '@pathpulse/contract';
 import {
   listPayoutBatches,
   createPayoutBatch,
   listSettlementBatches,
   listPayoutAttempts,
+  getOpsStatus,
   type PayoutAttempt,
 } from '../../lib/api';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { usePageActions } from '../../components/dashboard/PageActions';
 import { T } from '../../components/dashboard/typography';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
+import { explorerTx } from '../../lib/network';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
-const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
 
 function attemptClasses(outcome: string) {
   return outcome === 'success'
@@ -30,6 +31,16 @@ function receiptClasses(s: PayoutReceiptStatus) {
   return 'bg-black/5 text-black/60 border-black/10';
 }
 
+function SdpPill({ sdp }: { sdp: StatusCheck | 'sandbox' }) {
+  const [label, cls] =
+    sdp === 'sandbox'
+      ? ['SDP not configured — sandbox', 'bg-amber-100 text-amber-700 border-amber-300']
+      : sdp.ok
+        ? [`SDP reachable · ${sdp.latencyMs} ms`, 'bg-green-100 text-green-700 border-green-300']
+        : ['SDP unreachable', 'bg-red-100 text-red-700 border-red-300'];
+  return <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
+}
+
 export default function PayoutsPage() {
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
   const runPayout = useIdempotencyKey();
@@ -38,14 +49,22 @@ export default function PayoutsPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [attempts, setAttempts] = useState<Record<string, PayoutAttempt[]>>({});
+  const [sdp, setSdp] = useState<StatusCheck | 'sandbox' | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [p, s] = await Promise.all([listPayoutBatches(50), listSettlementBatches(20)]);
+      const [p, s, status] = await Promise.all([
+        listPayoutBatches(50),
+        listSettlementBatches(20),
+        getOpsStatus().catch(() => null),
+      ]);
       setBatches(p.items);
       setSettlements(s.items);
+      if (status?.monitor.report) {
+        setSdp(status.monitor.report.checks.find((c) => c.name === 'sdp') ?? 'sandbox');
+      }
       const rows = await Promise.all(
         p.items.map(async (b) => {
           try {
@@ -105,13 +124,23 @@ export default function PayoutsPage() {
 
       <div className={`${T.card} space-y-4`}>
         <div>
-          <h2 className={T.cardTitle}>Disburse a settlement</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className={T.cardTitle}>Disburse a settlement</h2>
+            {sdp && <SdpPill sdp={sdp} />}
+          </div>
           <p className={`${T.cardDescription} mt-1`}>
             Hand a settled batch to the Stellar Disbursement Platform. SDP creates the
             disbursement, uploads instructions and pays each driver, reporting per-recipient
             status back here.
           </p>
         </div>
+
+        {sdp && sdp !== 'sandbox' && !sdp.ok && (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            SDP is unreachable{sdp.error ? ` (${sdp.error})` : ''}. New disbursements are refused until it recovers —
+            see Status.
+          </p>
+        )}
 
         {undisbursed.length === 0 ? (
           <p className={T.bodyMuted}>
@@ -135,7 +164,7 @@ export default function PayoutsPage() {
                 </div>
                 <button
                   onClick={() => disburse(s.id)}
-                  disabled={creating}
+                  disabled={creating || (!!sdp && sdp !== 'sandbox' && !sdp.ok)}
                   className={T.buttonPrimary}
                 >
                   {creating ? 'Disbursing…' : 'Disburse via SDP'}
@@ -174,6 +203,17 @@ export default function PayoutsPage() {
                 </span>
               </h2>
               <p className={`${T.cardDescription} mt-1 font-mono text-xs`}>{b.id}</p>
+              <p className="mt-1 text-xs text-black/50">
+                {new Date(b.createdAt).toLocaleString()}
+                {b.createdBy ? (
+                  <>
+                    {' · started by '}
+                    <span className="font-mono">{b.createdBy}</span>
+                  </>
+                ) : (
+                  ' · operator not recorded'
+                )}
+              </p>
             </div>
             <div className="text-right">
               <div className={T.metric}>

@@ -4,8 +4,9 @@ import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
 import { Horizon } from '@stellar/stellar-sdk';
+import { HORIZON_URL, NETWORK_PASSPHRASE } from './network';
 
-export const HORIZON_URL = 'https://horizon-testnet.stellar.org';
+export { HORIZON_URL };
 export const FRIENDBOT_URL = 'https://friendbot.stellar.org';
 
 export const server = new Horizon.Server(HORIZON_URL);
@@ -15,7 +16,7 @@ let initialized = false;
 export function initKit() {
   if (initialized) return;
   StellarWalletsKit.init({
-    network: Networks.TESTNET,
+    network: NETWORK_PASSPHRASE as Networks,
     modules: [new FreighterModule(), new xBullModule(), new AlbedoModule(), new LobstrModule()],
   });
   initialized = true;

@@ -1,10 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { Keypair, WebAuth } from '@stellar/stellar-sdk';
+import { Keypair, TransactionBuilder, WebAuth } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 
 const CHALLENGE_TIMEOUT_SECONDS = 5 * 60;
+const usedChallenges = new Map<string, number>();
+
+function claimChallenge(signedTransaction: string, now = Date.now()): void {
+  for (const [hash, until] of usedChallenges) if (until <= now) usedChallenges.delete(hash);
+  const tx = TransactionBuilder.fromXDR(signedTransaction, env.networkPassphrase);
+  const inner = 'innerTransaction' in tx ? tx.innerTransaction : tx;
+  const hash = inner.hash().toString('hex');
+  if (usedChallenges.has(hash)) {
+    const e = new Error('This challenge has already been used — request a new one') as Error & { status: number };
+    e.status = 401;
+    throw e;
+  }
+  usedChallenges.set(hash, now + CHALLENGE_TIMEOUT_SECONDS * 1000);
+}
 
 const serverKeypair = env.sep10.signingSecret
   ? Keypair.fromSecret(env.sep10.signingSecret)
@@ -69,5 +83,6 @@ export async function verifyChallenge(signedTransaction: string): Promise<Wallet
     env.sep10.homeDomain,
   );
 
+  claimChallenge(signedTransaction);
   return upsertWalletUser(clientAccountID);
 }

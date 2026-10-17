@@ -206,7 +206,7 @@ Compiled as `docs/TRANCHE2_PROOF_OF_COMPLETION.md` (2026-09-16), reviewed, and a
 
 
 - **D4.1** — Carret orders 1279 / 1280 / 1281 were funded by a Carret-side dev credit, **not by a Stellar transfer on any network**. No USDC moved and no transfer hash exists. Those orders prove the Carret API path and INR bank settlement, nothing about an on-chain deposit. An on-chain off-ramp deposit linked to a settlement batch is achievable only on mainnet and is carried as a Phase 5 criterion rather than claimed here.
-- **D5** — the phrase "each acting as the other's fallback" was withdrawn. Fallback is one-directional: a failed Broker quote costs a price comparison; a failed Aquarius costs the fill.
+- **D5** — Aquarius and StellarBroker both quote on every request. A failed swap is not retried on the other provider.
 - **D6.3** — the assignment API previously accepted a score and minted a brand-new random driver, meeting neither half of the criterion. It now takes a driver id, reads the score from the feed, and grants the badge to the driver's existing managed wallet. Re-proven end to end on three existing drivers.
 
 ### Tranche 3 — Mainnet & Handover (D7–D8)

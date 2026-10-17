@@ -9,6 +9,7 @@ import type {
   AuthMeResponse,
   SettlementBatch,
   SettlementBatchPage,
+  LedgerPage,
   CreateSettlementBatchRequest,
   GroupPayoutBatch,
   GroupPayoutBatchPage,
@@ -32,6 +33,9 @@ import type {
   RoutingSwapResult,
   PartnerLoginResponse,
   OpsLoginResponse,
+  OpsStatusResponse,
+  TreasuryConversionTx,
+  SubmitTransactionResponse,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -64,14 +68,8 @@ export class ApiError extends Error {
 }
 
 function toApiError(status: number, rawText: string): ApiError {
-  // Always try for a friendly sentence first — this unpacks the backend's
-  // {error, message, requestId} envelope AND the DRF field-error JSON that
-  // Carret 4xx bodies embed inside `message` ({"field":["msg", ...]}) so the
-  // UI never has to render "{\"email\":[\"…\"]}" verbatim.
   const friendly = extractFriendlyError(rawText);
 
-  // Auth/permission still get their own overrides so the UI can route the
-  // user to sign-in / ops access instead of just displaying the raw copy.
   if (status === 401) return new ApiError(status, 'Sign in to continue.');
   if (status === 403) return new ApiError(status, 'This action needs an operator session — use Ops access in the top bar.');
   if (status === 404) return new ApiError(status, friendly || 'Not found.');
@@ -79,20 +77,12 @@ function toApiError(status: number, rawText: string): ApiError {
   return new ApiError(status, friendly || 'That request could not be completed.');
 }
 
-/**
- * Best-effort extraction of a human sentence from any error body the
- * backend hands us — plain string, {message: "..."}, {detail: "..."},
- * or Carret's DRF field-error shape {"field":["msg", ...]}.
- * Returns "" when nothing is readable — caller then falls back to a
- * per-status sentence.
- */
 function extractFriendlyError(raw: string): string {
   const parsed = safeJson(raw);
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     const outer = firstString(obj.message) ?? firstString(obj.detail) ?? firstString(obj.error);
     if (outer) {
-      // Outer message may itself be a JSON blob (Carret DRF field errors).
       const inner = safeJson(outer);
       const innerMsg = extractDrf(inner);
       if (innerMsg) return innerMsg;
@@ -175,6 +165,14 @@ export function opsLogin(passcode: string) {
   });
 }
 
+export function getOpsStatus(refresh = false) {
+  return apiFetch<OpsStatusResponse>(`/v1/ops/status${refresh ? '?refresh=true' : ''}`);
+}
+
+export function opsExit() {
+  return apiFetch<{ ok: true }>('/v1/auth/ops/exit', { method: 'POST' });
+}
+
 export function getSessionUser() {
   return apiFetch<AuthMeResponse>('/v1/auth/me');
 }
@@ -182,8 +180,6 @@ export function getSessionUser() {
 export function logout() {
   return apiFetch<{ ok: true }>('/v1/auth/logout', { method: 'POST' });
 }
-
-// ── Settlement (D6) ───────────────────────────────────────────────────
 
 export interface BatchListParams {
   cursor?: string;
@@ -197,7 +193,6 @@ export interface BatchListParams {
 }
 
 export function listSettlementBatches(params: BatchListParams | number = {}) {
-  // Backwards-compat: legacy call sites pass a bare `limit` number.
   const p: BatchListParams = typeof params === 'number' ? { limit: params } : params;
   const qs = new URLSearchParams();
   if (p.cursor)    qs.set('cursor', p.cursor);
@@ -215,8 +210,7 @@ export function getSettlementBatch(id: string) {
   return apiFetch<SettlementBatch>(`/v1/settlement/batches/${id}`);
 }
 
-/** Direct download URL — the browser handles the actual GET (no fetch needed). */
-export function settlementCsvUrl(params: BatchListParams = {}): string {
+function settlementCsvPath(file: string, params: BatchListParams): string {
   const qs = new URLSearchParams();
   if (params.network)   qs.set('network', params.network);
   if (params.assetCode) qs.set('assetCode', params.assetCode);
@@ -225,7 +219,15 @@ export function settlementCsvUrl(params: BatchListParams = {}): string {
   if (params.minAmount) qs.set('minAmount', params.minAmount);
   if (params.maxAmount) qs.set('maxAmount', params.maxAmount);
   const q = qs.toString();
-  return `${API_BASE_URL}/v1/settlement/batches/export.csv${q ? `?${q}` : ''}`;
+  return `${API_BASE_URL}/v1/settlement/batches/${file}${q ? `?${q}` : ''}`;
+}
+
+export function settlementCsvUrl(params: BatchListParams = {}): string {
+  return settlementCsvPath('export.csv', params);
+}
+
+export function payoutsCsvUrl(params: BatchListParams = {}): string {
+  return settlementCsvPath('payouts.csv', params);
 }
 
 export function settlementReceiptPdfUrl(id: string): string {
@@ -240,8 +242,6 @@ export function listDistributionAccounts() {
   return apiFetch<import('@pathpulse/contract').DistributionAccount[]>('/v1/accounts/distribution');
 }
 
-// PAT-80: Carret daily-limit tracking. Shape mirrors backend's
-// services/carretLimits.ts. `remaining` values are ₹ available today.
 export interface CarretLimits {
   carretAccountId: string;
   dailyCapInr: number;
@@ -264,8 +264,6 @@ export function createSettlementBatch(req: CreateSettlementBatchRequest, idempot
   });
 }
 
-// ── Group payouts (bulk CSV/Excel upload) ─────────────────────────────
-
 export function listGroupPayouts(limit = 50) {
   return apiFetch<GroupPayoutBatchPage>(`/v1/settlement/group-payouts?limit=${limit}`);
 }
@@ -281,8 +279,6 @@ export function createGroupPayout(req: CreateGroupPayoutRequest, idempotencyKey:
     body: JSON.stringify(req),
   });
 }
-
-// ── Off-ramp (D4 — Carret Infra, USDC on Stellar → INR) ──────────────
 
 export function listOffRampSessions(limit = 50) {
   return apiFetch<OffRampSessionPage>(`/v1/offramp/sessions?limit=${limit}`);
@@ -300,7 +296,6 @@ export function createOffRampWithdrawal(req: CreateOffRampWithdrawalRequest, ide
   });
 }
 
-// D4 / T2 evidence: durable status-event log + reconciler.
 
 export interface OffRampStatusEvent {
   id: string;
@@ -346,7 +341,6 @@ export function simulateMissedWebhook(sessionId: string) {
   );
 }
 
-// ── SCOUT reputation assets (D6) ──────────────────────────────────────
 
 export function listOpsOffRampSessions() {
   return apiFetch<{ items: OpsOffRampSession[] }>('/v1/ops/offramp/sessions');
@@ -408,12 +402,24 @@ export function getScoutTier(address: string) {
   return apiFetch<ScoutTierLookup>(`/v1/scout/${address}`);
 }
 
-// ── Cross-asset liquidity routing (D5) ────────────────────────────────
-
 export function getRoutableAssets() {
   return apiFetch<{ items: { symbol: string; code: string; issuer?: string }[] }>(
     '/v1/routing/assets',
   );
+}
+
+export function buildTreasuryConversion(from: string, amount: string) {
+  return apiFetch<TreasuryConversionTx>('/v1/routing/treasury/conversions', {
+    method: 'POST',
+    body: JSON.stringify({ from, amount }),
+  });
+}
+
+export function submitSignedTransaction(xdr: string) {
+  return apiFetch<SubmitTransactionResponse>('/v1/tx/submit', {
+    method: 'POST',
+    body: JSON.stringify({ xdr }),
+  });
 }
 
 export function getRoutingQuote(from: string, to: string, amount: string) {
@@ -433,10 +439,17 @@ export function getOffRampQuote(amount: string) {
   return apiFetch<OffRampQuote>(`/v1/offramp/quotes?amount=${encodeURIComponent(amount)}`);
 }
 
-// ── SDP institutional payouts (D3) ────────────────────────────────────
-
 export function listPayoutBatches(limit = 50) {
   return apiFetch<PayoutBatchPage>(`/v1/ops/payouts/batches?limit=${limit}`);
+}
+
+export function getLedger(params: { account?: string; cursor?: string; limit?: number } = {}) {
+  const qs = new URLSearchParams();
+  if (params.account) qs.set('account', params.account);
+  if (params.cursor) qs.set('cursor', params.cursor);
+  if (params.limit) qs.set('limit', String(params.limit));
+  const q = qs.toString();
+  return apiFetch<LedgerPage>(`/v1/gov/ledger${q ? `?${q}` : ''}`);
 }
 
 export function getPayoutBatch(id: string) {
@@ -469,8 +482,6 @@ export function createPayoutBatch(settlementBatchId: string, idempotencyKey: str
   });
 }
 
-// ── Carret KYC (D4 · dev-onboarding) ─────────────────────────────────
-
 export interface CarretSubAccountInput {
   email: string;
   phone_number: string;
@@ -480,7 +491,7 @@ export interface CarretSubAccountInput {
   country: string;
   gender: 'male' | 'female' | 'other';
   occupation: string;
-  dob: string; // dd/mm/yyyy
+  dob: string;
   is_email_verified?: boolean;
   is_mobile_number_verified?: boolean;
   is_politicaly_exposed_person?: boolean;
@@ -494,18 +505,12 @@ export interface CarretSubAccountResponse {
   user: { id: number; email: string; first_name: string; last_name: string };
 }
 
-/**
- * POST /v1/carret/provision-subaccount — session-authed find-or-create.
- * `existed` is true when the backend adopted an existing Carret account
- * (either same session, or same email from an earlier install/browser).
- */
 export interface CarretProvisionResponse {
   carretAccountId: string;
   kycStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
   existed: boolean;
 }
 
-/** GET /v1/carret/resume — hydrates saved state; null when nothing saved. */
 export interface CarretResumeResponse {
   carretAccountId: string;
   kycStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
@@ -549,11 +554,6 @@ export function createCarretSubAccount(input: CarretSubAccountInput) {
   });
 }
 
-/**
- * Fetch any saved KYC application for this session (or the driver's email
- * from an earlier install/browser). Returns null when nothing is on file
- * yet — the backend responds 204 in that case.
- */
 export async function resumeCarretKyc(): Promise<CarretResumeResponse | null> {
   const res = await fetch(`${API_BASE_URL}/v1/carret/resume`, {
     credentials: 'include',
@@ -647,14 +647,6 @@ export async function uploadCarretKycFile(params: {
   return res.json();
 }
 
-/**
- * GET /v1/carret/kyc/status/{accountId}. Backend proxies Carret's raw
- * envelope `{success, kyc_info: {kyc_status, kyc_session, ovd_documents}}`.
- * Callers want the inner `kyc_info`, so unwrap before returning. Previously
- * we tried to decode the envelope directly as CarretKycStatus, silently
- * ended up with `undefined` on every poll, and the wizard sat forever on
- * "Verifying your identity" even after Carret marked the account verified.
- */
 export async function getCarretKycStatus(accountId: number | string): Promise<CarretKycStatus> {
   const raw = await apiFetch<{ success?: boolean; kyc_info?: CarretKycStatus } & CarretKycStatus>(
     `/v1/carret/kyc/status/${accountId}`,
@@ -669,10 +661,6 @@ export function cleanupCarretKyc(accountId: number | string) {
   });
 }
 
-/**
- * One registered bank on the driver's Carret sub-account. Status flips from
- * pending → verified after Carret's ₹1 penny-drop test lands (~a minute).
- */
 export interface CarretBank {
   id: number;
   account_id: number;

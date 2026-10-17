@@ -54,11 +54,6 @@ async function record(
   }
 }
 
-/**
- * Runs one SDP step with bounded retries and exponential backoff, writing an attempt row per
- * try. Non-retryable responses (4xx other than 408/429) fail immediately rather than burning
- * the budget on a request the server will never accept.
- */
 export async function withRetry<T>(
   batchId: string,
   step: PayoutStep,

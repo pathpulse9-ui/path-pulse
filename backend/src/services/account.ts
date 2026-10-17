@@ -9,27 +9,36 @@ function normalizeEmail(email: string): string {
   return trimmed;
 }
 
-async function userIdForEmail(email: string): Promise<string> {
-  const existing = await db().query<{ user_id: string }>(
-    'select user_id from users where email = $1',
+function accountError(message: string): Error {
+  const e = new Error(message) as Error & { status: number };
+  e.name = 'AccountMismatch';
+  e.status = 401;
+  return e;
+}
+
+async function userIdForEmail(email: string, sub: string): Promise<string> {
+  await db().query(
+    'insert into users (email, user_id, google_sub) values ($1, $2, $3) on conflict (email) do nothing',
+    [email, randomUUID(), sub],
+  );
+  const row = await db().query<{ user_id: string; google_sub: string | null }>(
+    'select user_id, google_sub from users where email = $1',
     [email],
   );
-  if (existing.rows[0]) return existing.rows[0].user_id;
-
-  await db().query('insert into users (email, user_id) values ($1, $2) on conflict (email) do nothing', [
-    email,
-    randomUUID(),
-  ]);
-  const row = await db().query<{ user_id: string }>('select user_id from users where email = $1', [
-    email,
-  ]);
-  if (!row.rows[0]) throw new Error(`Failed to create account for ${email}`);
-  return row.rows[0].user_id;
+  const user = row.rows[0];
+  if (!user) throw new Error(`Failed to create account for ${email}`);
+  if (user.google_sub === null) {
+    await db().query('update users set google_sub = $2 where email = $1 and google_sub is null', [email, sub]);
+  } else if (user.google_sub !== sub) {
+    throw accountError('This email is bound to a different Google account');
+  }
+  return user.user_id;
 }
 
 export async function ensureAccountForEmail(
   email: string,
+  sub: string,
 ): Promise<{ userId: string; wallet: ManagedWallet }> {
-  const userId = await userIdForEmail(normalizeEmail(email));
+  const userId = await userIdForEmail(normalizeEmail(email), sub);
   return { userId, wallet: await provisionManagedWallet(userId) };
 }

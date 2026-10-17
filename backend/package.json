@@ -11,7 +11,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "provision:testnet": "tsx scripts/provision-testnet.ts",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "AUTH_RATE_LIMIT=1000 WRITE_RATE_LIMIT=1000 tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1118.0",
@@ -28,7 +28,7 @@
     "google-auth-library": "^9.14.2",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.2.0",
+    "multer": "^2.4.0",
     "pdfkit": "^0.20.2",
     "pg": "^8.23.0",
     "pino": "^9.5.0",
