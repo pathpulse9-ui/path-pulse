@@ -187,7 +187,7 @@ export async function buildTreasuryConversion(fromCode: string, amount: string):
 
   const account = await horizon.loadAccount(treasuryId);
   const held = readBalances(account.balances).find((b) => sameAsset(b.asset, from));
-  if (!held || toStroops(Number(held.balance).toFixed(7)) < toStroops(sendAmount)) {
+  if (!held || toStroops(held.balance) < toStroops(sendAmount)) {
     throw routingError(`Treasury holds ${held?.balance ?? '0'} ${from.code}, less than ${sendAmount}`, 422, 'InsufficientBalance');
   }
 

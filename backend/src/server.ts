@@ -12,7 +12,7 @@ import { authLimiter, partnerKeyLimiter, writeLimiter } from './middleware/rateL
 
 export function createServer() {
   const app = express();
-  app.set('trust proxy', 1);
+  app.set('trust proxy', env.trustProxyHops);
   app.use(helmet());
   app.use(cors({ origin: env.webAppUrl, credentials: true }));
   app.use(cookieParser());

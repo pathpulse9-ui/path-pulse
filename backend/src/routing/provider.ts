@@ -19,7 +19,7 @@ export interface RoutingProvider {
   readonly name: RoutingProviderName;
   readonly canQuote: boolean;
   readonly canExecute: boolean;
-  quote(from: RoutableSymbol, to: RoutableSymbol, sourceStroops: bigint): Promise<ProviderQuote>;
+  quote(from: RoutableSymbol, to: RoutableSymbol, sourceStroops: bigint, signal?: AbortSignal): Promise<ProviderQuote>;
   execute(from: RoutableSymbol, to: RoutableSymbol, sourceStroops: bigint): Promise<RoutingSwapResult>;
 }
 

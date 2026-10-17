@@ -1,5 +1,6 @@
-import { env } from '../config/env.js';
+import { env, isMainnet } from '../config/env.js';
 import { db } from '../db/client.js';
+import { evictOldest } from '../util/bounded.js';
 
 export type CarretActivity =
   | 'deposit_inr'
@@ -59,34 +60,76 @@ export async function allRemaining(accountId: string): Promise<Record<CarretActi
   };
 }
 
-export async function assertUnderLimit(
+function limitExceeded(
   accountId: string,
   activity: CarretActivity,
   amountInr: number,
-): Promise<void> {
-  const used = await usedToday(accountId, activity);
-  const remaining = CARRET_DAILY_LIMIT_INR - used;
-  if (amountInr > remaining) {
-    const e = new Error(
-      `Carret daily limit exceeded for ${activity}: ` +
-        `requested ₹${amountInr.toFixed(2)}, ` +
-        `remaining ₹${remaining.toFixed(2)} of ₹${CARRET_DAILY_LIMIT_INR}.`,
-    ) as Error & { status: number; name: string; details: unknown };
-    e.status = 429;
-    e.name = 'CarretDailyLimitExceeded';
-    e.details = {
-      activity,
-      accountId,
-      requestedInr: amountInr,
-      remainingInr: remaining,
-      dailyCapInr: CARRET_DAILY_LIMIT_INR,
-      resetAt: nextIstMidnightIso(),
-    };
+  remaining: number,
+): Error {
+  const e = new Error(
+    `Carret daily limit exceeded for ${activity}: ` +
+      `requested ₹${amountInr.toFixed(2)}, ` +
+      `remaining ₹${remaining.toFixed(2)} of ₹${CARRET_DAILY_LIMIT_INR}.`,
+  ) as Error & { status: number; name: string; details: unknown };
+  e.status = 429;
+  e.name = 'CarretDailyLimitExceeded';
+  e.details = {
+    activity,
+    accountId,
+    requestedInr: amountInr,
+    remainingInr: remaining,
+    dailyCapInr: CARRET_DAILY_LIMIT_INR,
+    resetAt: nextIstMidnightIso(),
+  };
+  return e;
+}
+
+function assertValidAmount(amountInr: number): void {
+  if (!Number.isFinite(amountInr) || amountInr <= 0) {
+    const e = new Error('Carret amount must be a positive finite number') as Error & { status: number };
+    e.name = 'ValidationError';
+    e.status = 400;
     throw e;
   }
 }
 
-export async function recordUsage(
+export async function reserveUsage(
+  accountId: string,
+  activity: CarretActivity,
+  amountInr: number,
+): Promise<void> {
+  assertValidAmount(amountInr);
+  const ymd = todayIst();
+  if (amountInr > CARRET_DAILY_LIMIT_INR) {
+    throw limitExceeded(accountId, activity, amountInr, await remainingLimit(accountId, activity));
+  }
+  if (!hasDb()) {
+    if (isMainnet) throw new Error('Carret usage limits require the database on mainnet');
+    const key = `${accountId}|${activity}|${ymd}`;
+    const used = memoryUsage.get(key) ?? 0;
+    if (used + amountInr > CARRET_DAILY_LIMIT_INR) {
+      throw limitExceeded(accountId, activity, amountInr, Math.max(0, CARRET_DAILY_LIMIT_INR - used));
+    }
+    memoryUsage.set(key, used + amountInr);
+    evictOldest(memoryUsage, 10_000);
+    return;
+  }
+  const res = await db().query(
+    `insert into carret_daily_usage (carret_account_id, activity, ymd_ist, amount_inr)
+     values ($1, $2, $3, $4)
+     on conflict (carret_account_id, activity, ymd_ist)
+     do update set amount_inr = carret_daily_usage.amount_inr + excluded.amount_inr,
+                   updated_at = now()
+     where carret_daily_usage.amount_inr + excluded.amount_inr <= $5
+     returning amount_inr`,
+    [accountId, activity, ymd, amountInr, CARRET_DAILY_LIMIT_INR],
+  );
+  if (res.rowCount === 0) {
+    throw limitExceeded(accountId, activity, amountInr, await remainingLimit(accountId, activity));
+  }
+}
+
+export async function releaseUsage(
   accountId: string,
   activity: CarretActivity,
   amountInr: number,
@@ -94,15 +137,13 @@ export async function recordUsage(
   const ymd = todayIst();
   if (!hasDb()) {
     const key = `${accountId}|${activity}|${ymd}`;
-    memoryUsage.set(key, (memoryUsage.get(key) ?? 0) + amountInr);
+    memoryUsage.set(key, Math.max(0, (memoryUsage.get(key) ?? 0) - amountInr));
     return;
   }
   await db().query(
-    `insert into carret_daily_usage (carret_account_id, activity, ymd_ist, amount_inr)
-     values ($1, $2, $3, $4)
-     on conflict (carret_account_id, activity, ymd_ist)
-     do update set amount_inr = carret_daily_usage.amount_inr + excluded.amount_inr,
-                   updated_at = now()`,
+    `update carret_daily_usage
+     set amount_inr = greatest(0, amount_inr - $4), updated_at = now()
+     where carret_account_id = $1 and activity = $2 and ymd_ist = $3`,
     [accountId, activity, ymd, amountInr],
   );
 }

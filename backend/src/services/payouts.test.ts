@@ -8,7 +8,7 @@ test('a live payout batch is refused before any record is written when SDP is un
   const script = `
     const { createPayoutBatch } = await import(${JSON.stringify(payouts)});
     try {
-      await createPayoutBatch([{ userId: 'u1', address: 'GA', tier: 'T1', amount: '1' }], { code: 'XLM' });
+      await createPayoutBatch([{ userId: 'u1', address: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', tier: 'T1', amount: '1' }], { code: 'XLM' });
       console.log(JSON.stringify({ created: true }));
     } catch (e) {
       console.log(JSON.stringify({ name: e.name, status: e.status }));
@@ -18,6 +18,7 @@ test('a live payout batch is refused before any record is written when SDP is un
     env: {
       ...process.env,
       DATABASE_URL: '',
+      LOG_LEVEL: 'silent',
       SDP_API_KEY: 'k',
       SDP_WALLET_ID: 'w',
       SDP_ASSET_ID: 'a',
@@ -42,7 +43,7 @@ test(
       const { createPayoutBatch, getPayoutBatch } = await import(${JSON.stringify(payouts)});
       await migrate();
       const created = await createPayoutBatch(
-        [{ userId: 'u1', address: 'GA', tier: 1, multiplier: 1, amount: '1' }],
+        [{ userId: 'u1', address: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', tier: 1, multiplier: 1, amount: '1' }],
         { code: 'XLM' },
         { createdBy: 'operator_42' },
       );

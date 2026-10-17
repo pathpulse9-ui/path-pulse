@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ProxyAgent } from 'undici';
 import ClassicFormData from 'form-data';
-import { env, carretLive } from '../config/env.js';
+import { env, carretLive, numEnv } from '../config/env.js';
 import type { OffRampStatus } from '@pathpulse/contract';
 
 const carretDispatcher: unknown = env.carret.httpsProxy
@@ -162,7 +162,7 @@ interface CarretPage<T> {
   results: T[];
 }
 
-const RATE_QPS = Number(process.env.CARRET_RATE_LIMIT_QPS ?? 10);
+const RATE_QPS = numEnv('CARRET_RATE_LIMIT_QPS', 10, 1);
 let tokens = RATE_QPS;
 let lastRefill = Date.now();
 
@@ -178,6 +178,17 @@ async function takeToken(): Promise<void> {
   } else {
     tokens -= 1;
   }
+}
+
+function carretAccountSegment(accountId: number | string): string {
+  const id = String(accountId);
+  if (!/^\d{1,20}$/.test(id)) {
+    const e = new Error('Carret account id must be numeric') as Error & { status: number };
+    e.name = 'ValidationError';
+    e.status = 400;
+    throw e;
+  }
+  return encodeURIComponent(id);
 }
 
 async function carretFetch<T>(
@@ -594,7 +605,7 @@ async function carretV2Fetch<T>(
 function carretHttpError(status: number, rawText: string, ctx: string): Error {
   const e = new Error() as Error & { status: number; upstream?: string };
   e.name = 'CarretUpstreamError';
-  e.upstream = `${status} ${ctx}: ${rawText}`;
+  e.upstream = `${status} ${ctx}`;
   const parsed = safeParseJson(rawText);
   const human = extractHumanMessage(parsed) || (typeof parsed === 'string' ? parsed : rawText);
   if (status >= 500) {
@@ -731,7 +742,7 @@ export async function uploadKycFile(params: {
 }
 
 export async function getKycStatus(accountId: number | string): Promise<CarretKycStatusResponse> {
-  return carretV2Fetch<CarretKycStatusResponse>('GET', `/kyc/${accountId}/`);
+  return carretV2Fetch<CarretKycStatusResponse>('GET', `/kyc/${carretAccountSegment(accountId)}/`);
 }
 
 export async function cleanupKyc(accountId: number | string): Promise<unknown> {
@@ -805,9 +816,15 @@ export interface CarretSubAccount {
 export async function createSubAccount(input: SubAccountInput): Promise<CarretSubAccount> {
   const phoneDigits = String(input.phone_number).replace(/\D/g, '');
   const body = { ...input, phone_number: Number(phoneDigits) };
-  return carretFetch<CarretSubAccount>('POST', '/register/', { body });
+  try {
+    return await carretFetch<CarretSubAccount>('POST', '/register/', { body });
+  } catch (e) {
+    if ((e as Error).name !== 'CarretUpstreamError') throw e;
+    (e as Error).message = 'The payments partner could not create the account from these details.';
+    throw e;
+  }
 }
 
 export async function getSubAccount(accountId: number | string): Promise<CarretSubAccount> {
-  return carretFetch<CarretSubAccount>('GET', `/account/${accountId}/`);
+  return carretFetch<CarretSubAccount>('GET', `/account/${carretAccountSegment(accountId)}/`);
 }

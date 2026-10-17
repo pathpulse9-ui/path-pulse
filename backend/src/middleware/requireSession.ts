@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
-import { getSessionFromRequest, roleOf, type SessionRole } from '../services/session.js';
+import { getSessionFromRequest, isSessionRevokedInDb, roleOf, type SessionRole } from '../services/session.js';
 import { parsePartnerKey, verifyPartnerKey } from '../services/partnerKeys.js';
+import { verifiedPartnerKeyLimiter } from './rateLimit.js';
 
 export type PartnerKeyRequest = Request & { partnerKeyId?: string };
 
@@ -33,7 +34,7 @@ export function identifyPartnerKey() {
         return;
       }
       (req as PartnerKeyRequest).partnerKeyId = keyId;
-      next();
+      verifiedPartnerKeyLimiter(req, res, next);
     } catch (e) {
       next(e);
     }
@@ -49,7 +50,7 @@ export function requireRole(...allowed: SessionRole[]) {
           const keyId = await verifyPartnerKey(req);
           if (keyId) {
             (req as PartnerKeyRequest).partnerKeyId = keyId;
-            next();
+            verifiedPartnerKeyLimiter(req, res, next);
             return;
           }
         } catch (e) {
@@ -68,6 +69,15 @@ export function requireRole(...allowed: SessionRole[]) {
         error: 'Forbidden',
         message: `this endpoint requires an operator session (${allowed.join(' or ')})`,
       });
+      return;
+    }
+    try {
+      if (await isSessionRevokedInDb(session)) {
+        res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+        return;
+      }
+    } catch (e) {
+      next(e);
       return;
     }
     next();

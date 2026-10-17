@@ -17,6 +17,7 @@ import { horizon, submitToHorizon } from './network.js';
 import { assertMainnetAllowed } from './networkGuard.js';
 import { getManagedWallet, getManagedSigner, getReserveSponsor } from './managed.js';
 import { sponsorFees } from './sponsorship.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -93,8 +94,9 @@ export async function submitTransaction(xdr: string): Promise<SubmitTransactionR
   } catch (e: unknown) {
     const codes = (e as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response
       ?.data?.extras?.result_codes;
+    if (!codes) logUpstream('transaction submit failed', e);
     throw httpError(
-      codes ? `Horizon rejected the transaction: ${JSON.stringify(codes)}` : `Submit failed: ${String(e)}`,
+      codes ? `Horizon rejected the transaction: ${JSON.stringify(codes)}` : 'Submit failed',
       422,
       'HorizonRejected',
     );

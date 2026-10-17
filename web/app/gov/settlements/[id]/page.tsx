@@ -69,13 +69,13 @@ export default function GovSettlementDetailPage(
       </div>
 
       <section className="rounded-3xl bg-white p-6">
-        <div className="text-sm font-semibold">1 · Treasury deposit</div>
+        <div className="text-sm font-semibold">1 · Funding deposit</div>
         {batch.deposit ? (
           <>
             <div className="mt-1 text-xs text-black/50">
               Verified on Horizon when the batch ran: this transaction paid the settlement source at least the gross
-              amount, and no other batch has claimed it. On mainnet it must come from the treasury or, for a converted
-              settlement, the routing source.
+              amount, and no other batch has claimed it. On mainnet it must come from the treasury, an authorised funding
+              sender or, for a converted settlement, the routing source. The sender is shown below.
             </div>
             <div className="mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
               <Kv label="Amount" value={`${batch.deposit.amount} ${asset}`} />

@@ -2,6 +2,8 @@ import type { SettlementBatch, SettlementBatchPage } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
+import { decodeKeyset, encodeKeyset } from '../db/keyset.js';
+import { trimTail } from '../util/bounded.js';
 
 export interface BatchQuery {
   cursor?: string;
@@ -23,6 +25,7 @@ function hasDb(): boolean {
 export async function saveBatch(batch: SettlementBatch): Promise<void> {
   if (!hasDb()) {
     inMemory.unshift(batch);
+    trimTail(inMemory, 1_000);
     return;
   }
   await db().query(
@@ -75,14 +78,19 @@ export async function attachPayoutBatch(batchId: string, payoutBatchId: string):
 }
 
 export async function listBatches(query: BatchQuery = {}): Promise<SettlementBatchPage> {
-  const size = Math.min(Math.max(1, query.limit ?? 50), 100);
+  const size = Number.isInteger(query.limit) ? Math.min(Math.max(1, query.limit as number), 100) : 50;
 
   if (!hasDb()) {
-    const start = query.cursor ? Math.max(0, parseInt(query.cursor, 10) || 0) : 0;
-    const filtered = filterInMemory(inMemory, query);
-    const items = filtered.slice(start, start + size);
-    const next = start + size < filtered.length ? String(start + size) : null;
-    return { items, nextCursor: next };
+    const key = decodeKeyset(query.cursor);
+    const ordered = filterInMemory(inMemory, query).sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+    );
+    const after = key
+      ? ordered.filter((b) => b.createdAt < key.createdAt || (b.createdAt === key.createdAt && b.id < key.id))
+      : ordered;
+    const items = after.slice(0, size);
+    const last = items[items.length - 1];
+    return { items, nextCursor: after.length > size && last ? encodeKeyset(last.createdAt, last.id) : null };
   }
 
   const where: string[] = [];
@@ -111,9 +119,9 @@ export async function listBatches(query: BatchQuery = {}): Promise<SettlementBat
     select * from settlement_batches
     ${whereSql}
     order by created_at desc, id desc
-    limit ${size + 1}
+    limit $${params.length + 1}
   `;
-  const res = await db().query(sql, params);
+  const res = await db().query(sql, [...params, size + 1]);
   const rows = res.rows.slice(0, size).map(rowToBatch);
   const next =
     res.rows.length > size

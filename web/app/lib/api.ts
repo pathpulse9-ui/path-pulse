@@ -214,7 +214,7 @@ function settlementCsvPath(file: string, params: BatchListParams): string {
   const qs = new URLSearchParams();
   if (params.network)   qs.set('network', params.network);
   if (params.assetCode) qs.set('assetCode', params.assetCode);
-  if (params.since)     qs.set('since', params.since);
+  qs.set('since', params.since ?? new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString());
   if (params.until)     qs.set('until', params.until);
   if (params.minAmount) qs.set('minAmount', params.minAmount);
   if (params.maxAmount) qs.set('maxAmount', params.maxAmount);

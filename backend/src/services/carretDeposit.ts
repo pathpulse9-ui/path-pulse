@@ -4,6 +4,7 @@ import { horizon, submitToHorizon } from '../stellar/network.js';
 import { getManagedSigner, getManagedWallet, getReserveSponsor } from '../stellar/managed.js';
 import { sponsorFees } from '../stellar/sponsorship.js';
 import { toStroops } from '../stellar/settlement.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -49,7 +50,7 @@ export async function assertCanDeposit(userId: string, amount: string): Promise<
   const line = account.balances.find(
     (b) => 'asset_code' in b && b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
   );
-  const held = line ? toStroops(Number(line.balance).toFixed(7)) : 0n;
+  const held = line ? toStroops(line.balance) : 0n;
   if (held < toStroops(amount)) {
     throw httpError(
       `Your wallet holds ${line?.balance ?? '0'} ${asset.getCode()}, less than the ${amount} requested`,
@@ -75,8 +76,9 @@ export async function sendCarretDeposit(
     return res.hash;
   } catch (e) {
     const codes = (e as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response?.data?.extras?.result_codes;
+    if (!codes) logUpstream('carret deposit failed', e);
     throw httpError(
-      codes ? `Deposit to Carret rejected by Horizon: ${JSON.stringify(codes)}` : `Deposit to Carret failed: ${String(e)}`,
+      codes ? `Deposit to Carret rejected by Horizon: ${JSON.stringify(codes)}` : 'Deposit to Carret failed',
       422,
       'HorizonRejected',
     );

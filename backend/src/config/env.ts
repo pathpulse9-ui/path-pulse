@@ -19,6 +19,16 @@ function req(name: string, fallback?: string): string {
   return v;
 }
 
+export function numEnv(name: string, fallback: number, min = 0): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min) {
+    throw new Error(`${name} must be a number >= ${min}, got: ${raw}`);
+  }
+  return n;
+}
+
 const network = (process.env.STELLAR_NETWORK ?? 'testnet') as StellarNetwork;
 if (network !== 'testnet' && network !== 'mainnet') {
   throw new Error(`STELLAR_NETWORK must be testnet|mainnet, got: ${network}`);
@@ -54,11 +64,12 @@ function parseRoutingAssets(raw?: string, fallback = DEFAULT_ROUTING_ASSETS): As
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
-  port: Number(process.env.PORT ?? 8080),
+  port: numEnv('PORT', 8080, 1),
   logLevel: process.env.LOG_LEVEL ?? 'info',
+  trustProxyHops: numEnv('TRUST_PROXY_HOPS', 1),
 
   network,
-  horizonUrl: req('HORIZON_URL', 'https://horizon-testnet.stellar.org'),
+  horizonUrl: req('HORIZON_URL', network === 'mainnet' ? 'https://horizon.stellar.org' : 'https://horizon-testnet.stellar.org'),
   friendbotUrl: process.env.FRIENDBOT_URL ?? 'https://friendbot.stellar.org',
   networkPassphrase:
     process.env.NETWORK_PASSPHRASE ??
@@ -81,9 +92,9 @@ export const env = {
       process.env.TREASURY_SIGNER_3_PUBLIC,
     ].filter((s): s is string => !!s),
     thresholds: {
-      low: Number(process.env.TREASURY_THRESHOLD_LOW ?? 2),
-      medium: Number(process.env.TREASURY_THRESHOLD_MED ?? 2),
-      high: Number(process.env.TREASURY_THRESHOLD_HIGH ?? 2),
+      low: numEnv('TREASURY_THRESHOLD_LOW', 2),
+      medium: numEnv('TREASURY_THRESHOLD_MED', 2),
+      high: numEnv('TREASURY_THRESHOLD_HIGH', 2),
     },
   },
 
@@ -106,7 +117,7 @@ export const env = {
   ).filter((a) => a.issuer),
 
   routing: {
-    quoteTimeoutMs: Number(process.env.ROUTING_QUOTE_TIMEOUT_MS ?? 3000),
+    quoteTimeoutMs: numEnv('ROUTING_QUOTE_TIMEOUT_MS', 3000, 1),
     assets: parseRoutingAssets(process.env.ROUTING_ASSETS, network === 'mainnet' ? MAINNET_ROUTING_ASSETS : DEFAULT_ROUTING_ASSETS),
     settlementAssetCode: (process.env.ROUTING_SETTLEMENT_ASSET ?? 'USDC').toUpperCase(),
     sorobanRpcUrl: process.env.SOROBAN_RPC_URL ?? (network === 'mainnet' ? '' : 'https://soroban-testnet.stellar.org'),
@@ -116,7 +127,7 @@ export const env = {
         ? 'https://amm-api.aqua.network/api/external/v2'
         : 'https://amm-api-testnet.aqua.network/api/external/v2'),
     aquaRouterContract: process.env.AQUA_ROUTER_CONTRACT ?? '',
-    slippageBps: Number(process.env.ROUTING_SLIPPAGE_BPS ?? 100),
+    slippageBps: Math.min(numEnv('ROUTING_SLIPPAGE_BPS', 100), 1000),
     stellarBroker: {
       partnerKey: process.env.STELLARBROKER_PARTNER_KEY ?? '',
       apiUrl: process.env.STELLARBROKER_API_URL ?? 'https://api.stellar.broker',
@@ -135,8 +146,8 @@ export const env = {
     secret: process.env.SESSION_SECRET ?? 'dev-insecure-session-secret-change-me',
     cookieName: 'pathpulse_session',
     maxAgeSeconds: 7 * 24 * 60 * 60,
-    opsRoleTtlSeconds: Number(process.env.OPS_ROLE_TTL_SECONDS ?? 15 * 60),
-    partnerRoleTtlSeconds: Number(process.env.PARTNER_ROLE_TTL_SECONDS ?? 8 * 60 * 60),
+    opsRoleTtlSeconds: numEnv('OPS_ROLE_TTL_SECONDS', 15 * 60),
+    partnerRoleTtlSeconds: numEnv('PARTNER_ROLE_TTL_SECONDS', 8 * 60 * 60),
   },
 
   opsOperators: (process.env.OPS_OPERATORS ?? '')
@@ -146,13 +157,13 @@ export const env = {
     .map((s) => (s.includes('@') ? s.toLowerCase() : s)),
 
   indexer: {
-    intervalMs: Number(process.env.INDEXER_INTERVAL_MS ?? 60_000),
+    intervalMs: numEnv('INDEXER_INTERVAL_MS', 60_000, 1),
   },
 
   sponsor: {
-    maxAccountsPerHour: Number(process.env.SPONSOR_MAX_ACCOUNTS_PER_HOUR ?? 20),
-    maxFeeBumpsPerHour: Number(process.env.SPONSOR_MAX_FEE_BUMPS_PER_HOUR ?? 300),
-    minBalanceXlm: Number(process.env.SPONSOR_MIN_BALANCE_XLM ?? 2),
+    maxAccountsPerHour: numEnv('SPONSOR_MAX_ACCOUNTS_PER_HOUR', 20),
+    maxFeeBumpsPerHour: numEnv('SPONSOR_MAX_FEE_BUMPS_PER_HOUR', 300),
+    minBalanceXlm: numEnv('SPONSOR_MIN_BALANCE_XLM', 2),
   },
 
   govPartnerPasscode: process.env.GOV_PARTNER_PASSCODE ?? '',
@@ -176,7 +187,7 @@ export const env = {
     crypto: process.env.OFFRAMP_CRYPTO ?? 'XLM',
     assetId: process.env.OFFRAMP_ASSET_ID ?? 'XLM_XLM',
     fiat: process.env.OFFRAMP_FIAT ?? 'INR',
-    indicativeRate: Number(process.env.OFFRAMP_INDICATIVE_RATE ?? 30),
+    indicativeRate: numEnv('OFFRAMP_INDICATIVE_RATE', 30),
   },
 
   carret: {
@@ -189,15 +200,15 @@ export const env = {
     bankId: process.env.CARRET_BANK_ID ?? '',
     webhookSecret: process.env.CARRET_WEBHOOK_SECRET ?? '',
     httpsProxy: process.env.CARRET_HTTPS_PROXY ?? '',
-    indicativeRate: Number(process.env.CARRET_INDICATIVE_RATE ?? 84),
+    indicativeRate: numEnv('CARRET_INDICATIVE_RATE', 84),
     allowTestnet: process.env.CARRET_ALLOW_TESTNET === 'true',
   },
 
   offrampProvider: (process.env.OFFRAMP_PROVIDER ?? 'ramp') as 'ramp' | 'carret',
 
   sdp: {
-    retryAttempts: Number(process.env.SDP_RETRY_ATTEMPTS ?? 3),
-    retryBaseDelayMs: Number(process.env.SDP_RETRY_BASE_DELAY_MS ?? 500),
+    retryAttempts: Math.min(numEnv('SDP_RETRY_ATTEMPTS', 3, 1), 10),
+    retryBaseDelayMs: Math.min(numEnv('SDP_RETRY_BASE_DELAY_MS', 500), 30_000),
     baseUrl: process.env.SDP_BASE_URL ?? 'http://localhost:8000',
     tenantName: process.env.SDP_TENANT_NAME ?? '',
     apiKey: process.env.SDP_API_KEY ?? '',
@@ -210,7 +221,7 @@ export const env = {
 
   alerts: {
     webhookUrl: process.env.ALERT_WEBHOOK_URL ?? '',
-    healthIntervalMs: Number(process.env.HEALTH_CHECK_INTERVAL_MS ?? 60_000),
+    healthIntervalMs: numEnv('HEALTH_CHECK_INTERVAL_MS', 60_000, 1),
   },
 
   sentry: {
@@ -315,6 +326,13 @@ if (isMainnet) {
     ['SDP_ASSET_ID', env.sdp.assetId],
   ] as const) {
     if (!value) problems.push(`${name} must be set on mainnet`);
+  }
+  for (const [name, value] of [
+    ['HORIZON_URL', env.horizonUrl],
+    ['SOROBAN_RPC_URL', env.routing.sorobanRpcUrl],
+    ['WEB_APP_URL', env.webAppUrl],
+  ] as const) {
+    if (value && !value.startsWith('https://')) problems.push(`${name} must use https on mainnet`);
   }
   if (env.carret.allowTestnet) {
     problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');

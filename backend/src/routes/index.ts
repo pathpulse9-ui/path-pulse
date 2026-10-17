@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { StrKey } from '@stellar/stellar-sdk';
 import type {
   HealthResponse,
   GoogleVerifyRequest,
@@ -16,6 +17,7 @@ import type {
   BuildTransactionRequest,
   SettlementBatch,
   SettlementBatchPage,
+  GroupPayoutBatch,
   OffRampStatus,
 } from '@pathpulse/contract';
 import { env } from '../config/env.js';
@@ -94,6 +96,9 @@ import {
 } from '../services/scoreStore.js';
 import { reconcileOnce } from '../services/orphanReconciler.js';
 import { db as offrampDb } from '../db/client.js';
+import { amountParam, batchFilters, cursorParam, exportRange, limitParam, stellarAddressParam } from './queryParams.js';
+import { logUpstream } from '../util/upstreamLog.js';
+import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
 
 /**
  * D4/T2 demo helper: roll a completed session back to pending (as if the
@@ -164,21 +169,35 @@ import { getManagedWallet, provisionManagedWallet } from '../stellar/managed.js'
 import { createPayoutBatch, listPayoutBatches, getPayoutBatch } from '../services/payouts.js';
 import { listAttempts } from '../services/payoutAttempts.js';
 import { quoteSwap, executeSwap } from '../routing/aggregator.js';
+import { withSwapLock } from '../routing/swapLock.js';
 import { listRoutableAssets } from '../routing/assets.js';
 import { getTreasuryRoutingPlan, buildTreasuryConversion } from '../routing/treasury.js';
 
 export const router = Router();
 
 const VERSION = '0.1.0';
+const AMOUNT_PATTERN = /^\d{1,15}(\.\d{1,7})?$/;
+const RUPEE_PATTERN = /^\d{1,15}(\.\d{1,2})?$/;
+
+const userIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_.-]+$/, 'userId contains unsupported characters')
+  .refine((id) => !/^__.*__$/.test(id), 'userId is reserved');
+const stellarAddressSchema = z
+  .string()
+  .refine((a) => StrKey.isValidEd25519PublicKey(a), 'address must be a Stellar public key');
 
 const scoutTierSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
-const revokeScoutSchema = z.object({ address: z.string().min(1) });
+const revokeScoutSchema = z.object({ address: z.string().min(1).max(64) });
 const createSettlementSchema = z.object({
-  grossAmount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'grossAmount must be a 7-decimal number'),
+  grossAmount: z.string().regex(AMOUNT_PATTERN, 'grossAmount must be a 7-decimal number'),
   asset: assetRefOptional(),
   drivers: z
-    .array(z.object({ userId: z.string().min(1), address: z.string().min(1), tier: scoutTierSchema.optional() }))
-    .min(1),
+    .array(z.object({ userId: userIdSchema, address: stellarAddressSchema, tier: scoutTierSchema.optional() }))
+    .min(1)
+    .max(500),
   depositTxHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/i, 'depositTxHash must be a 64-character transaction hash')
@@ -294,7 +313,7 @@ router.get('/v1/gov/ledger', requireRole('partner', 'ops'), async (req, res, nex
     const s = (k: string) => (typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined);
     res.json({
       indexer: indexerStatus(),
-      ...(await listLedger({ account: s('account'), cursor: s('cursor'), limit: req.query.limit ? Number(req.query.limit) : undefined })),
+      ...(await listLedger({ account: stellarAddressParam(s('account'), 'account'), cursor: cursorParam(req), limit: limitParam(req) })),
     });
   } catch (e) {
     next(e);
@@ -324,7 +343,7 @@ router.get('/v1/ops/egress-ip', async (_req, res, next) => {
     const probes = ['https://api.ipify.org?format=json', 'https://ifconfig.me/all.json'];
     for (const url of probes) {
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        const r = await fetchWithTimeout(url, {}, 5000);
         if (!r.ok) continue;
         const body = await r.json() as { ip?: string; ip_addr?: string };
         const ip = body.ip ?? body.ip_addr;
@@ -366,21 +385,25 @@ router.post('/v1/auth/google/verify', async (req, res, next) => {
       res.status(400).json({ error: 'ValidationError', message: 'idToken is required' });
       return;
     }
-    const { email, sub } = await verifyGoogleIdToken(idToken);
+    const verified = await verifyGoogleIdToken(idToken).catch((err) => {
+      logUpstream('google token verification failed', err);
+      throw httpFail('Google sign-in could not be verified', 401, 'Unauthorized');
+    });
+    const { email, sub } = verified;
     const { userId, wallet } = await ensureAccountForEmail(email, sub);
     await replaceSession(req, res, { userId, method: 'google', email, address: wallet.address });
     const body: GoogleVerifyResponse = { userId, wallet };
     res.json(body);
   } catch (e) {
-    (e as { status?: number }).status = 401;
+    if (!(e as { status?: number }).status) (e as { status?: number }).status = 401;
     next(e);
   }
 });
 
 router.get('/v1/auth/challenge', async (req, res, next) => {
   try {
-    const account = req.query.account;
-    if (typeof account !== 'string' || !account) {
+    const account = stellarAddressParam(typeof req.query.account === 'string' ? req.query.account : undefined, 'account');
+    if (!account) {
       res.status(400).json({ error: 'bad_request', message: 'account query param is required' });
       return;
     }
@@ -399,7 +422,10 @@ router.post('/v1/auth/wallet/verify', async (req, res, next) => {
       res.status(400).json({ error: 'ValidationError', message: 'transaction is required' });
       return;
     }
-    const { userId, address } = await verifyChallenge(transaction);
+    const { userId, address } = await verifyChallenge(transaction).catch((err) => {
+      logUpstream('wallet challenge verification failed', err);
+      throw httpFail('Wallet challenge could not be verified', 401, 'Unauthorized');
+    });
     await replaceSession(req, res, { userId, method: 'wallet', address });
 
     autoWhitelistWallet(userId, address).catch((e) =>
@@ -505,16 +531,19 @@ router.post('/v1/auth/ops/login', async (req, res, next) => {
       });
       return;
     }
-    if (isLockedOut('ops', identity)) {
+    const clientIp = req.ip ?? 'unknown';
+    if (isLockedOut('ops', identity) || isLockedOut('ops-ip', clientIp)) {
       lockedOut(res);
       return;
     }
     if (typeof passcode !== 'string' || !passcodeMatches(passcode, env.opsPasscode)) {
       recordFailure('ops', identity);
+      recordFailure('ops-ip', clientIp);
       res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
       return;
     }
     clearFailures('ops', identity);
+    clearFailures('ops-ip', clientIp);
     await replaceSession(req, res, withRole(session, 'ops'));
     const body: OpsLoginResponse = { userId: session.userId };
     res.json(body);
@@ -643,10 +672,11 @@ function visibleBatch(batch: SettlementBatch, req: Request): SettlementBatch {
 
 const createConvertedSettlementSchema = z.object({
   from: z.string().min(1),
-  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  amount: z.string().regex(AMOUNT_PATTERN, 'amount must be a 7-decimal number'),
   drivers: z
-    .array(z.object({ userId: z.string().min(1), address: z.string().min(1) }))
-    .min(1),
+    .array(z.object({ userId: userIdSchema, address: stellarAddressSchema }))
+    .min(1)
+    .max(500),
 });
 
 router.post('/v1/settlement/converted', requireRole('ops'), idempotency(), async (req, res, next) => {
@@ -660,17 +690,10 @@ router.post('/v1/settlement/converted', requireRole('ops'), idempotency(), async
 
 router.get('/v1/settlement/batches', identifyPartnerKey(), async (req, res, next) => {
   try {
-    const s = (k: string): string | undefined =>
-      typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
     const page = await listSettlementBatches({
-      cursor:    s('cursor'),
-      limit:     req.query.limit ? Number(req.query.limit) : undefined,
-      network:   s('network'),
-      assetCode: s('assetCode'),
-      since:     s('since'),
-      until:     s('until'),
-      minAmount: s('minAmount'),
-      maxAmount: s('maxAmount'),
+      cursor: cursorParam(req),
+      limit: limitParam(req),
+      ...batchFilters(req),
     });
     res.json({ ...page, items: page.items.map((b) => visibleBatch(b, req)) });
   } catch (e) {
@@ -679,20 +702,15 @@ router.get('/v1/settlement/batches', identifyPartnerKey(), async (req, res, next
 });
 
 async function collectBatches(req: Request): Promise<SettlementBatch[]> {
-  const s = (k: string): string | undefined =>
-    typeof req.query[k] === 'string' ? (req.query[k] as string) : undefined;
+  const { since, until } = exportRange(req);
+  const filters = { ...batchFilters(req), since, until };
   const items: SettlementBatch[] = [];
   let cursor: string | null | undefined = undefined;
   for (let i = 0; i < 20; i++) {
     const page: SettlementBatchPage = await listSettlementBatches({
-      cursor:    cursor ?? undefined,
-      limit:     100,
-      network:   s('network'),
-      assetCode: s('assetCode'),
-      since:     s('since'),
-      until:     s('until'),
-      minAmount: s('minAmount'),
-      maxAmount: s('maxAmount'),
+      cursor: cursor ?? undefined,
+      limit: 100,
+      ...filters,
     });
     items.push(...page.items);
     cursor = page.nextCursor;
@@ -752,7 +770,7 @@ router.get('/v1/settlement/batches/:id', identifyPartnerKey(), async (req, res, 
 const groupPayoutRecipientSchema = z.object({
   name: z.string().min(1),
   address: z.string().min(1),
-  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  amount: z.string().regex(AMOUNT_PATTERN, 'amount must be a 7-decimal number'),
   remark: z.string().max(120).optional(),
 });
 const createGroupPayoutSchema = z.object({
@@ -770,19 +788,29 @@ router.post('/v1/settlement/group-payouts', requireRole('ops'), idempotency(), a
   }
 });
 
-router.get('/v1/settlement/group-payouts', async (req, res, next) => {
+function visibleGroupBatch(batch: GroupPayoutBatch, req: Request): GroupPayoutBatch {
+  if (callerRole(req) === 'ops') return batch;
+  return {
+    ...batch,
+    createdBy: undefined,
+    receipts: batch.receipts.map((r) => ({ ...r, name: 'redacted' })),
+  };
+}
+
+router.get('/v1/settlement/group-payouts', requireRole('partner', 'ops'), async (req, res, next) => {
   try {
-    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    res.json(await listGroupPayoutBatches(cursor, limit));
+    const cursor = cursorParam(req);
+    const limit = limitParam(req);
+    const page = await listGroupPayoutBatches(cursor, limit);
+    res.json({ ...page, items: page.items.map((b) => visibleGroupBatch(b, req)) });
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/settlement/group-payouts/:id', async (req, res, next) => {
+router.get('/v1/settlement/group-payouts/:id', requireRole('partner', 'ops'), async (req, res, next) => {
   try {
-    res.json(await getGroupPayoutBatch(req.params.id));
+    res.json(visibleGroupBatch(await getGroupPayoutBatch(req.params.id), req));
   } catch (e) {
     next(e);
   }
@@ -807,8 +835,8 @@ router.post('/v1/ops/payouts/batches', requireRole('ops'), idempotency(), async 
 
 router.get('/v1/ops/payouts/batches', requireRole('ops'), async (req, res, next) => {
   try {
-    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const cursor = cursorParam(req);
+    const limit = limitParam(req);
     res.json(await listPayoutBatches(cursor, limit));
   } catch (e) {
     next(e);
@@ -832,7 +860,7 @@ router.get('/v1/ops/payouts/batches/:id/attempts', requireRole('ops'), async (re
 });
 
 const createWithdrawalSchema = z.object({
-  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  amount: z.string().regex(AMOUNT_PATTERN, 'amount must be a 7-decimal number'),
   asset: assetRefOptional(),
   fiatCurrency: z.string().optional(),
   settlementBatchId: z.string().min(1, 'settlementBatchId is required'),
@@ -841,7 +869,7 @@ const createWithdrawalSchema = z.object({
 router.get('/v1/offramp/quotes', async (req, res, next) => {
   try {
     const amount = typeof req.query.amount === 'string' ? req.query.amount : '';
-    if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) {
+    if (!AMOUNT_PATTERN.test(amount) || Number(amount) <= 0) {
       const e = new Error('amount must be a positive 7-decimal number') as Error & { status: number };
       e.name = 'ValidationError';
       e.status = 400;
@@ -857,7 +885,7 @@ router.post('/v1/offramp/sessions', requireSession(), idempotency(), async (req,
   try {
     const parsed = createWithdrawalSchema.parse(req.body);
     const session = getSessionFromRequest(req)!;
-    const userIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined;
+    const userIp = req.ip || undefined;
     res.json(
       await createWithdrawal(session.userId, parsed, {
         email: session.email,
@@ -872,8 +900,8 @@ router.post('/v1/offramp/sessions', requireSession(), idempotency(), async (req,
 
 router.get('/v1/offramp/sessions', requireSession(), async (req, res, next) => {
   try {
-    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const cursor = cursorParam(req);
+    const limit = limitParam(req);
     res.json(await listWithdrawals(getSessionFromRequest(req)!.userId, cursor, limit));
   } catch (e) {
     next(e);
@@ -890,13 +918,13 @@ router.get('/v1/offramp/sessions/:id', requireSession(), async (req, res, next) 
 
 // Fiat on-ramp (INR → USDC on Carret): mirrors the off-ramp trio.
 const createDepositSchema = z.object({
-  amount: z.string().regex(/^\d+(\.\d{1,2})?$/, 'amount must be a rupee amount (up to 2 decimals)'),
+  amount: z.string().regex(RUPEE_PATTERN, 'amount must be a rupee amount (up to 2 decimals)'),
 });
 
 router.get('/v1/onramp/quotes', requireSession(), async (req, res, next) => {
   try {
     const amount = typeof req.query.amount === 'string' ? req.query.amount : '';
-    if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+    if (!RUPEE_PATTERN.test(amount) || Number(amount) <= 0) {
       const e = new Error('amount must be a positive rupee amount') as Error & { status: number };
       e.name = 'ValidationError'; e.status = 400; throw e;
     }
@@ -914,7 +942,7 @@ router.post('/v1/onramp/sessions', requireSession(), idempotency(), async (req, 
 
 router.get('/v1/onramp/sessions', requireSession(), async (req, res, next) => {
   try {
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const limit = limitParam(req);
     res.json(onrampListSessions(getSessionFromRequest(req)!.userId, limit));
   } catch (e) { next(e); }
 });
@@ -950,7 +978,7 @@ router.get('/v1/offramp/sessions/:id/events', requireSession(), async (req, res,
   } catch (e) { next(e); }
 });
 
-router.post('/v1/ops/offramp/reconcile-once', requireSession(), async (_req, res, next) => {
+router.post('/v1/ops/offramp/reconcile-once', requireRole('ops'), async (_req, res, next) => {
   try {
     res.json(await reconcileOnce());
   } catch (e) { next(e); }
@@ -962,18 +990,20 @@ router.post('/v1/ops/offramp/reconcile-once', requireSession(), async (_req, res
  * a `client` event. The next reconciler pass sees Carret's real
  * `filled` status and writes a `reconciler` event healing it back.
  */
-router.post('/v1/ops/offramp/sessions/:id/simulate-missed-webhook', requireSession(), async (req, res, next) => {
-  try {
-    const userId = getSessionFromRequest(req)!.userId;
-    const s = await getWithdrawal(req.params.id, userId);
-    await offrampMarkPending(s.id, s.status);
-    res.json({ ok: true, sessionId: s.id, rolledTo: 'pending_user_transfer_start' });
-  } catch (e) { next(e); }
-});
+if (env.network !== 'mainnet') {
+  router.post('/v1/ops/offramp/sessions/:id/simulate-missed-webhook', requireRole('ops'), async (req, res, next) => {
+    try {
+      const userId = getSessionFromRequest(req)!.userId;
+      const s = await getWithdrawal(req.params.id, userId);
+      await offrampMarkPending(s.id, s.status);
+      res.json({ ok: true, sessionId: s.id, rolledTo: 'pending_user_transfer_start' });
+    } catch (e) { next(e); }
+  });
+}
 
 router.get('/v1/ops/offramp/sessions', requireRole('ops'), async (req, res, next) => {
   try {
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const limit = limitParam(req);
     res.json({ items: await listAllSessions(limit) });
   } catch (e) { next(e); }
 });
@@ -996,7 +1026,7 @@ router.post('/v1/ops/offramp/reconcile', requireRole('ops'), async (_req, res, n
 });
 
 const routableSchema = z.string().min(1);
-const amountSchema = z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number');
+const amountSchema = z.string().regex(AMOUNT_PATTERN, 'amount must be a 7-decimal number');
 const routingQuoteSchema = z.object({
   from: routableSchema,
   to: routableSchema,
@@ -1024,13 +1054,13 @@ router.get('/v1/routing/quote', async (req, res, next) => {
 router.post('/v1/routing/swap', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const { from, to, amount } = routingSwapSchema.parse(req.body);
-    res.status(201).json(await executeSwap(from, to, amount));
+    res.status(201).json(await withSwapLock(() => executeSwap(from, to, amount)));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
+router.get('/v1/routing/treasury/plan', requireRole('partner', 'ops'), async (_req, res, next) => {
   try {
     res.json(await getTreasuryRoutingPlan());
   } catch (e) {
@@ -1040,7 +1070,7 @@ router.get('/v1/routing/treasury/plan', async (_req, res, next) => {
 
 const treasuryConversionSchema = z.object({
   from: z.string().min(1).max(12),
-  amount: z.string().regex(/^\d+(\.\d{1,7})?$/, 'amount must be a 7-decimal number'),
+  amount: z.string().regex(AMOUNT_PATTERN, 'amount must be a 7-decimal number'),
 });
 
 router.post('/v1/routing/treasury/conversions', requireRole('ops'), async (req, res, next) => {
@@ -1052,7 +1082,7 @@ router.post('/v1/routing/treasury/conversions', requireRole('ops'), async (req, 
   }
 });
 
-const assignScoutSchema = z.object({ driverId: z.string().min(1) }).strict();
+const assignScoutSchema = z.object({ driverId: userIdSchema }).strict();
 
 router.get('/v1/scout', async (_req, res, next) => {
   try {
@@ -1123,7 +1153,7 @@ router.post('/v1/ops/scores/import', requireRole('ops'), async (req, res, next) 
 
 router.get('/v1/ops/scores/imports', requireRole('ops'), async (req, res, next) => {
   try {
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const limit = limitParam(req);
     res.json({ items: await listImports(limit) });
   } catch (e) {
     next(e);
@@ -1166,7 +1196,7 @@ router.get('/v1/scout/score/:driverId', requireSession(), async (req, res, next)
 });
 
 const demoDriversSchema = z.object({
-  driverIds: z.array(z.string().min(1)).min(1).max(10).optional(),
+  driverIds: z.array(userIdSchema).min(1).max(10).optional(),
 });
 
 const DEFAULT_DEMO_DRIVERS = [
@@ -1229,8 +1259,9 @@ router.post('/v1/scout/revoke', requireRole('ops'), async (req, res, next) => {
 
 router.get('/v1/scout/:address', async (req, res, next) => {
   try {
-    const { tier, multiplier } = await getOnchainTier(req.params.address);
-    res.json({ address: req.params.address, tier, multiplier });
+    const address = stellarAddressParam(req.params.address) as string;
+    const { tier, multiplier } = await getOnchainTier(address);
+    res.json({ address, tier, multiplier });
   } catch (e) {
     next(e);
   }
@@ -1425,41 +1456,6 @@ router.get('/v1/carret/resume', async (req, res, next) => {
   }
 });
 
-router.post('/v1/carret/claim-account', requireSession(), async (req, res, next) => {
-  try {
-    const session = getSessionFromRequest(req)!;
-    const parsed = z
-      .object({ account_id: z.union([z.string().min(1), z.number()]) })
-      .parse(req.body);
-    const accountId = String(parsed.account_id);
-
-    const acc = await getSubAccount(accountId);
-    if (!acc?.id) {
-      res.status(404).json({ error: 'NotFound', message: `Carret account ${accountId} not found` });
-      return;
-    }
-
-    const mapping = await upsertMapping({
-      userId: session.userId,
-      carretAccountId: String(acc.id),
-      referenceId: acc.reference_id ?? undefined,
-      kycStatus: (acc.kyc_status as 'verified' | 'pending' | 'rejected' | 'manual_review') ?? 'pending',
-      email: acc.user?.email ?? undefined,
-      phone: acc.phone_number ? String(acc.phone_number) : undefined,
-    });
-
-    res.json({
-      claimed: true,
-      carretAccountId: mapping.carretAccountId,
-      kycStatus: mapping.kycStatus,
-      email: mapping.email,
-      referenceId: mapping.referenceId,
-    });
-  } catch (e) {
-    next(e);
-  }
-});
-
 router.post('/v1/carret/session/reset', async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req);
@@ -1507,6 +1503,7 @@ router.get('/v1/carret/limits', async (req, res, next) => {
 });
 
 const initiateKycSchema = z.object({ account_id: z.union([z.number(), z.string()]) });
+const carretAccountIdParam = z.string().regex(/^\d{1,20}$/, 'accountId must be digits only');
 
 async function ownCarretAccount(userId: string, claimed?: string | number): Promise<string> {
   const mapping = await getMapping(userId);
@@ -1629,7 +1626,7 @@ router.post(
 
 router.get('/v1/carret/kyc/status/:accountId', requireSession(), async (req, res, next) => {
   try {
-    res.json(await getKycStatus(await ownCarretAccount(getSessionFromRequest(req)!.userId, req.params.accountId)));
+    res.json(await getKycStatus(await ownCarretAccount(getSessionFromRequest(req)!.userId, carretAccountIdParam.parse(req.params.accountId))));
   } catch (e) {
     next(e);
   }
@@ -1676,7 +1673,7 @@ router.post('/v1/carret/kyc/digilocker/finish', requireSession(), async (req, re
     const { reference_id, kyc_session_id } = digilockerFinishSchema.parse(req.body);
     const details = await fetchEaadhaarDetails(reference_id);
     const xmlUrl = details.data.xmlAadhaarFile;
-    const xmlRes = await fetch(xmlUrl);
+    const xmlRes = await fetchWithTimeout(xmlUrl);
     if (!xmlRes.ok) {
       throw new Error(`XML presigned-url download failed: ${xmlRes.status}`);
     }
@@ -1764,7 +1761,7 @@ router.get('/v1/carret/deposit-address', requireSession(), async (_req, res, nex
  * — used to retroactively credit a deposit after we fixed the memo type.
  */
 const depositSchema = z.object({
-  amount: z.string().regex(/^\d+(\.\d{1,7})?$/),
+  amount: z.string().regex(AMOUNT_PATTERN),
   txHash: z.string().optional(),
 });
 router.post('/v1/carret/deposit', requireSession(), async (req, res, next) => {

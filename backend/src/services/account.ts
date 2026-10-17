@@ -27,12 +27,17 @@ async function userIdForEmail(email: string, sub: string): Promise<string> {
   );
   const user = row.rows[0];
   if (!user) throw new Error(`Failed to create account for ${email}`);
+  if (user.google_sub === sub) return user.user_id;
   if (user.google_sub === null) {
-    await db().query('update users set google_sub = $2 where email = $1 and google_sub is null', [email, sub]);
-  } else if (user.google_sub !== sub) {
-    throw accountError('This email is bound to a different Google account');
+    const bound = await db().query<{ google_sub: string }>(
+      'update users set google_sub = $2 where email = $1 and google_sub is null returning google_sub',
+      [email, sub],
+    );
+    if (bound.rowCount === 1) return user.user_id;
+    const current = await db().query<{ google_sub: string | null }>('select google_sub from users where email = $1', [email]);
+    if (current.rows[0]?.google_sub === sub) return user.user_id;
   }
-  return user.user_id;
+  throw accountError('This email is bound to a different Google account');
 }
 
 export async function ensureAccountForEmail(

@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/node';
 import type { Express, NextFunction, Request, Response } from 'express';
-import { env } from '../config/env.js';
+import { env, numEnv } from '../config/env.js';
 import { logger } from '../config/logger.js';
 
 /**
@@ -28,7 +28,7 @@ export function initSentry(): void {
     dsn,
     environment: process.env.SENTRY_ENVIRONMENT ?? env.network,
     release: process.env.SENTRY_RELEASE,
-    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? '0.1'),
+    tracesSampleRate: numEnv('SENTRY_TRACES_SAMPLE_RATE', 0.1),
     integrations: [
       Sentry.httpIntegration(),
       Sentry.expressIntegration(),

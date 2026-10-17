@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 
 const CHALLENGE_TIMEOUT_SECONDS = 5 * 60;
+const MAX_USED_CHALLENGES = 10_000;
 const usedChallenges = new Map<string, number>();
 
 function claimChallenge(signedTransaction: string, now = Date.now()): void {
@@ -17,6 +18,7 @@ function claimChallenge(signedTransaction: string, now = Date.now()): void {
     e.status = 401;
     throw e;
   }
+  if (usedChallenges.size >= MAX_USED_CHALLENGES) usedChallenges.delete(usedChallenges.keys().next().value as string);
   usedChallenges.set(hash, now + CHALLENGE_TIMEOUT_SECONDS * 1000);
 }
 

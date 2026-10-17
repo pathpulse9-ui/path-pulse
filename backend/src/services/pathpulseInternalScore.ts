@@ -169,7 +169,7 @@ export const pathpulseInternalScoreProvider: ScoreProvider = {
 
   async getScore(driverId): Promise<ValidationScore> {
     const breakdown = await computeInternalScore(driverId);
-    logger.debug({ driverId, breakdown }, 'internal score computed');
+    logger.debug({ driverId, total: breakdown.total }, 'internal score computed');
     return {
       driverId,
       score: breakdown.total,

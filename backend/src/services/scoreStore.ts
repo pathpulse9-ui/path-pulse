@@ -2,6 +2,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { ScoreSource, ValidationScore } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
+import { trimHead, trimTail } from '../util/bounded.js';
 
 export interface ScoreImportMeta {
   supplier: string;
@@ -56,9 +57,11 @@ export async function saveImport(
 
   if (!hasDb()) {
     memImports.unshift(record);
+    trimTail(memImports, 200);
     for (const s of scores) {
       memScores.push({ ...s, source: 'pulsegen', importId: record.id });
     }
+    trimHead(memScores, 20_000);
     return record;
   }
 
@@ -187,6 +190,7 @@ const memAssignments: AssignmentRecord[] = [];
 export async function recordAssignment(a: AssignmentRecord): Promise<void> {
   if (!hasDb()) {
     memAssignments.unshift(a);
+    trimTail(memAssignments, 5_000);
     return;
   }
   await db().query(

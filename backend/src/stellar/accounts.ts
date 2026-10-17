@@ -41,15 +41,21 @@ export async function listDistributionAccounts(): Promise<DistributionAccount[]>
 
 export async function getTreasuryConfig(): Promise<TreasuryConfig> {
   const publicKey = env.distribution.treasury;
-  let signers = env.treasury.signers.map((pk) => ({ publicKey: pk, weight: 1 }));
+  let signers: Array<{ publicKey: string; weight: number }> = [];
+  let thresholds = env.treasury.thresholds;
   if (publicKey && (await accountExists(publicKey))) {
     const acct = await horizon.loadAccount(publicKey);
     signers = acct.signers.map((s) => ({ publicKey: s.key, weight: s.weight }));
+    thresholds = {
+      low: acct.thresholds.low_threshold,
+      medium: acct.thresholds.med_threshold,
+      high: acct.thresholds.high_threshold,
+    };
   }
   return {
     publicKey,
     signers,
-    thresholds: env.treasury.thresholds,
+    thresholds,
     network: env.network,
   };
 }

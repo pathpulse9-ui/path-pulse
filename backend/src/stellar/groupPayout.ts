@@ -11,6 +11,7 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { toStroops, fromStroops } from './settlement.js';
 import { createPayoutBatch } from '../services/payouts.js';
+import { decodeKeyset, encodeKeyset } from '../db/keyset.js';
 
 const GROUP_PAYOUT_SOURCE_USER = '__group_payout_source__';
 const MAX_RECIPIENTS = 100;
@@ -130,19 +131,20 @@ export async function executeGroupPayout(
 }
 
 export async function listGroupPayoutBatches(cursor?: string, limit = 50): Promise<GroupPayoutBatchPage> {
-  const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
-  const size = Math.min(Math.max(1, limit), 100);
-  const [rows, count] = await Promise.all([
-    db().query<GroupPayoutRow>(
-      'select * from group_payout_batches order by created_at desc, id desc limit $1 offset $2',
-      [size, start],
-    ),
-    db().query<{ n: string }>('select count(*)::text as n from group_payout_batches'),
-  ]);
-  const total = Number(count.rows[0].n);
+  const size = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 100) : 50;
+  const key = decodeKeyset(cursor);
+  const rows = await db().query<GroupPayoutRow>(
+    `select * from group_payout_batches
+     where ($1::timestamptz is null or (created_at, id) < ($1::timestamptz, $2::text))
+     order by created_at desc, id desc
+     limit $3`,
+    [key?.createdAt ?? null, key?.id ?? null, size + 1],
+  );
+  const page = rows.rows.slice(0, size);
+  const last = page[page.length - 1];
   return {
-    items: rows.rows.map(rowToGroupBatch),
-    nextCursor: start + size < total ? String(start + size) : null,
+    items: page.map(rowToGroupBatch),
+    nextCursor: rows.rows.length > size && last ? encodeKeyset(last.created_at, last.id) : null,
   };
 }
 

@@ -1,6 +1,7 @@
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
+import { evictOldest } from '../util/bounded.js';
 
 export interface CarretMapping {
   userId: string;
@@ -77,6 +78,7 @@ export async function getMappingByPhone(phone: string): Promise<CarretMapping | 
 export async function upsertMapping(m: CarretMapping): Promise<CarretMapping> {
   if (!hasDb()) {
     memoryStore.set(m.userId, m);
+    evictOldest(memoryStore, 5_000);
     return m;
   }
   await db().query(

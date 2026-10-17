@@ -9,7 +9,7 @@ export function db(): pg.Pool {
     throw new Error('DATABASE_URL is not configured — managed wallets require a database');
   }
   if (!pool) {
-    pool = new pg.Pool({ connectionString: env.databaseUrl });
+    pool = new pg.Pool({ connectionString: env.databaseUrl, statement_timeout: 20_000 });
     pool.on('error', (e) => logger.error({ err: e }, 'postgres pool error'));
   }
   return pool;

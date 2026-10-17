@@ -61,8 +61,8 @@ export const aquariusProvider: RoutingProvider = {
   canQuote: true,
   canExecute: true,
 
-  async quote(from, to, sourceStroops) {
-    const path = await findPath(from, to, sourceStroops);
+  async quote(from, to, sourceStroops, signal) {
+    const path = await findPath(from, to, sourceStroops, signal);
     return {
       provider: 'aquarius',
       from,
@@ -115,6 +115,7 @@ export const aquariusProvider: RoutingProvider = {
       sourceAmount: fromStroops(sourceStroops),
       estimatedDestinationAmount: fromStroops(path.destinationStroops),
       minDestinationAmount: fromStroops(minOut),
+      destinationAmount: result.returnStroops === undefined ? undefined : fromStroops(result.returnStroops),
       hops: path.pools.length,
       pools: path.pools,
       txHash: result.hash,

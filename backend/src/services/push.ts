@@ -5,6 +5,7 @@ import { env, apnsLive, fcmLive } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 import type { PushPlatform } from '@pathpulse/contract';
+import { evictOldest } from '../util/bounded.js';
 
 export interface PushMessage {
   title: string;
@@ -24,6 +25,7 @@ const memoryDevices = new Map<string, { userId: string; platform: PushPlatform }
 export async function registerDevice(userId: string, token: string, platform: PushPlatform): Promise<void> {
   if (!env.databaseUrl) {
     memoryDevices.set(token, { userId, platform });
+    evictOldest(memoryDevices, 5_000);
     return;
   }
   await db().query(
