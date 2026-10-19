@@ -11,7 +11,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "provision:testnet": "tsx scripts/provision-testnet.ts",
-    "test": "AUTH_RATE_LIMIT=1000 WRITE_RATE_LIMIT=1000 READ_RATE_LIMIT=5000 CARRET_RATE_LIMIT=1000 tsx --test src/**/*.test.ts"
+    "test": "PATHPULSE_ENV_FILE=test.env AUTH_RATE_LIMIT=1000 WRITE_RATE_LIMIT=1000 READ_RATE_LIMIT=5000 CARRET_RATE_LIMIT=1000 tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1118.0",

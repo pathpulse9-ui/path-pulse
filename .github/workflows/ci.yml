@@ -57,7 +57,7 @@ jobs:
 
   ios:
     name: iOS (Swift)
-    runs-on: macos-14
+    runs-on: macos-26
     # Enabled once ios/ has an Xcode project (Phase 1, Daiwik).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
