@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SettlementBatch, GroupPayoutBatch } from '@pathpulse/contract';
+import { isOpsApproval, type SettlementBatch, type GroupPayoutBatch } from '@pathpulse/contract';
 import {
   listSettlementBatches,
   createSettlementBatch,
@@ -12,6 +12,7 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { STELLAR_NETWORK } from '../../lib/network';
 import { parseRecipientsFile, type ParsedRecipient } from '../../lib/parseRecipients';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
+import { PendingApprovals } from '../../components/dashboard/PendingApprovals';
 import { explorerTx, explorerAcct } from '../../lib/network';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
@@ -49,6 +50,8 @@ export default function SettlementPage() {
   const [payoutAsset, setPayoutAsset] = useState<'XLM' | 'USDC'>('XLM');
   const [settlementAsset, setSettlementAsset] = useState<'XLM' | 'USDC'>('XLM');
   const [depositTxHash, setDepositTxHash] = useState('');
+  const [depositMemo, setDepositMemo] = useState('');
+  const [approvalsKey, setApprovalsKey] = useState(0);
   const depositHashInvalid = depositTxHash.trim() !== '' && !/^[0-9a-fA-F]{64}$/.test(depositTxHash.trim());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,8 +85,9 @@ export default function SettlementPage() {
         drivers: SAMPLE_DRIVERS,
         asset: settlementAsset === 'USDC' ? { code: 'USDC' as const, issuer: USDC_ISSUER } : undefined,
         depositTxHash: depositTxHash.trim() || undefined,
+        depositMemo: depositMemo.trim() || undefined,
       };
-      const batch = await runSettlement(settlementRequest, (key) =>
+      const result = await runSettlement(settlementRequest, (key) =>
         createSettlementBatch(settlementRequest, key),
       ).catch(async (e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
@@ -96,7 +100,12 @@ export default function SettlementPage() {
         );
         return getSettlementBatch(id);
       });
-      setSelected(batch);
+      if (isOpsApproval(result)) {
+        setApprovalsKey((k) => k + 1);
+        setStatus(`Above the approval threshold — waiting for a second operator to approve ${result.id}.`);
+        return;
+      }
+      setSelected(result);
       await load();
       setStatus(null);
     } catch (e) {
@@ -105,7 +114,7 @@ export default function SettlementPage() {
     } finally {
       setRunning(false);
     }
-  }, [load, settlementAsset, depositTxHash, runSettlement]);
+  }, [load, settlementAsset, depositTxHash, depositMemo, runSettlement]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -161,6 +170,10 @@ export default function SettlementPage() {
         })),
       };
       const batch = await runGroupPayout(groupRequest, (key) => createGroupPayout(groupRequest, key));
+      if (isOpsApproval(batch)) {
+        setApprovalsKey((k) => k + 1);
+        return;
+      }
       setGroupResult(batch);
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : 'Group payout failed');
@@ -171,6 +184,7 @@ export default function SettlementPage() {
 
   return (
     <div className="space-y-6">
+      <PendingApprovals refreshKey={approvalsKey} onApproved={load} />
       <div className="rounded-2xl bg-white p-6 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -372,6 +386,13 @@ export default function SettlementPage() {
                 depositHashInvalid ? 'border-red-400 focus:border-red-500' : 'border-black/10 focus:border-black/30'
               }`}
             />
+            <input
+              value={depositMemo}
+              onChange={(e) => setDepositMemo(e.target.value.slice(0, 28))}
+              disabled={running}
+              placeholder="Deposit memo"
+              className="w-full sm:w-44 rounded-full border border-black/10 bg-white px-4 h-9 font-mono text-xs outline-none focus:border-black/30 transition-colors duration-200 disabled:opacity-50"
+            />
             <button
               onClick={runSample}
               disabled={running || depositHashInvalid}
@@ -385,7 +406,8 @@ export default function SettlementPage() {
         </div>
 
         <p className="text-xs text-black/50">
-          Link the funding deposit for this run so partners can trace it on the gov dashboard. It must come from the treasury or an authorised sender. It must pay at
+          Link the funding deposit for this run so partners can trace it on the gov dashboard. It must come from the
+          treasury or an authorised sender, and on mainnet it must carry the memo you enter here. It must pay at
           least the gross amount in {settlementAsset} into the settlement source
           {batches[0]?.sourceAddress ? <span className="font-mono"> {batches[0].sourceAddress}</span> : ''}, and can
           fund only one batch.

@@ -137,6 +137,7 @@ export interface CreateSettlementBatchRequest {
   asset?: AssetRef;
   drivers: SettlementDriverInput[];
   depositTxHash?: string;
+  depositMemo?: string;
 }
 
 export interface SettlementDeposit {
@@ -162,6 +163,7 @@ export interface SettlementDriverPayout {
   scoreSource?: ScoreSource;
   scoredAt?: string;
   scoreImportId?: string;
+  payoutTxHash?: string;
 }
 
 export interface SettlementConversion {
@@ -170,12 +172,16 @@ export interface SettlementConversion {
   sourceAmount: string;
   convertedAmount: string;
   swapTxHashes: string[];
-  transferTxHash: string;
+  transferTxHash?: string;
 }
+
+export type SettlementBatchStatus = 'submitted' | 'confirmed' | 'failed';
 
 export interface SettlementBatch {
   id: string;
+  status?: SettlementBatchStatus;
   createdBy?: string;
+  approvedBy?: string;
   deposit?: SettlementDeposit;
   conversion?: SettlementConversion;
   createdAt: string;
@@ -191,6 +197,22 @@ export interface SettlementBatch {
   txHash: string;
   horizonUrl: string;
   payoutBatchId?: string;
+}
+
+export interface OpsApproval {
+  id: string;
+  action: 'settlement' | 'converted_settlement' | 'group_payout';
+  requestBody: unknown;
+  amount: string;
+  requestedBy: string;
+  approvedBy: string | null;
+  status: 'pending' | 'executing' | 'executed' | 'failed' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+}
+
+export function isOpsApproval(value: unknown): value is OpsApproval {
+  return typeof value === 'object' && value !== null && String((value as { id?: unknown }).id).startsWith('apr_');
 }
 
 export interface CreateConvertedSettlementRequest {

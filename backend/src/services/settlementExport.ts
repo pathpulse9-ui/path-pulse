@@ -173,6 +173,7 @@ const PAYOUT_CSV_HEADERS = [
   'scout_tier',
   'multiplier',
   'amount',
+  'payout_tx_hash',
 ] as const;
 
 export function payoutsToCsv(batches: SettlementBatch[]): string {
@@ -193,6 +194,7 @@ export function payoutsToCsv(batches: SettlementBatch[]): string {
           p.tier,
           p.multiplier,
           p.amount,
+          p.payoutTxHash ?? '',
         ]
           .map(csvCell)
           .join(','),

@@ -3,7 +3,7 @@
 What's live in AWS for the mainnet backend, so this doesn't live only in
 one person's shell history.
 
-Last provisioned: 2026-10-14. Region: `us-east-1`. Account: `691650376162`.
+Last provisioned: 2026-10-14. Region: `us-east-1`. Account: `<account-id>`.
 
 ---
 
@@ -11,12 +11,12 @@ Last provisioned: 2026-10-14. Region: `us-east-1`. Account: `691650376162`.
 
 ```
 Service   pathpulse-demo-api
-ARN       arn:aws:apprunner:us-east-1:691650376162:service/pathpulse-demo-api/
-          36dfb0f85c7a424f92726291399a79a9
+ARN       arn:aws:apprunner:us-east-1:<account-id>:service/pathpulse-demo-api/
+          <service-id>
 URL       https://demo-api.pathpulse.ai
-Image     ECR 691650376162.dkr.ecr.us-east-1.amazonaws.com/pathpulse-backend
-Role      arn:aws:iam::691650376162:role/PathPulseAppRunnerInstance
-Egress    VPC (via connector below) — static Elastic IP 3.220.133.103
+Image     ECR <account-id>.dkr.ecr.us-east-1.amazonaws.com/pathpulse-backend
+Role      arn:aws:iam::<account-id>:role/PathPulseAppRunnerInstance
+Egress    VPC (via connector below) — static Elastic IP <egress-eip>
 ```
 
 Env vars are not here — they live inside App Runner's RuntimeEnvironmentVariables.
@@ -31,25 +31,25 @@ through an AWS NAT pool, so partners can't allowlist us. The VPC egress
 below pins outbound to one Elastic IP.
 
 ```
-VPC             vpc-0fd140f0f651f80ff   10.100.0.0/16
-Public  1a      subnet-097c6638a4e70906f   10.100.0.0/24
-Private 1a      subnet-0c99db8b163291ba5   10.100.10.0/24
-Private 1b      subnet-0577f649c39b26a2e   10.100.11.0/24
-IGW             igw-09b271695a6f6574f
-NAT GW          nat-0badb95e87dded7e8     (in public-1a)
-Elastic IP      3.220.133.103             (eipalloc-06cfbd3da467ab473)
-Public RT       rtb-00f549222c5b18dd3     (0.0.0.0/0 → IGW)
-Private RT      rtb-0d2c804923c627f3e     (0.0.0.0/0 → NAT)
-Security Group  sg-05b13d041ea7892dc      (outbound-only)
+VPC             <vpc-id>   10.100.0.0/16
+Public  1a      <subnet-id>   10.100.0.0/24
+Private 1a      <subnet-id>   10.100.10.0/24
+Private 1b      <subnet-id>   10.100.11.0/24
+IGW             <igw-id>
+NAT GW          <nat-gateway-id>     (in public-1a)
+Elastic IP      <egress-eip>             (<eip-allocation-id>)
+Public RT       <route-table-id>     (0.0.0.0/0 → IGW)
+Private RT      <route-table-id>     (0.0.0.0/0 → NAT)
+Security Group  <sg-id>      (outbound-only)
 VPC Connector   arn:aws:apprunner:us-east-1:…/vpcconnector/pathpulse-vpc-connector/
-                1/9052e6db3f8b4da3b066dcaade03941d
+                <connector-revision>
 ```
 
 Every resource is tagged `app=pathpulse` so cost-tracking + cleanup are easy.
 
 Monthly cost: ~$33 (NAT Gateway + Elastic IP + modest data transfer).
 
-### Partners that must whitelist 3.220.133.103
+### Partners that must whitelist <egress-eip>
 
 - **Carret** (`prod.carret.in`) — Anurag whitelisted 2026-10-14.
 
@@ -68,16 +68,17 @@ IP changes. Then tell partners to re-whitelist.
 Two distinct keys — do not reuse one for both purposes.
 
 ```
-Treasury signer     arn:aws:kms:us-east-1:691650376162:key/
-                    bdf81ab2-d5dd-4be0-ac6b-f95b46d4f1d1
-                    SIGN_VERIFY, ECC_NIST_P256.
+Treasury signer     arn:aws:kms:us-east-1:<account-id>:key/
+                    <key-id>
+                    SIGN_VERIFY, ECC_NIST_EDWARDS25519 (Ed25519; signs with ED25519_SHA_512 over MessageType RAW).
                     Backs the Stellar treasury signer.
                     .env: KMS_KEY_ID=...
 
-Data KEK            arn:aws:kms:us-east-1:691650376162:key/
-                    c9bf4f53-66df-4429-955b-2a69f328853f
+Data KEK            alias/pathpulse-kek
                     ENCRYPT_DECRYPT, SYMMETRIC_DEFAULT.
-                    alias/pathpulse-kek
+                    Refer to it by alias only. Two symmetric keys are described as
+                    the KEK in this account; confirm which one wraps the live
+                    KEY_ENCRYPTION_KEY_CIPHERTEXT before retiring the other.
                     Wraps the per-driver seed-encryption key stored in
                     managed_wallets.sealed_seed.
                     .env: KEY_ENCRYPTION_KEY_CIPHERTEXT=<base64 ciphertext>
@@ -102,16 +103,16 @@ All resources are tagged `app=pathpulse` in `us-east-1`, inside the existing VPC
 
 | Resource | Name / ID |
 |---|---|
-| EC2 host | `pathpulse-mainnet-sdp`, t3.small, private IP `10.100.10.18`, no public IP |
+| EC2 host | `pathpulse-mainnet-sdp`, t3.small, private IP `<private-ip>`, no public IP |
 | RDS Postgres 14 | `pathpulse-mainnet-sdp-db`, db.t4g.micro, encrypted, private, deletion protection, 7-day backups |
-| Security groups | `sg-0e9c93d1d226b0c5b` (host, port 8000 from the App Runner connector SG), `sg-0ffee4f4d5b139c92` (DB, 5432 from the host SG) |
+| Security groups | `<sg-id>` (host, port 8000 from the App Runner connector SG), `<sg-id>` (DB, 5432 from the host SG) |
 | IAM | role and instance profile `pathpulse-mainnet-sdp-role` |
 | Secrets Manager | `pathpulse-mainnet-sdp/env` |
 | CloudWatch logs | `pathpulse-mainnet-sdp`, 30-day retention |
 
 The host runs `stellar/stellar-disbursement-platform-backend:6.6.1` through Docker Compose in `/opt/sdp`. Access is through SSM Session Manager only.
 
-The backend reaches it at `SDP_BASE_URL=http://10.100.10.18:8000`. `DRIVER_POOL_PUBLIC` must be the tenant's distribution account, not the host account.
+The backend reaches it at `SDP_BASE_URL=http://<private-ip>:8000`. `DRIVER_POOL_PUBLIC` must be the tenant's distribution account, not the host account.
 
 ## Daily operations
 

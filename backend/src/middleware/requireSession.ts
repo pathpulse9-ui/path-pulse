@@ -6,9 +6,19 @@ import { verifiedPartnerKeyLimiter } from './rateLimit.js';
 export type PartnerKeyRequest = Request & { partnerKeyId?: string };
 
 export function requireSession() {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!getSessionFromRequest(req)) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const session = getSessionFromRequest(req);
+    if (!session) {
       res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+      return;
+    }
+    try {
+      if (await isSessionRevokedInDb(session)) {
+        res.status(401).json({ error: 'Unauthorized', message: 'session required' });
+        return;
+      }
+    } catch (e) {
+      next(e);
       return;
     }
     next();

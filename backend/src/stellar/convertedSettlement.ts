@@ -1,5 +1,5 @@
 import { BASE_FEE, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
-import type { CreateConvertedSettlementRequest, SettlementBatch } from '@pathpulse/contract';
+import type { CreateConvertedSettlementRequest, SettlementBatch, SettlementDeposit } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { executeSwap } from '../routing/aggregator.js';
@@ -20,26 +20,16 @@ function httpError(message: string, status: number, name: string): Error {
   return e;
 }
 
-async function heldStroops(address: string, code: string, issuer?: string): Promise<bigint> {
-  const account = await horizon.loadAccount(address);
-  const line = account.balances.find((b) =>
-    issuer
-      ? 'asset_code' in b && b.asset_code === code && b.asset_issuer === issuer
-      : b.asset_type === 'native',
-  );
-  return line ? toStroops(line.balance) : 0n;
-}
-
 export function executeConvertedSettlement(
   req: CreateConvertedSettlementRequest,
-  opts: { createdBy?: string } = {},
+  opts: { createdBy?: string; approvedBy?: string } = {},
 ): Promise<SettlementBatch> {
   return withSwapLock(() => runConvertedSettlement(req, opts));
 }
 
 async function runConvertedSettlement(
   req: CreateConvertedSettlementRequest,
-  opts: { createdBy?: string },
+  opts: { createdBy?: string; approvedBy?: string },
 ): Promise<SettlementBatch> {
   assertMainnetAllowed('converted settlement');
   if (!req.drivers?.length) throw httpError('drivers must be a non-empty array', 400, 'ValidationError');
@@ -50,25 +40,32 @@ async function runConvertedSettlement(
 
   const swapSource = await provisionManagedWallet(SWAP_SOURCE_USER);
   const settlementSource = await provisionManagedWallet(SETTLEMENT_SOURCE_USER);
-  const before = await heldStroops(swapSource.address, target.ref.code, target.ref.issuer);
   const swap = await executeSwap(req.from, env.routing.settlementAssetCode, req.amount);
-  const converted = swap.destinationAmount
-    ? toStroops(swap.destinationAmount)
-    : (await heldStroops(swapSource.address, target.ref.code, target.ref.issuer)) - before;
+  if (!swap.destinationAmount) {
+    throw httpError(
+      `Swap ${swap.txHash} reported no output amount — refusing to settle from a balance estimate`,
+      502,
+      'RoutingUnavailable',
+    );
+  }
+  const converted = toStroops(swap.destinationAmount);
   if (converted <= 0n) {
     throw httpError(`Swap ${swap.txHash} delivered no ${target.ref.code} to the routing source`, 502, 'RoutingUnavailable');
   }
   const convertedAmount = fromStroops(converted);
 
-  const transfer = new TransactionBuilder(await horizon.loadAccount(swapSource.address), {
-    fee: BASE_FEE,
-    networkPassphrase: env.networkPassphrase,
-  })
-    .addOperation(Operation.payment({ destination: settlementSource.address, asset: target.asset, amount: convertedAmount }))
-    .setTimeout(120)
-    .build();
-  const signed = await (await getManagedSigner(SWAP_SOURCE_USER)).sign(transfer);
-  const moved = await submitToHorizon(signed, 'converted funds transfer');
+  let transferTxHash: string | undefined;
+  if (swapSource.address !== settlementSource.address) {
+    const transfer = new TransactionBuilder(await horizon.loadAccount(swapSource.address), {
+      fee: BASE_FEE,
+      networkPassphrase: env.networkPassphrase,
+    })
+      .addOperation(Operation.payment({ destination: settlementSource.address, asset: target.asset, amount: convertedAmount }))
+      .setTimeout(120)
+      .build();
+    const signed = await (await getManagedSigner(SWAP_SOURCE_USER)).sign(transfer);
+    transferTxHash = (await submitToHorizon(signed, 'converted funds transfer')).hash;
+  }
 
   const conversion: SettlementBatch['conversion'] = {
     provider: swap.provider,
@@ -76,21 +73,30 @@ async function runConvertedSettlement(
     sourceAmount: swap.sourceAmount,
     convertedAmount,
     swapTxHashes: swap.txHashes ?? [swap.txHash],
-    transferTxHash: moved.hash,
+    transferTxHash,
+  };
+  const fundedBy: SettlementDeposit = {
+    txHash: transferTxHash ?? swap.txHash,
+    from: swapSource.address,
+    amount: convertedAmount,
+    receivedAt: new Date().toISOString(),
   };
 
   try {
     return await executeSettlementBatch(
-      { grossAmount: convertedAmount, asset: target.ref, drivers: req.drivers, depositTxHash: moved.hash },
-      { createdBy: opts.createdBy, conversion },
+      { grossAmount: convertedAmount, asset: target.ref, drivers: req.drivers },
+      { createdBy: opts.createdBy, approvedBy: opts.approvedBy, conversion, fundedBy },
     );
   } catch (e) {
-    logger.error({ err: e, conversion }, 'converted funds moved to the settlement source but the settlement failed');
-    throw httpError(
-      `Converted ${convertedAmount} ${target.ref.code} reached the settlement source (tx ${moved.hash}) but the ` +
-        `settlement failed (${(e as Error).name}). Retry POST /v1/settlement/batches with depositTxHash ${moved.hash}.`,
+    logger.error({ err: e, conversion }, 'converted funds reached the settlement source but the settlement failed');
+    const failure = httpError(
+      `Converted ${convertedAmount} ${target.ref.code} reached the settlement source (tx ${fundedBy.txHash}) but the ` +
+        `settlement failed (${(e as Error).name}). The converted funds stay in the settlement source; an operator ` +
+        'must settle them from a treasury deposit.',
       502,
       'SettlementAfterConversionFailed',
-    );
+    ) as Error & { keepIdempotencyKey: boolean };
+    failure.keepIdempotencyKey = true;
+    throw failure;
   }
 }

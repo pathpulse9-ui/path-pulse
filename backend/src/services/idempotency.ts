@@ -78,32 +78,31 @@ export function idempotency() {
       return;
     }
 
+    const store = (statusCode: number, body: unknown) => {
+      const keep = statusCode < 400 || (res.locals as { keepIdempotencyKey?: boolean }).keepIdempotencyKey === true;
+      const query = keep
+        ? db().query(
+            `update idempotency_requests
+             set status_code = $3, response_json = $4, completed_at = now()
+             where user_id = $1 and key = $2`,
+            [userId, key, statusCode, JSON.stringify(body ?? null)],
+          )
+        : db().query('delete from idempotency_requests where user_id = $1 and key = $2', [userId, key]);
+      query.catch((e) => logger.error({ err: e, userId, key }, 'idempotency result store failed'));
+    };
+
     const origJson = res.json.bind(res);
     let captured = false;
     res.json = ((body: unknown) => {
       if (captured) return origJson(body);
       captured = true;
-      db()
-        .query(
-          `update idempotency_requests
-           set status_code = $3, response_json = $4, completed_at = now()
-           where user_id = $1 and key = $2`,
-          [userId, key, res.statusCode || 200, JSON.stringify(body ?? null)],
-        )
-        .catch((e) => logger.error({ err: e, userId, key }, 'idempotency result store failed'));
+      store(res.statusCode || 200, body);
       return origJson(body);
     }) as typeof res.json;
     res.on('finish', () => {
       if (captured) return;
       captured = true;
-      db()
-        .query(
-          `update idempotency_requests
-           set status_code = $3, response_json = $4, completed_at = now()
-           where user_id = $1 and key = $2`,
-          [userId, key, res.statusCode || 200, JSON.stringify(null)],
-        )
-        .catch((e) => logger.error({ err: e, userId, key }, 'idempotency result store failed'));
+      store(res.statusCode || 200, null);
     });
 
     next();
@@ -112,5 +111,7 @@ export function idempotency() {
 
 export async function sweepExpiredKeys(): Promise<void> {
   if (!env.databaseUrl) return;
-  await db().query("delete from idempotency_requests where created_at < now() - interval '24 hours'");
+  await db().query(
+    "delete from idempotency_requests where completed_at is not null and created_at < now() - interval '24 hours'",
+  );
 }

@@ -8,7 +8,8 @@ import { logger } from './config/logger.js';
 import { router } from './routes/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { registerSentryErrorHandler, sentryUserFromSession } from './observability/sentry.js';
-import { authLimiter, partnerKeyLimiter, writeLimiter } from './middleware/rateLimit.js';
+import { authLimiter, carretLimiter, partnerKeyLimiter, readLimiter, writeLimiter } from './middleware/rateLimit.js';
+import { dropRevokedSessions } from './services/session.js';
 
 export function createServer() {
   const app = express();
@@ -16,6 +17,7 @@ export function createServer() {
   app.use(helmet());
   app.use(cors({ origin: env.webAppUrl, credentials: true }));
   app.use(cookieParser());
+  app.use(dropRevokedSessions());
   app.use(
     express.json({
       verify: (req, _res, buf) => {
@@ -35,6 +37,8 @@ export function createServer() {
     authLimiter,
   );
   app.use(writeLimiter);
+  app.use(readLimiter);
+  app.use('/v1/carret', carretLimiter);
   app.use(sentryUserFromSession());
   app.use(partnerKeyLimiter);
   app.use(router);

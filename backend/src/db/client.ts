@@ -331,10 +331,67 @@ create table if not exists webhook_receipts (
   received_at timestamptz not null default now()
 );
 
+create table if not exists sep10_used_challenges (
+  hash text primary key,
+  expires_at timestamptz not null
+);
+
 create table if not exists revoked_sessions (
   jti text primary key,
   expires_at timestamptz not null
 );
+
+alter table settlement_batches add column if not exists status text not null default 'confirmed';
+alter table settlement_batches add column if not exists approved_by text;
+create index if not exists settlement_batches_status_idx on settlement_batches (status) where status <> 'confirmed';
+
+create table if not exists settlement_deposit_claims (
+  deposit_tx_hash text primary key,
+  batch_id text not null,
+  claimed_at timestamptz not null default now()
+);
+insert into settlement_deposit_claims (deposit_tx_hash, batch_id)
+  select distinct on (deposit_tx_hash) deposit_tx_hash, id
+    from settlement_batches
+   where deposit_tx_hash is not null and status <> 'failed'
+   order by deposit_tx_hash, created_at
+  on conflict (deposit_tx_hash) do nothing;
+
+create table if not exists ops_approvals (
+  id text primary key,
+  action text not null,
+  request_body jsonb not null,
+  request_hash text not null,
+  amount text not null,
+  requested_by text not null,
+  approved_by text,
+  status text not null default 'pending',
+  result jsonb,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+create table if not exists ops_totp_steps (
+  identity text primary key,
+  last_step bigint not null
+);
+
+create table if not exists rate_limit_hits (
+  key text primary key,
+  hits int not null,
+  reset_at timestamptz not null
+);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'managed_wallets_reserved_ids') then
+    alter table managed_wallets add constraint managed_wallets_reserved_ids
+      check (user_id !~ '^__.*__$' or user_id in (
+        '__reserve_sponsor__', '__settlement_source__', '__group_payout_source__',
+        '__scout_issuer__', '__routing_swap_source__'
+      )) not valid;
+  end if;
+end $$;
 `;
 
 export async function migrate(): Promise<void> {

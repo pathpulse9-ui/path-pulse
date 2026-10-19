@@ -105,12 +105,14 @@ export default function GovSettlementDetailPage(
             {batch.conversion.swapTxHashes.map((h, i) => (
               <Kv key={h} label={`Swap tx ${i + 1}`} value={h} mono link={`${explorer}/tx/${h}`} />
             ))}
-            <Kv
-              label="Transfer tx"
-              value={batch.conversion.transferTxHash}
-              mono
-              link={`${explorer}/tx/${batch.conversion.transferTxHash}`}
-            />
+            {batch.conversion.transferTxHash && (
+              <Kv
+                label="Transfer tx"
+                value={batch.conversion.transferTxHash}
+                mono
+                link={`${explorer}/tx/${batch.conversion.transferTxHash}`}
+              />
+            )}
           </div>
         </section>
       )}

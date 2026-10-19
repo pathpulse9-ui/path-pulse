@@ -143,31 +143,44 @@ function rowToBatch(r: PayoutBatchRow): PayoutBatch {
 }
 
 async function insertBatch(batch: PayoutBatch): Promise<boolean> {
-  const res = await db().query(
-    `insert into payout_batches
-       (id, provider, sandbox, status, asset_code, asset_issuer, total_amount, receipts,
-        settlement_batch_id, disbursement_id, created_by, created_at, updated_at)
-     select $1, 'sdp', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-     where $8::text is null or not exists (
-       select 1 from payout_batches where settlement_batch_id = $8 and status is distinct from 'error'
-     )
-     on conflict (id) do nothing`,
-    [
-      batch.id,
-      batch.sandbox,
-      batch.status,
-      batch.asset.code,
-      batch.asset.issuer ?? null,
-      batch.totalAmount,
-      JSON.stringify(batch.receipts),
-      batch.settlementBatchId ?? null,
-      batch.disbursementId ?? null,
-      batch.createdBy ?? null,
-      batch.createdAt,
-      batch.updatedAt,
-    ],
-  );
-  return (res.rowCount ?? 0) > 0;
+  const client = await db().connect();
+  try {
+    await client.query('begin');
+    if (batch.settlementBatchId) {
+      await client.query('select pg_advisory_xact_lock(hashtext($1))', [batch.settlementBatchId]);
+    }
+    const res = await client.query(
+      `insert into payout_batches
+         (id, provider, sandbox, status, asset_code, asset_issuer, total_amount, receipts,
+          settlement_batch_id, disbursement_id, created_by, created_at, updated_at)
+       select $1, 'sdp', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+       where $8::text is null or not exists (
+         select 1 from payout_batches where settlement_batch_id = $8 and status is distinct from 'error'
+       )
+       on conflict (id) do nothing`,
+      [
+        batch.id,
+        batch.sandbox,
+        batch.status,
+        batch.asset.code,
+        batch.asset.issuer ?? null,
+        batch.totalAmount,
+        JSON.stringify(batch.receipts),
+        batch.settlementBatchId ?? null,
+        batch.disbursementId ?? null,
+        batch.createdBy ?? null,
+        batch.createdAt,
+        batch.updatedAt,
+      ],
+    );
+    await client.query('commit');
+    return (res.rowCount ?? 0) > 0;
+  } catch (e) {
+    await client.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function priorBatchCount(settlementBatchId: string): Promise<number> {
@@ -285,4 +298,14 @@ export async function listPayoutBatches(cursor?: string, limit = 50): Promise<Pa
   const items = await Promise.all(page.map((row) => refresh(rowToBatch(row))));
   const last = page[page.length - 1];
   return { items, nextCursor: rows.rows.length > size && last ? encodeKeyset(last.created_at, last.id) : null };
+}
+
+export async function storedReceipts(payoutBatchIds: string[]): Promise<Map<string, PayoutReceipt[]>> {
+  const ids = [...new Set(payoutBatchIds.filter(Boolean))];
+  if (!ids.length || !env.databaseUrl) return new Map();
+  const r = await db().query<{ id: string; receipts: PayoutReceipt[] | null }>(
+    'select id, receipts from payout_batches where id = any($1)',
+    [ids],
+  );
+  return new Map(r.rows.map((row) => [row.id, row.receipts ?? []]));
 }

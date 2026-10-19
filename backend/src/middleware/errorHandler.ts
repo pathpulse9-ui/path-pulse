@@ -27,6 +27,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   }
 
   const status = err?.status ?? 500;
+  if (err?.keepIdempotencyKey) res.locals.keepIdempotencyKey = true;
   if (ALERTING_ERRORS.has(err?.name) || status >= 500) {
     captureException(err, { requestId, path: req.path });
     sendAlertInBackground({

@@ -9,12 +9,19 @@ const channel = Keypair.random().publicKey();
 const usdc = new Asset('USDC', Keypair.random().publicKey());
 const xlm = Asset.native();
 
-const limits = { trader, selling: xlm, buying: usdc, maxSellStroops: 200_000_000n, maxFeeStroops: 10_000_000n };
+const limits = {
+  trader,
+  selling: xlm,
+  buying: usdc,
+  maxSellStroops: 200_000_000n,
+  minBuyStroops: 20_000_000n,
+  maxFeeStroops: 10_000_000n,
+};
 
-function tx(ops: xdr.Operation[], source = trader, fee = '100') {
+function tx(ops: xdr.Operation[], source = trader, fee = '100', timeout = 60) {
   const b = new TransactionBuilder(new Account(source, '1'), { fee, networkPassphrase: Networks.PUBLIC });
   for (const op of ops) b.addOperation(op);
-  return b.setTimeout(60).build();
+  return b.setTimeout(timeout).build();
 }
 
 const swap = (amount: string, over: Partial<Parameters<typeof Operation.pathPaymentStrictSend>[0]> = {}) =>
@@ -23,7 +30,7 @@ const swap = (amount: string, over: Partial<Parameters<typeof Operation.pathPaym
     sendAmount: amount,
     destination: trader,
     destAsset: usdc,
-    destMin: '0.0000001',
+    destMin: (Number(amount) / 10).toFixed(7),
     path: [],
     ...over,
   });
@@ -62,11 +69,39 @@ test('payments, wrong assets, foreign sources and redirected proceeds are refuse
   assert.equal(guard.committedSellStroops, 0n);
 });
 
-test('a strict-send fee to the broker counts toward the sell cap', () => {
+test('a fee leg paying the broker is refused: every leg must pay the trading account', () => {
   const guard = createBrokerGuard(limits);
-  guard.approve(tx([swap('19'), swap('1', { destination: brokerFeeAccount, destAsset: xlm })]));
-  assert.equal(guard.committedSellStroops, 200_000_000n);
-  assert.throws(() => guard.approve(tx([swap('0.0000001')])), { name: 'BrokerTxRefused' });
+  assert.throws(
+    () => guard.approve(tx([swap('19'), swap('1', { destination: brokerFeeAccount, destAsset: xlm })])),
+    { name: 'BrokerTxRefused', message: /other than the trading account/ },
+  );
+  assert.equal(guard.committedSellStroops, 0n);
+});
+
+test('a leg below the quoted minimum rate is refused', () => {
+  const guard = createBrokerGuard(limits);
+  assert.throws(() => guard.approve(tx([swap('10', { destMin: '0.9999999' })])), {
+    name: 'BrokerTxRefused',
+    message: /less than the quoted minimum/,
+  });
+  const strictReceive = Operation.pathPaymentStrictReceive({
+    sendAsset: xlm,
+    sendMax: '10',
+    destination: trader,
+    destAsset: usdc,
+    destAmount: '0.5',
+    path: [],
+  });
+  assert.throws(() => guard.approve(tx([strictReceive])), /less than the quoted minimum/);
+  guard.approve(tx([swap('10', { destMin: '1' })]));
+  assert.equal(guard.committedSellStroops, 100_000_000n);
+});
+
+test('transactions without an expiry or valid for more than 60 seconds are refused', () => {
+  const guard = createBrokerGuard(limits);
+  assert.throws(() => guard.approve(tx([swap('1')], trader, '100', 0)), /no expiry/);
+  assert.throws(() => guard.approve(tx([swap('1')], trader, '100', 600)), /longer than 60s/);
+  assert.equal(guard.committedSellStroops, 0n);
 });
 
 test('fee bumps must wrap an approved transaction, be paid by the trader, and stay under the fee cap', () => {
@@ -84,4 +119,25 @@ test('fee bumps must wrap an approved transaction, be paid by the trader, and st
 test('raw Soroban authorization payloads are never signed', () => {
   const guard = createBrokerGuard(limits);
   assert.throws(() => guard.approve(Buffer.alloc(32)), /raw authorization payloads/);
+});
+
+test('the converted amount is what the chain delivered to the trader, not what the broker reports', async () => {
+  const { sumDelivered } = await import('./stellarbroker-provider.js');
+  const issuer = usdc.getIssuer();
+  const ops = [
+    { type: 'path_payment_strict_send', to: trader, amount: '3.5000000', asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: issuer },
+    { type: 'path_payment_strict_receive', to: trader, amount: '1.2500000', asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: issuer },
+    { type: 'path_payment_strict_send', to: brokerFeeAccount, amount: '9.0000000', asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: issuer },
+    { type: 'payment', to: trader, amount: '100.0000000', asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: issuer },
+    { type: 'path_payment_strict_send', to: trader, amount: '7.0000000', asset_type: 'native' },
+  ];
+  assert.equal(sumDelivered(ops, trader, usdc), 47_500_000n);
+});
+
+test('an Aquarius amount that is not a whole stroop count is refused', async () => {
+  const { parseStroopAmount } = await import('./aquarius.js');
+  assert.equal(parseStroopAmount('12345'), 12345n);
+  for (const bad of ['-1', '1.5', '1e30', '', 'NaN', '9'.repeat(40)]) {
+    assert.throws(() => parseStroopAmount(bad), { name: 'RoutingUnavailable' });
+  }
 });

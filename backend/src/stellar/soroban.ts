@@ -1,4 +1,4 @@
-import { rpc, scValToNative, Transaction } from '@stellar/stellar-sdk';
+import { rpc, scValToNative, Transaction, type xdr } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 import { horizon } from './network.js';
 import { assertMainnetAllowed } from './networkGuard.js';
@@ -33,12 +33,16 @@ export interface SorobanResult {
 const POLL_INTERVAL_MS = 1000;
 const POLL_ATTEMPTS = 30;
 
+export function stroopsFromScVal(value: xdr.ScVal): bigint | undefined {
+  const native = scValToNative(value);
+  return typeof native === 'bigint' && native >= 0n ? native : undefined;
+}
+
 async function returnedAmount(hash: string): Promise<bigint | undefined> {
   try {
     const tx = await sorobanServer().getTransaction(hash);
     if (tx.status !== rpc.Api.GetTransactionStatus.SUCCESS || !tx.returnValue) return undefined;
-    const native = scValToNative(tx.returnValue);
-    return typeof native === 'bigint' && native >= 0n ? native : undefined;
+    return stroopsFromScVal(tx.returnValue);
   } catch {
     return undefined;
   }

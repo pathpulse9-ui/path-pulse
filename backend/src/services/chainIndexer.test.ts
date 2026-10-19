@@ -53,3 +53,15 @@ test('historical outflows found during a backfill do not alert', () => {
   const old = toIndexedPayment({ ...base, transaction_hash: 'tx9' }, watched)!;
   assert.deepEqual(unexplainedOutflows([old], 'GSOURCE', new Set(), Date.parse(base.created_at) + 2 * 86_400_000), []);
 });
+
+test('the reserve alarm ignores zero-balance sponsored account creations but not funded ones', () => {
+  const now = Date.now();
+  const at = new Date(now - 60_000).toISOString();
+  const sponsored = { id: 's', account: 'GRESERVE', role: 'reserve', txHash: 'sp', type: 'create_account', from: 'GRESERVE', to: 'GNEW', assetCode: 'XLM', assetIssuer: null, amount: '0.0000000', createdAt: at };
+  const funded = { ...sponsored, id: 'f', txHash: 'fund', amount: '5.0000000' };
+  const drained = { ...sponsored, id: 'd', txHash: 'drain', type: 'payment', amount: '100.0000000' };
+  assert.deepEqual(
+    unexplainedOutflows([sponsored, funded, drained], 'GRESERVE', new Set(), now).map((p) => p.txHash),
+    ['fund', 'drain'],
+  );
+});

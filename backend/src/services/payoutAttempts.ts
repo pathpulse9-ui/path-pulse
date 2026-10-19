@@ -33,6 +33,11 @@ const TRANSIENT_NETWORK_CODES = new Set([
   'UND_ERR_SOCKET',
 ]);
 
+export function attemptErrorSummary(error: unknown): string {
+  const e = error as { name?: string; status?: number; code?: string };
+  return [e?.name || 'Error', e?.status ? `status ${e.status}` : '', e?.code ?? ''].filter(Boolean).join(' · ');
+}
+
 function isRetryable(e: unknown): boolean {
   const status = (e as { status?: number })?.status;
   if (typeof status === 'number') return status === 408 || status === 429 || status >= 500;
@@ -55,7 +60,7 @@ async function record(
   error?: unknown,
   disbursementId?: string,
 ): Promise<void> {
-  const message = error instanceof Error ? error.message : error ? String(error) : null;
+  const message = error ? attemptErrorSummary(error) : null;
   try {
     await db().query(
       `insert into payout_attempts (batch_id, disbursement_id, step, attempt, outcome, error, duration_ms)

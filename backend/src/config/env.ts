@@ -29,6 +29,17 @@ export function numEnv(name: string, fallback: number, min = 0): number {
   return n;
 }
 
+function parseIdentityMap(raw: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const at = entry.lastIndexOf('=');
+    if (at <= 0) throw new Error('OPS_TOTP_SECRETS entries must be identity=BASE32SECRET');
+    const identity = entry.slice(0, at).trim();
+    map.set(identity.includes('@') ? identity.toLowerCase() : identity, entry.slice(at + 1).trim());
+  }
+  return map;
+}
+
 const network = (process.env.STELLAR_NETWORK ?? 'testnet') as StellarNetwork;
 if (network !== 'testnet' && network !== 'mainnet') {
   throw new Error(`STELLAR_NETWORK must be testnet|mainnet, got: ${network}`);
@@ -148,6 +159,28 @@ export const env = {
     maxAgeSeconds: 7 * 24 * 60 * 60,
     opsRoleTtlSeconds: numEnv('OPS_ROLE_TTL_SECONDS', 15 * 60),
     partnerRoleTtlSeconds: numEnv('PARTNER_ROLE_TTL_SECONDS', 8 * 60 * 60),
+    privilegedMaxAgeSeconds: 8 * 60 * 60,
+  },
+
+  opsTotpSecrets: parseIdentityMap(process.env.OPS_TOTP_SECRETS ?? ''),
+
+  opsApproval: {
+    threshold: process.env.OPS_APPROVAL_THRESHOLD ?? (network === 'mainnet' ? '100' : ''),
+    ttlSeconds: numEnv('OPS_APPROVAL_TTL_SECONDS', 15 * 60, 60),
+  },
+
+  govPartners: (process.env.GOV_PARTNERS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => (s.includes('@') ? s.toLowerCase() : s)),
+
+  scoutReview: {
+    intervalMs: numEnv('SCOUT_REVIEW_INTERVAL_MS', 24 * 60 * 60 * 1000),
+  },
+
+  settlementReconcile: {
+    intervalMs: numEnv('SETTLEMENT_RECONCILE_INTERVAL_MS', 60_000),
   },
 
   opsOperators: (process.env.OPS_OPERATORS ?? '')
@@ -312,6 +345,13 @@ if (isMainnet) {
   }
   if (!env.opsPasscode) problems.push('OPS_PASSCODE must be set on mainnet');
   if (!env.opsOperators.length) problems.push('OPS_OPERATORS must be set on mainnet');
+  for (const op of env.opsOperators) {
+    if (!env.opsTotpSecrets.has(op)) problems.push(`OPS_TOTP_SECRETS has no second factor for operator ${op}`);
+  }
+  if (!env.govPartners.length) problems.push('GOV_PARTNERS must list the individual partner identities on mainnet');
+  if (env.opsApproval.threshold && !/^\d{1,15}(\.\d{1,7})?$/.test(env.opsApproval.threshold)) {
+    problems.push('OPS_APPROVAL_THRESHOLD must be a decimal amount');
+  }
   if (!env.sep10.signingSecret) problems.push('SEP10_SIGNING_SECRET must be set on mainnet');
   if (!process.env.SEP10_HOME_DOMAIN || /localhost|127\.0\.0\.1/.test(env.sep10.homeDomain)) {
     problems.push('SEP10_HOME_DOMAIN must be the public API host on mainnet — it becomes the SCOUT issuer home_domain');
@@ -333,6 +373,10 @@ if (isMainnet) {
     ['WEB_APP_URL', env.webAppUrl],
   ] as const) {
     if (value && !value.startsWith('https://')) problems.push(`${name} must use https on mainnet`);
+  }
+  const publicApiUrl = process.env.PUBLIC_API_URL ?? '';
+  if (env.offrampProvider === 'ramp' && !publicApiUrl.startsWith('https://')) {
+    problems.push('PUBLIC_API_URL must be an https URL on mainnet — it is the off-ramp callback address');
   }
   if (env.carret.allowTestnet) {
     problems.push('CARRET_ALLOW_TESTNET=true is a dev-only escape hatch and must be false on mainnet');

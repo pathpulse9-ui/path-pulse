@@ -36,6 +36,7 @@ import type {
   OpsStatusResponse,
   TreasuryConversionTx,
   SubmitTransactionResponse,
+  OpsApproval,
 } from '@pathpulse/contract';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
@@ -158,10 +159,10 @@ export function partnerLogin(passcode: string) {
   });
 }
 
-export function opsLogin(passcode: string) {
+export function opsLogin(passcode: string, totp: string) {
   return apiFetch<OpsLoginResponse>('/v1/auth/ops/login', {
     method: 'POST',
-    body: JSON.stringify({ passcode }),
+    body: JSON.stringify({ passcode, totp: totp || undefined }),
   });
 }
 
@@ -257,7 +258,7 @@ export function getCarretLimits() {
 }
 
 export function createSettlementBatch(req: CreateSettlementBatchRequest, idempotencyKey: string) {
-  return apiFetch<SettlementBatch>('/v1/settlement/batches', {
+  return apiFetch<SettlementBatch | OpsApproval>('/v1/settlement/batches', {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(req),
@@ -273,10 +274,21 @@ export function getGroupPayout(id: string) {
 }
 
 export function createGroupPayout(req: CreateGroupPayoutRequest, idempotencyKey: string) {
-  return apiFetch<GroupPayoutBatch>('/v1/settlement/group-payouts', {
+  return apiFetch<GroupPayoutBatch | OpsApproval>('/v1/settlement/group-payouts', {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(req),
+  });
+}
+
+export function listPendingApprovals() {
+  return apiFetch<{ items: OpsApproval[] }>('/v1/ops/approvals');
+}
+
+export function approveRequest(id: string, idempotencyKey: string) {
+  return apiFetch<unknown>(`/v1/ops/approvals/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
   });
 }
 

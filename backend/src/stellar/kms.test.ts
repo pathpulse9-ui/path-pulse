@@ -131,3 +131,17 @@ test('signature survives an XDR round-trip', async () => {
 test('requires a key id', async () => {
   await assert.rejects(() => AwsKmsSigner.create('', fakeKms({})), /KMS_KEY_ID is not set/);
 });
+
+test('a service account routes through KMS only when the KMS key alone meets every threshold', async () => {
+  const { kmsCanSignAlone } = await import('./managed.js');
+  const kmsKey = 'GKMS';
+  const account = (signers: { key: string; weight: number }[], t: [number, number, number]) => ({
+    signers,
+    thresholds: { low_threshold: t[0], med_threshold: t[1], high_threshold: t[2] },
+  });
+  assert.equal(kmsCanSignAlone(account([{ key: 'GMASTER', weight: 1 }], [0, 0, 0]), kmsKey), false);
+  assert.equal(kmsCanSignAlone(account([{ key: 'GMASTER', weight: 1 }, { key: kmsKey, weight: 1 }], [0, 0, 0]), kmsKey), true);
+  assert.equal(kmsCanSignAlone(account([{ key: 'GMASTER', weight: 0 }, { key: kmsKey, weight: 1 }], [1, 1, 1]), kmsKey), true);
+  assert.equal(kmsCanSignAlone(account([{ key: 'GMASTER', weight: 2 }, { key: kmsKey, weight: 1 }], [1, 2, 2]), kmsKey), false);
+  assert.equal(kmsCanSignAlone(account([{ key: kmsKey, weight: 0 }], [0, 0, 0]), kmsKey), false);
+});

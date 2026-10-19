@@ -1,7 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { Asset, BASE_FEE, Keypair, Memo, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
-import { horizon, submitToHorizon } from '../stellar/network.js';
-import { getManagedSigner, getManagedWallet } from '../stellar/managed.js';
+import { Keypair } from '@stellar/stellar-sdk';
 import { logger } from '../config/logger.js';
 import type {
   AssetRef,
@@ -28,6 +26,7 @@ interface CarretQuoteShape {
 
 import {
   carretMocks,
+  createCryptoDeposit,
   createOfframpQuote,
   getConfiguredDepositAddress,
   getOfframpOrder,
@@ -41,6 +40,9 @@ import { getMapping } from './carretSubAccountStore.js';
 import { reserveUsage, releaseUsage } from './carretLimits.js';
 import { decodeKeyset, encodeKeyset } from '../db/keyset.js';
 import { notifyUserInBackground } from './push.js';
+import { sendAlertInBackground } from './alerts.js';
+import { sendCarretDeposit } from './carretDeposit.js';
+import { logUpstream } from '../util/upstreamLog.js';
 import {
   findSessionByCarretOrderId,
   getSession,
@@ -59,40 +61,44 @@ function httpError(message: string, status: number, name: string): Error {
   return e;
 }
 
-export async function broadcastCarretDeposit(params: {
-  userId: string;
-  destination: string;
-  memo?: string;
-  amount: string;
-}): Promise<string> {
-  const wallet = await getManagedWallet(params.userId);
-  if (!wallet) {
-    throw httpError(`Managed wallet not provisioned for user ${params.userId}`, 500, 'ConfigError');
+export async function registerCarretDeposit(
+  s: SessionInternal,
+  accountId: string,
+  deposit: { id: number; asset: string; chain: string },
+): Promise<boolean> {
+  if (!s.stellarTxHash) return false;
+  try {
+    await createCryptoDeposit({
+      accountId,
+      carretWalletId: deposit.id,
+      asset: deposit.asset,
+      chain: deposit.chain,
+      amount: s.amount,
+      txnId: s.stellarTxHash,
+    });
+    return true;
+  } catch (e) {
+    logUpstream('carret deposit registration failed', e);
+    sendAlertInBackground({
+      key: `offramp:register:${s.id}`,
+      severity: 'critical',
+      title: 'Off-ramp deposit sent but not registered with Carret',
+      detail: `Session ${s.id}: tx ${s.stellarTxHash} reached Carret's address but /crypto_deposit/ failed. Retry with POST /v1/ops/offramp/sessions/${s.id}/register-deposit.`,
+    });
+    return false;
   }
-  const signer = await getManagedSigner(params.userId);
-  const issuer = process.env.CARRET_USDC_ISSUER ?? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
-  const asset = new Asset('USDC', issuer);
+}
 
-  const source = await horizon.loadAccount(wallet.address);
-  const builder = new TransactionBuilder(source, {
-    fee: BASE_FEE,
-    networkPassphrase: env.networkPassphrase,
-  }).addOperation(Operation.payment({
-    destination: params.destination,
-    asset,
-    amount: params.amount,
-  }));
-  if (params.memo) {
-    const digitsOnly = /^\d{1,20}$/.test(params.memo);
-    builder.addMemo(
-      digitsOnly ? Memo.id(params.memo) : Memo.text(params.memo),
-    );
+export async function retryDepositRegistration(sessionId: string): Promise<{ registered: boolean; txHash: string }> {
+  const s = await getSession(sessionId);
+  if (!s) throw httpError(`Off-ramp session ${sessionId} not found`, 404, 'NotFound');
+  if (s.provider !== 'carret' || !s.stellarTxHash) {
+    throw httpError(`Session ${sessionId} has no backend-broadcast Carret deposit to register`, 422, 'NoDeposit');
   }
-
-  let tx = builder.setTimeout(180).build();
-  tx = (await signer.sign(tx)) as typeof tx;
-  const res = await submitToHorizon(tx, 'carret deposit payment');
-  return res.hash;
+  const mapping = await getMapping(s.ppUserId);
+  if (!mapping) throw httpError(`Session ${sessionId} owner has no Carret account`, 422, 'NoMapping');
+  const deposit = await getConfiguredDepositAddress();
+  return { registered: await registerCarretDeposit(s, mapping.carretAccountId, deposit), txHash: s.stellarTxHash };
 }
 
 export interface OffRampContext {
@@ -187,66 +193,68 @@ const carretLiveProvider: OffRampProvider = {
         'ConfigError',
       );
     }
+    const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
+    if (!mapping) {
+      throw httpError(
+        'Withdrawals need your own Carret account — complete Carret sign-up and KYC first',
+        422,
+        'NoMapping',
+      );
+    }
+    const accountId = mapping.carretAccountId;
+
     const deposit = await getConfiguredDepositAddress();
     session.anchorAccount = deposit.address;
     s.carretDepositMemo = deposit.memo_label;
-
-    const mapping = s.ppUserId ? await getMapping(s.ppUserId) : null;
-    const accountId: number | string | undefined = mapping?.carretAccountId ?? env.carret.accountId;
 
     const routeId = await resolveOfframpRouteId();
     const quote = await createOfframpQuote({ routeId, amount: session.amount, accountId });
 
     const fiatInr = Number(quote.output_amount.amount);
-    if (mapping) {
-      await reserveUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
-    }
+    await reserveUsage(accountId, 'withdraw_inr', fiatInr);
 
-    let orderPlaced = false;
+    let order: CarretOrder;
     try {
-      let bankId: number | string | undefined = env.carret.bankId || undefined;
-      if (mapping) {
-        try {
-          const banks = await listBanks(mapping.carretAccountId);
-          const preferred =
-            banks.find((b) => String(b.status).toLowerCase() === 'verified') ?? banks[0];
-          if (preferred) bankId = preferred.id;
-        } catch { }
-      }
-      if (!bankId) {
+      const banks = await listBanks(accountId);
+      const preferred = banks.find((b) => String(b.status).toLowerCase() === 'verified');
+      if (!preferred) {
         throw httpError(
           'No verified bank on your Carret account. Register a bank first, then retry.',
           422,
           'NoBankRegistered',
         );
       }
-
-      const order = await placeOfframpOrder({ quoteId: quote.id, bankId, accountId });
-      orderPlaced = true;
-      s.carretQuoteId = String(quote.id);
-      s.carretOrderId = String(order.id);
-      session.fiatAmountEstimate = fiatInr.toFixed(2);
-      session.merchantTransactionId = String(order.id);
-      session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
-
-      if (env.network === 'mainnet' && s.ppUserId) {
-        try {
-          const txHash = await broadcastCarretDeposit({
-            userId: s.ppUserId,
-            destination: deposit.address,
-            memo: deposit.memo_label ?? undefined,
-            amount: session.amount,
-          });
-          s.stellarTxHash = txHash;
-          s.network = 'mainnet';
-        } catch (e) {
-          logger?.warn?.({ err: e, sessionId: session.id }, 'carret deposit broadcast failed');
-        }
-      }
+      order = await placeOfframpOrder({ quoteId: quote.id, bankId: preferred.id, accountId });
     } catch (e) {
-      if (mapping && !orderPlaced) await releaseUsage(mapping.carretAccountId, 'withdraw_inr', fiatInr);
+      await releaseUsage(accountId, 'withdraw_inr', fiatInr);
       throw e;
     }
+    s.carretQuoteId = String(quote.id);
+    s.carretOrderId = String(order.id);
+    session.fiatAmountEstimate = fiatInr.toFixed(2);
+    session.merchantTransactionId = String(order.id);
+    session.interactiveUrl = `${env.webAppUrl}/dashboard/offramp?session=${session.id}`;
+
+    if (env.network !== 'mainnet' || !s.ppUserId) return;
+
+    let txHash: string;
+    try {
+      txHash = await sendCarretDeposit(s.ppUserId, deposit.address, deposit.memo_label, session.amount);
+    } catch (e) {
+      logger.error({ err: e, sessionId: session.id, carretOrderId: s.carretOrderId }, 'carret deposit broadcast failed');
+      await releaseUsage(accountId, 'withdraw_inr', fiatInr);
+      session.status = 'error';
+      sendAlertInBackground({
+        key: `offramp:broadcast:${session.id}`,
+        severity: 'critical',
+        title: 'Off-ramp deposit was not sent — cancel the Carret order',
+        detail: `Session ${session.id}: the USDC deposit failed, so Carret order ${s.carretOrderId} on account ${accountId} will never fill. Cancel it in the Carret dashboard.`,
+      });
+      return;
+    }
+    s.stellarTxHash = txHash;
+    s.network = 'mainnet';
+    await registerCarretDeposit(s, accountId, deposit);
   },
   async status(session) {
     const s = session as SessionInternal;
@@ -303,6 +311,9 @@ export function checkWithdrawalEntitlement(
 
 async function assertWithdrawalEntitlement(userId: string, settlementBatchId: string, amount: string): Promise<void> {
   const batch = await getSettlementBatch(settlementBatchId);
+  if (batch.status && batch.status !== 'confirmed') {
+    throw httpError(`Settlement batch ${settlementBatchId} is ${batch.status}, not confirmed on-chain`, 409, 'SettlementNotConfirmed');
+  }
   checkWithdrawalEntitlement(userId, settlementBatchId, amount, batch.driverPayouts ?? [], await listSessionsByUser(userId));
 }
 
@@ -462,7 +473,7 @@ export async function applyCarretCallback(
   carretStatus: string,
 ): Promise<boolean> {
   const s = await findSessionByCarretOrderId(String(orderId));
-  if (!s) return false;
+  if (!s || s.provider !== 'carret') return false;
   const mapped = mapCarretStatus(carretStatus);
   if (mapped) await applyStatus(s, mapped, 'webhook', { carretStatus, orderId: String(orderId) });
   return true;
@@ -474,7 +485,7 @@ export async function reconcileSessionStatus(
   detail: Record<string, unknown>,
 ): Promise<OffRampSession | null> {
   const s = await getSession(sessionId);
-  if (!s) return null;
+  if (!s || s.provider !== 'carret') return null;
   return applyStatus(s, next, 'reconciler', detail);
 }
 
@@ -483,7 +494,7 @@ export async function attachCarretOrder(
   orderId: string,
 ): Promise<void> {
   const s = await getSession(sessionId);
-  if (!s) return;
+  if (!s || s.provider !== 'carret') return;
   s.carretOrderId = String(orderId);
   s.merchantTransactionId = String(orderId);
   s.updatedAt = new Date().toISOString();

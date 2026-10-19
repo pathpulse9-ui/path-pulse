@@ -81,7 +81,8 @@ test('recovers from a transient failure and records both attempts', async (t) =>
   const attempts = await listAttempts(id);
   assert.equal(attempts.length, 2);
   assert.equal(attempts[0].outcome, 'failure');
-  assert.match(attempts[0].error ?? '', /SDP unavailable/);
+  assert.match(attempts[0].error ?? '', /status 503/);
+  assert.doesNotMatch(attempts[0].error ?? '', /SDP unavailable/);
   assert.equal(attempts[1].outcome, 'success');
 });
 

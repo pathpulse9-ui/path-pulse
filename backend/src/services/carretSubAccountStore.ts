@@ -2,6 +2,7 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 import { evictOldest } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface CarretMapping {
   userId: string;
@@ -16,7 +17,7 @@ export interface CarretMapping {
 const memoryStore = new Map<string, CarretMapping>();
 
 function hasDb(): boolean {
-  return Boolean(env.databaseUrl);
+  return databaseOrMemory('Carret account store');
 }
 
 function rowToMapping(r: Record<string, unknown>): CarretMapping {

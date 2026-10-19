@@ -8,6 +8,7 @@ export function OpsSignIn() {
   const { user, refresh } = useSession();
   const [open, setOpen] = useState(false);
   const [passcode, setPasscode] = useState('');
+  const [totp, setTotp] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -38,17 +39,18 @@ export function OpsSignIn() {
     setSubmitting(true);
     setError(null);
     try {
-      await opsLogin(passcode);
+      await opsLogin(passcode, totp);
       await refresh();
       setOpen(false);
       setPasscode('');
+      setTotp('');
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 403
           ? 'Operator access needs a Google or wallet sign-in on the operator allowlist.'
           : err instanceof ApiError && err.status === 429
             ? 'Too many failed attempts. Try again in 15 minutes.'
-            : 'Incorrect passcode.',
+            : 'Incorrect passcode or authenticator code.',
       );
     } finally {
       setSubmitting(false);
@@ -69,7 +71,8 @@ export function OpsSignIn() {
           className="absolute right-0 top-12 z-30 w-72 rounded-2xl border border-black/5 bg-white p-4 shadow-lg"
         >
           <p className="text-xs text-black/60">
-            Settlement, payouts and SCOUT issuance require an operator session. It expires after 15 minutes.
+            Settlement, payouts and SCOUT issuance require an operator session with your authenticator code. It
+            expires after 15 minutes.
           </p>
           <input
             type="password"
@@ -78,6 +81,16 @@ export function OpsSignIn() {
             placeholder="Operator passcode"
             autoFocus
             className="mt-3 w-full rounded-lg border border-black/10 px-3 py-2 text-sm focus:border-black/40 focus:outline-none"
+          />
+          <input
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]{6}"
+            maxLength={6}
+            value={totp}
+            onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+            placeholder="Authenticator code"
+            className="mt-2 w-full rounded-lg border border-black/10 px-3 py-2 text-sm focus:border-black/40 focus:outline-none"
           />
           {error && <div className="mt-2 text-xs text-red-700">{error}</div>}
           <button

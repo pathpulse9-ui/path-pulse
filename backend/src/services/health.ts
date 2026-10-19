@@ -75,6 +75,19 @@ async function checkServiceBalances(): Promise<void> {
   if (short.length) throw new Error(short.join('; '));
 }
 
+async function checkServiceSigning(): Promise<void> {
+  const { getManagedSigner, getManagedWallet, isServiceAccount, serviceSigningMode } = await import('../stellar/managed.js');
+  for (const [name] of SERVICE_ACCOUNT_FLOORS) {
+    if (!isServiceAccount(name)) continue;
+    const wallet = await getManagedWallet(name).catch(() => null);
+    if (wallet?.provisioned) await getManagedSigner(name);
+  }
+  const seeded = Object.entries(serviceSigningMode()).filter(([, mode]) => mode === 'sealed-seed');
+  if (seeded.length) {
+    throw new Error(`service accounts still signing with sealed seeds: ${seeded.map(([a]) => a).join(', ')}`);
+  }
+}
+
 export function defaultChecks(): HealthCheck[] {
   const checks: HealthCheck[] = [
     {
@@ -92,6 +105,9 @@ export function defaultChecks(): HealthCheck[] {
   ];
   if (env.databaseUrl) {
     checks.push({ name: 'database', run: async () => void (await db().query('select 1')) });
+  }
+  if (env.databaseUrl && env.network === 'mainnet' && env.signerBackend === 'aws-kms') {
+    checks.push({ name: 'kms-service-signing', run: checkServiceSigning });
   }
   if (sdpLive) checks.push({ name: 'sdp', run: probeSdp });
   if (sdpLive && env.network === 'mainnet') {

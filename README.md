@@ -40,8 +40,8 @@ Institutional reward programmes have the same failure mode everywhere: money goe
 
 ### Accounts & custody
 - **Protocol-governed distribution accounts** — Partner Revenue, Driver Pool and Treasury are provisioned as distinct on-chain accounts, so every flow of funds has a named, auditable origin and destination.
-- **Multisig treasury** — the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set.
-- **Human-gated signing** — the `Signer` interface abstracts keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware. Protocol service accounts sign through it today (`SIGNER_BACKEND=aws-kms`).
+- **Multisig treasury** — on testnet the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set. **The mainnet treasury is not a multisig yet** — see [Mainnet custody status](#mainnet-custody-status).
+- **Human-gated signing** — the `Signer` interface abstracts keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware. On testnet, protocol service accounts sign through it. **On mainnet they do not yet** — see [Mainnet custody status](#mainnet-custody-status).
 - **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits, for the account named by the caller's own session. The client never holds a key — which also means this path is **custodial**, not self-custody.
 
 ### Identity & wallet interop
@@ -225,6 +225,23 @@ signing but cannot strand an account.
 
 ## 🔒 Security & trust
 
+### Mainnet custody status
+
+Stated as of 2026-10-19, because earlier versions of this README overstated it.
+
+| Claim | Testnet | Mainnet today |
+|---|---|---|
+| Protocol accounts sign through AWS KMS | Yes — the KMS key is a signer on each service account | **No.** The deployed build signs every protocol account with a seed unsealed in the API process. One reserve key signs settlements, swaps, sponsorship and fee bumps. |
+| Treasury is a 2-of-3 multisig | Yes — `GBRXUTNC…`, master weight 0, thresholds 2/2/2 | **No.** The mainnet treasury has one signer and thresholds 0/0/0, so one leaked key can empty it. |
+| Driver seeds are sealed under a KMS-wrapped key | Yes | Yes — but the key-encryption key is unwrapped once and held in the API process for its lifetime. |
+
+What closes the gap, in order:
+
+1. **Service-account signing through KMS.** The code on `main` now signs a service account through KMS whenever the ledger shows the KMS key can authorise it alone, and the readiness check `kms-service-signing` fails while any service account still signs with its seed. The ceremony is `backend/scripts/mainnet-setup.ts attach-kms`, then `retire-master --confirm`, which zeroes each master key in a transaction signed by KMS only.
+2. **Treasury ceremony.** Three signers held by three people, master weight 0, thresholds 2/2/2, verified on Horizon — runbook in [`docs/TREASURY_CEREMONY.md`](docs/TREASURY_CEREMONY.md).
+
+Until both are done and verified on the ledger, mainnet activity is limited to operator-funded smoke tests.
+
 **The signer is the boundary.** Every mainnet-capable path goes through the `Signer` interface, and the dev implementation throws on mainnet by construction. Promoting to production means supplying a KMS or HSM backend, not flipping a flag.
 
 **The treasury is never auto-signed.** The backend builds the multisig `SetOptions` transaction and returns XDR for review. A signatory signs it. There is deliberately no code path where the service configures its own signer set.
@@ -233,7 +250,7 @@ signing but cannot strand an account.
 
 **Webhooks are verified against raw bytes.** Off-ramp callbacks check `X-Body-Signature` before any status is applied, and correlation happens on a server-issued reference rather than a caller-supplied id.
 
-**Protocol accounts sign through AWS KMS.** Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware — key spec `ECC_NIST_EDWARDS25519`, algorithm `ED25519_SHA_512` over `MessageType: RAW`, so the private key never enters the application process. The four protocol service accounts each carry the KMS-derived address as an authorized signer; live proof is transaction [`3b73c013…`](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47), whose signature verifies against the KMS key. Full record in [`docs/KMS_VERIFICATION.md`](docs/KMS_VERIFICATION.md).
+**Protocol accounts sign through AWS KMS on testnet.** Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware — key spec `ECC_NIST_EDWARDS25519`, algorithm `ED25519_SHA_512` over `MessageType: RAW`, so the private key never enters the application process. The four protocol service accounts each carry the KMS-derived address as an authorized signer; live proof is transaction [`3b73c013…`](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47), whose signature verifies against the KMS key. Full record in [`docs/KMS_VERIFICATION.md`](docs/KMS_VERIFICATION.md). Mainnet is not there yet — see [Mainnet custody status](#mainnet-custody-status).
 
 **Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. That key-encryption key is itself wrapped by AWS KMS (`alias/pathpulse-kek`) and unwrapped at startup, so **KMS is the root of trust for every user key**. A separate KMS key per driver is deliberately avoided: at $1 per key per month it would cost $10,000/month at 10,000 drivers.
 

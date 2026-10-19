@@ -66,8 +66,14 @@ export async function findPath(
     swapChainXdr: data.swap_chain_xdr,
     pools: data.pools ?? [],
     tokens: data.tokens ?? [],
-    destinationStroops: BigInt(data.amount),
+    destinationStroops: parseStroopAmount(data.amount),
   };
+}
+
+export function parseStroopAmount(raw: unknown): bigint {
+  const text = String(raw ?? '');
+  if (!/^\d{1,25}$/.test(text)) throw httpError('Aquarius returned an invalid amount', 502, 'RoutingUnavailable');
+  return BigInt(text);
 }
 
 export function applySlippage(destinationStroops: bigint): bigint {

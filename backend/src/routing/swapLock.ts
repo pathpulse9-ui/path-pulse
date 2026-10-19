@@ -1,7 +1,7 @@
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 
-const SWAP_LOCK_KEY = 7_411_902_001;
+export const SWAP_LOCK_KEY = 7_411_902_001;
 
 let tail: Promise<unknown> = Promise.resolve();
 

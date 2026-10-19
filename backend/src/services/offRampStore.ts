@@ -2,6 +2,7 @@ import type { OffRampSession, OffRampStatus } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { db } from '../db/client.js';
 import { evictOldest, trimHead } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface StoredOffRampSession extends OffRampSession {
   ppUserId: string;
@@ -39,7 +40,7 @@ const memSessions = new Map<string, StoredOffRampSession>();
 const memEvents: OffRampStatusEvent[] = [];
 
 function hasDb(): boolean {
-  return Boolean(env.databaseUrl);
+  return databaseOrMemory('off-ramp store');
 }
 
 export async function saveSession(s: StoredOffRampSession): Promise<void> {

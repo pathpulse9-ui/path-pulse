@@ -3,6 +3,7 @@ import type { ScoreSource, ValidationScore } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { trimHead, trimTail } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface ScoreImportMeta {
   supplier: string;
@@ -33,7 +34,7 @@ const memImports: ScoreImport[] = [];
 const memScores: (StoredScore & { importId: string | null })[] = [];
 
 function hasDb(): boolean {
-  return Boolean(env.databaseUrl);
+  return databaseOrMemory('score store');
 }
 
 export function hashPayload(raw: string): string {

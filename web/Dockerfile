@@ -1,10 +1,17 @@
-FROM node:24-slim AS build
+ARG NODE_IMAGE=node:24-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+
+FROM ${NODE_IMAGE} AS base
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/contract/package.json packages/contract/
 COPY backend/package.json backend/
 COPY web/package.json web/
+
+FROM base AS deps
+RUN pnpm install --filter web... --frozen-lockfile --prod
+
+FROM base AS build
 RUN pnpm install --filter web... --frozen-lockfile
 COPY packages/contract packages/contract
 COPY web web
@@ -16,12 +23,16 @@ ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ENV NEXT_PUBLIC_STELLAR_NETWORK=$NEXT_PUBLIC_STELLAR_NETWORK
 RUN pnpm --filter web build
 
-FROM node:24-slim
+FROM ${NODE_IMAGE}
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
-RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
-COPY --from=build /app /app
+COPY --from=deps --chown=root:root /app /app
+COPY --from=build --chown=root:root /app/packages/contract /app/packages/contract
+COPY --from=build --chown=root:root /app/web/public /app/web/public
+COPY --from=build --chown=root:root /app/web/next.config.ts /app/web/next.config.ts
+COPY --from=build --chown=node:node /app/web/.next /app/web/.next
+USER node
 EXPOSE 8080
 WORKDIR /app/web
-CMD ["pnpm","start","-p","8080"]
+CMD ["node", "node_modules/next/dist/bin/next", "start", "-p", "8080"]

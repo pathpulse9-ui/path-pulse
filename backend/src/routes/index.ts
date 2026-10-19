@@ -14,7 +14,6 @@ import type {
   OpsLoginResponse,
   AuthMeResponse,
   OpsStatusResponse,
-  BuildTransactionRequest,
   SettlementBatch,
   SettlementBatchPage,
   GroupPayoutBatch,
@@ -39,6 +38,7 @@ import {
   type SessionPayload,
 } from '../services/session.js';
 import { clearFailures, isLockedOut, recordFailure } from '../services/loginGuard.js';
+import { totpRequired, verifyOperatorTotp } from '../services/totp.js';
 import { isReplay } from '../services/webhookReplay.js';
 import { executeConvertedSettlement } from '../stellar/convertedSettlement.js';
 import { indexerStatus, listLedger } from '../services/chainIndexer.js';
@@ -47,6 +47,10 @@ import {
   executeSettlementBatch,
   listSettlementBatches,
   getSettlementBatch,
+  getSettlementBatchWithPayouts,
+  attachStoredPayoutHashes,
+  fromStroops,
+  toStroops,
 } from '../stellar/settlement.js';
 import { batchesToCsv, batchReceiptPdf, payoutsToCsv } from '../services/settlementExport.js';
 import {
@@ -60,7 +64,7 @@ import {
   getWithdrawal,
   applyCallback,
   applyCarretCallback,
-  broadcastCarretDeposit,
+  retryDepositRegistration,
   activeProvider,
   quoteWithdrawal,
 } from '../services/offramp.js';
@@ -99,6 +103,7 @@ import { db as offrampDb } from '../db/client.js';
 import { amountParam, batchFilters, cursorParam, exportRange, limitParam, stellarAddressParam } from './queryParams.js';
 import { logUpstream } from '../util/upstreamLog.js';
 import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
+import { sendCarretDeposit } from '../services/carretDeposit.js';
 
 /**
  * D4/T2 demo helper: roll a completed session back to pending (as if the
@@ -147,6 +152,14 @@ import {
   upsertMapping, deleteMapping, updateKycStatus, markWalletWhitelisted,
 } from '../services/carretSubAccountStore.js';
 import { idempotency } from '../services/idempotency.js';
+import {
+  claimApproval,
+  finishApproval,
+  listPendingApprovals,
+  needsSecondApproval,
+  requestApproval,
+  type ApprovalRecord,
+} from '../services/approvals.js';
 import { getRewards } from '../services/payoutHistory.js';
 import { defaultChecks, runChecks, lastMonitorReport } from '../services/health.js';
 import { recentAlerts, DEDUPE_WINDOW_MS } from '../services/alerts.js';
@@ -190,8 +203,9 @@ const stellarAddressSchema = z
   .refine((a) => StrKey.isValidEd25519PublicKey(a), 'address must be a Stellar public key');
 
 const scoutTierSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
-const revokeScoutSchema = z.object({ address: z.string().min(1).max(64) });
+const revokeScoutSchema = z.object({ address: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a), 'address must be a Stellar public key') });
 const createSettlementSchema = z.object({
+  depositMemo: z.string().min(1).max(28).optional(),
   grossAmount: z.string().regex(AMOUNT_PATTERN, 'grossAmount must be a 7-decimal number'),
   asset: assetRefOptional(),
   drivers: z
@@ -467,15 +481,23 @@ function passcodeMatches(supplied: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function signedInIdentity(session: SessionPayload | null): string | null {
+  if (!session) return null;
+  if (session.method === 'google' && session.email) return session.email.toLowerCase();
+  if (session.method === 'wallet' && session.address) return session.address;
+  return null;
+}
+
 function operatorIdentity(session: SessionPayload): string | null {
-  const identity =
-    session.method === 'google' && session.email
-      ? session.email.toLowerCase()
-      : session.method === 'wallet' && session.address
-        ? session.address
-        : null;
+  const identity = signedInIdentity(session);
   if (!identity) return null;
   if (env.opsOperators.length && !env.opsOperators.includes(identity)) return null;
+  return identity;
+}
+
+function partnerIdentity(session: SessionPayload | null): string | null {
+  const identity = signedInIdentity(session);
+  if (!identity || !env.govPartners.includes(identity)) return null;
   return identity;
 }
 
@@ -490,7 +512,16 @@ router.post('/v1/auth/partner/login', async (req, res, next) => {
       res.status(500).json({ error: 'ConfigError', message: 'GOV_PARTNER_PASSCODE not configured' });
       return;
     }
-    const identity = req.ip ?? 'unknown';
+    const existing = getSessionFromRequest(req);
+    const individual = partnerIdentity(existing);
+    if (env.govPartners.length && !individual) {
+      res.status(403).json({
+        error: 'Forbidden',
+        message: 'partner access needs a Google or wallet sign-in that is on the partner allowlist',
+      });
+      return;
+    }
+    const identity = individual ?? req.ip ?? 'unknown';
     if (isLockedOut('partner', identity)) {
       lockedOut(res);
       return;
@@ -501,7 +532,6 @@ router.post('/v1/auth/partner/login', async (req, res, next) => {
       return;
     }
     clearFailures('partner', identity);
-    const existing = getSessionFromRequest(req);
     const session = withRole(existing ?? { userId: `partner_${randomUUID()}`, method: 'partner' }, 'partner');
     await replaceSession(req, res, session);
     const body: PartnerLoginResponse = { userId: session.userId };
@@ -513,7 +543,7 @@ router.post('/v1/auth/partner/login', async (req, res, next) => {
 
 router.post('/v1/auth/ops/login', async (req, res, next) => {
   try {
-    const { passcode } = req.body as { passcode?: string };
+    const { passcode, totp } = req.body as { passcode?: string; totp?: string };
     if (!env.opsPasscode) {
       res.status(500).json({ error: 'ConfigError', message: 'OPS_PASSCODE not configured' });
       return;
@@ -540,6 +570,12 @@ router.post('/v1/auth/ops/login', async (req, res, next) => {
       recordFailure('ops', identity);
       recordFailure('ops-ip', clientIp);
       res.status(401).json({ error: 'Unauthorized', message: 'invalid passcode' });
+      return;
+    }
+    if (totpRequired(identity) && !(await verifyOperatorTotp(identity, totp))) {
+      recordFailure('ops', identity);
+      recordFailure('ops-ip', clientIp);
+      res.status(401).json({ error: 'TotpRequired', message: 'a valid authenticator code is required' });
       return;
     }
     clearFailures('ops', identity);
@@ -634,7 +670,7 @@ router.post('/v1/tx/build', sponsoredTxLimiter, async (req, res, next) => {
       return;
     }
     const parsed = buildTxSchema.parse(req.body);
-    res.json(await buildTransaction({ ...parsed, userId: session.userId } as BuildTransactionRequest));
+    res.json(await buildTransaction(session.userId, parsed));
   } catch (e) {
     next(e);
   }
@@ -652,7 +688,12 @@ router.post('/v1/tx/submit', requireSession(), async (req, res, next) => {
 router.post('/v1/settlement/batches', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createSettlementSchema.parse(req.body);
-    res.json(await executeSettlementBatch(parsed, { createdBy: getSessionFromRequest(req)!.userId }));
+    const operator = getSessionFromRequest(req)!.userId;
+    if (needsSecondApproval(parsed.grossAmount)) {
+      res.status(202).json(await requestApproval('settlement', parsed, parsed.grossAmount, operator));
+      return;
+    }
+    res.json(await executeSettlementBatch(parsed, { createdBy: operator }));
   } catch (e) {
     next(e);
   }
@@ -682,7 +723,12 @@ const createConvertedSettlementSchema = z.object({
 router.post('/v1/settlement/converted', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createConvertedSettlementSchema.parse(req.body);
-    res.json(await executeConvertedSettlement(parsed, { createdBy: getSessionFromRequest(req)!.userId }));
+    const operator = getSessionFromRequest(req)!.userId;
+    if (needsSecondApproval(parsed.amount)) {
+      res.status(202).json(await requestApproval('converted_settlement', parsed, parsed.amount, operator));
+      return;
+    }
+    res.json(await executeConvertedSettlement(parsed, { createdBy: operator }));
   } catch (e) {
     next(e);
   }
@@ -738,7 +784,7 @@ router.get('/v1/settlement/batches/export.csv', requireRole('partner', 'ops'), a
 
 router.get('/v1/settlement/batches/payouts.csv', requireRole('partner', 'ops'), async (req, res, next) => {
   try {
-    sendCsv(res, 'driver-payouts', payoutsToCsv(await collectBatches(req)));
+    sendCsv(res, 'driver-payouts', payoutsToCsv(await attachStoredPayoutHashes(await collectBatches(req))));
   } catch (e) {
     next(e);
   }
@@ -761,7 +807,7 @@ router.get('/v1/settlement/batches/:id/receipt.pdf', requireRole('partner', 'ops
 
 router.get('/v1/settlement/batches/:id', identifyPartnerKey(), async (req, res, next) => {
   try {
-    res.json(visibleBatch(await getSettlementBatch(req.params.id), req));
+    res.json(visibleBatch(await getSettlementBatchWithPayouts(req.params.id), req));
   } catch (e) {
     next(e);
   }
@@ -769,7 +815,7 @@ router.get('/v1/settlement/batches/:id', identifyPartnerKey(), async (req, res, 
 
 const groupPayoutRecipientSchema = z.object({
   name: z.string().min(1),
-  address: z.string().min(1),
+  address: z.string().refine((a) => StrKey.isValidEd25519PublicKey(a), 'address must be a Stellar public key'),
   amount: z.string().regex(AMOUNT_PATTERN, 'amount must be a 7-decimal number'),
   remark: z.string().max(120).optional(),
 });
@@ -779,10 +825,64 @@ const createGroupPayoutSchema = z.object({
   recipients: z.array(groupPayoutRecipientSchema).min(1).max(100),
 });
 
+function groupPayoutTotal(recipients: { amount: string }[]): string {
+  return fromStroops(recipients.reduce((sum, r) => sum + toStroops(r.amount), 0n));
+}
+
 router.post('/v1/settlement/group-payouts', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
     const parsed = createGroupPayoutSchema.parse(req.body);
-    res.json(await executeGroupPayout(parsed, { createdBy: getSessionFromRequest(req)!.userId }));
+    const operator = getSessionFromRequest(req)!.userId;
+    const total = groupPayoutTotal(parsed.recipients);
+    if (needsSecondApproval(total)) {
+      res.status(202).json(await requestApproval('group_payout', parsed, total, operator));
+      return;
+    }
+    res.json(await executeGroupPayout(parsed, { createdBy: operator }));
+  } catch (e) {
+    next(e);
+  }
+});
+
+async function runApproved(approval: ApprovalRecord, approver: string): Promise<unknown> {
+  switch (approval.action) {
+    case 'settlement':
+      return executeSettlementBatch(createSettlementSchema.parse(approval.requestBody), {
+        createdBy: approval.requestedBy,
+        approvedBy: approver,
+      });
+    case 'converted_settlement':
+      return executeConvertedSettlement(createConvertedSettlementSchema.parse(approval.requestBody), {
+        createdBy: approval.requestedBy,
+        approvedBy: approver,
+      });
+    case 'group_payout':
+      return executeGroupPayout(createGroupPayoutSchema.parse(approval.requestBody), {
+        createdBy: approval.requestedBy,
+      });
+  }
+}
+
+router.get('/v1/ops/approvals', requireRole('ops'), async (_req, res, next) => {
+  try {
+    res.json({ items: await listPendingApprovals() });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/ops/approvals/:id/approve', requireRole('ops'), idempotency(), async (req, res, next) => {
+  try {
+    const approver = getSessionFromRequest(req)!.userId;
+    const approval = await claimApproval(req.params.id, approver);
+    try {
+      const result = await runApproved(approval, approver);
+      await finishApproval(approval.id, 'executed', { id: (result as { id?: string })?.id ?? null });
+      res.json(result);
+    } catch (e) {
+      await finishApproval(approval.id, 'failed', { error: (e as Error).name });
+      throw e;
+    }
   } catch (e) {
     next(e);
   }
@@ -822,6 +922,9 @@ router.post('/v1/ops/payouts/batches', requireRole('ops'), idempotency(), async 
   try {
     const { settlementBatchId } = createPayoutBatchSchema.parse(req.body);
     const settlementBatch = await getSettlementBatch(settlementBatchId);
+    if (settlementBatch.status && settlementBatch.status !== 'confirmed') {
+      throw httpFail(`Settlement batch ${settlementBatchId} is ${settlementBatch.status}, not confirmed on-chain`, 409, 'SettlementNotConfirmed');
+    }
     res.json(
       await createPayoutBatch(settlementBatch.driverPayouts, settlementBatch.asset, {
         settlementBatchId,
@@ -866,7 +969,21 @@ const createWithdrawalSchema = z.object({
   settlementBatchId: z.string().min(1, 'settlementBatchId is required'),
 });
 
-router.get('/v1/offramp/quotes', async (req, res, next) => {
+const QUOTE_CACHE_MS = 30_000;
+const quoteCache = new Map<string, { at: number; quote: Promise<unknown> }>();
+
+function cachedQuote(amount: string): Promise<unknown> {
+  const now = Date.now();
+  for (const [k, v] of quoteCache) if (now - v.at > QUOTE_CACHE_MS) quoteCache.delete(k);
+  const hit = quoteCache.get(amount);
+  if (hit) return hit.quote;
+  const quote = quoteWithdrawal(amount);
+  quoteCache.set(amount, { at: now, quote });
+  quote.catch(() => quoteCache.delete(amount));
+  return quote;
+}
+
+router.get('/v1/offramp/quotes', requireSession(), async (req, res, next) => {
   try {
     const amount = typeof req.query.amount === 'string' ? req.query.amount : '';
     if (!AMOUNT_PATTERN.test(amount) || Number(amount) <= 0) {
@@ -875,7 +992,7 @@ router.get('/v1/offramp/quotes', async (req, res, next) => {
       e.status = 400;
       throw e;
     }
-    res.json(await quoteWithdrawal(amount));
+    res.json(await cachedQuote(fromStroops(toStroops(amount))));
   } catch (e) {
     next(e);
   }
@@ -1170,7 +1287,7 @@ router.get('/v1/ops/scores/imports/:id', requireRole('ops'), async (req, res, ne
   }
 });
 
-router.get('/v1/scout/feed', requireSession(), async (_req, res, next) => {
+router.get('/v1/scout/feed', requireRole('ops'), async (_req, res, next) => {
   try {
     const imports = await listImports(1);
     res.json({
@@ -1189,6 +1306,10 @@ router.get('/v1/scout/feed', requireSession(), async (_req, res, next) => {
 
 router.get('/v1/scout/score/:driverId', requireSession(), async (req, res, next) => {
   try {
+    const session = getSessionFromRequest(req)!;
+    if (req.params.driverId !== session.userId && roleOf(session) !== 'ops') {
+      throw httpFail('You can read only your own validation score', 403, 'Forbidden');
+    }
     res.json(await resolveScore(req.params.driverId));
   } catch (e) {
     next(e);
@@ -1205,48 +1326,50 @@ const DEFAULT_DEMO_DRIVERS = [
   'drv-pulsegen-demo-006',
 ];
 
-router.post('/v1/ops/demo/scout-drivers', requireRole('ops'), async (req, res, next) => {
-  try {
-    const { driverIds } = demoDriversSchema.parse(req.body ?? {});
-    const ids = driverIds ?? DEFAULT_DEMO_DRIVERS;
-    const drivers = [];
+if (env.network !== 'mainnet') {
+  router.post('/v1/ops/demo/scout-drivers', requireRole('ops'), async (req, res, next) => {
+    try {
+      const { driverIds } = demoDriversSchema.parse(req.body ?? {});
+      const ids = driverIds ?? DEFAULT_DEMO_DRIVERS;
+      const drivers = [];
 
-    for (const driverId of ids) {
-      const wallet = (await getManagedWallet(driverId)) ?? (await provisionManagedWallet(driverId));
-      const validation = await resolveScore(driverId);
-      const expected = scoreToTier(validation.score);
-      const current = await getOnchainTier(wallet.address);
+      for (const driverId of ids) {
+        const wallet = (await getManagedWallet(driverId)) ?? (await provisionManagedWallet(driverId));
+        const validation = await resolveScore(driverId);
+        const expected = scoreToTier(validation.score);
+        const current = await getOnchainTier(wallet.address);
 
-      let assignmentTx: string | null = null;
-      let assignedNow = false;
-      if (current.tier !== expected) {
-        assignmentTx = (await assignTierForDriver(driverId)).txHash;
-        assignedNow = true;
-      } else {
-        const prior = (await latestAssignments(500)).find((a) => a.driverId === driverId);
-        assignmentTx = prior?.txHash ?? null;
+        let assignmentTx: string | null = null;
+        let assignedNow = false;
+        if (current.tier !== expected) {
+          assignmentTx = (await assignTierForDriver(driverId)).txHash;
+          assignedNow = true;
+        } else {
+          const prior = (await latestAssignments(500)).find((a) => a.driverId === driverId);
+          assignmentTx = prior?.txHash ?? null;
+        }
+
+        const onchain = await getOnchainTier(wallet.address);
+        drivers.push({
+          userId: driverId,
+          address: wallet.address,
+          score: validation.score,
+          scoredAt: validation.scoredAt,
+          scoreSource: validation.source,
+          scoreImportId: validation.importId ?? null,
+          tier: onchain.tier,
+          multiplier: onchain.multiplier,
+          assignmentTx,
+          assignedNow,
+        });
       }
 
-      const onchain = await getOnchainTier(wallet.address);
-      drivers.push({
-        userId: driverId,
-        address: wallet.address,
-        score: validation.score,
-        scoredAt: validation.scoredAt,
-        scoreSource: validation.source,
-        scoreImportId: validation.importId ?? null,
-        tier: onchain.tier,
-        multiplier: onchain.multiplier,
-        assignmentTx,
-        assignedNow,
-      });
+      res.json({ drivers });
+    } catch (e) {
+      next(e);
     }
-
-    res.json({ drivers });
-  } catch (e) {
-    next(e);
-  }
-});
+  });
+}
 
 router.post('/v1/scout/revoke', requireRole('ops'), async (req, res, next) => {
   try {
@@ -1312,9 +1435,18 @@ router.post('/v1/offramp/callback', callbackLimiter, async (req, res, next) => {
   }
 });
 
+export const KYC_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf', 'application/xml', 'text/xml']);
+
 const kycUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 2, fields: 10 },
+  fileFilter: (_req, file, cb) => {
+    if (KYC_UPLOAD_TYPES.has(file.mimetype)) {
+      cb(null, true);
+      return;
+    }
+    cb(httpFail(`Unsupported file type ${file.mimetype}; upload JPEG, PNG, PDF or XML`, 415, 'UnsupportedMediaType'));
+  },
 });
 
 const createSubAccountSchema = z.object({
@@ -1755,40 +1887,46 @@ router.get('/v1/carret/deposit-address', requireSession(), async (_req, res, nex
  * wallet to Carret's deposit address, then register the deposit with Carret so
  * their reconciler credits the trading wallet. Without the /crypto_deposit/
  * registration a raw on-chain transfer sits uncredited (Carret's Travel Rule
- * compliance). Returns both the Horizon tx hash and Carret's deposit record.
- *
- * Pass `txHash` to register an already-broadcast transaction without resending
- * — used to retroactively credit a deposit after we fixed the memo type.
+ * compliance). Only hashes this backend broadcast are ever registered.
  */
-const depositSchema = z.object({
-  amount: z.string().regex(AMOUNT_PATTERN),
-  txHash: z.string().optional(),
-});
-router.post('/v1/carret/deposit', requireSession(), async (req, res, next) => {
+const depositSchema = z.object({ amount: z.string().regex(AMOUNT_PATTERN) }).strict();
+router.post('/v1/carret/deposit', requireSession(), idempotency(), async (req, res, next) => {
   try {
     const session = getSessionFromRequest(req)!;
-    const { amount, txHash: existingTx } = depositSchema.parse(req.body);
+    const { amount } = depositSchema.parse(req.body);
     const mapping = await getMapping(session.userId);
     if (!mapping) {
       res.status(422).json({ error: 'NoMapping', message: 'Provision a Carret sub-account first' });
       return;
     }
     const d = await getConfiguredDepositAddress();
-    const txHash = existingTx ?? await broadcastCarretDeposit({
-      userId: session.userId,
-      destination: d.address,
-      memo: d.memo_label ?? undefined,
-      amount,
-    });
-    const deposit = await createCryptoDeposit({
-      accountId: mapping.carretAccountId,
-      carretWalletId: d.id,
-      asset: d.asset,
-      chain: d.chain,
-      amount,
-      txnId: txHash,
-    });
-    res.json({ txHash, destination: d.address, memo: d.memo_label, amount, deposit });
+    const txHash = await sendCarretDeposit(session.userId, d.address, d.memo_label, amount);
+    try {
+      const deposit = await createCryptoDeposit({
+        accountId: mapping.carretAccountId,
+        carretWalletId: d.id,
+        asset: d.asset,
+        chain: d.chain,
+        amount,
+        txnId: txHash,
+      });
+      res.json({ txHash, destination: d.address, memo: d.memo_label, amount, deposit });
+    } catch (e) {
+      logUpstream('carret deposit registration failed', e);
+      const failure = httpFail(
+        `Deposit ${txHash} was sent but Carret did not register it; an operator will retry the registration.`,
+        502,
+        'CarretDepositUnregistered',
+      ) as Error & { keepIdempotencyKey: boolean };
+      failure.keepIdempotencyKey = true;
+      throw failure;
+    }
+  } catch (e) { next(e); }
+});
+
+router.post('/v1/ops/offramp/sessions/:id/register-deposit', requireRole('ops'), async (req, res, next) => {
+  try {
+    res.json(await retryDepositRegistration(req.params.id));
   } catch (e) { next(e); }
 });
 

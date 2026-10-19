@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ManagedWallet } from '@pathpulse/contract';
 import { db } from '../db/client.js';
-import { provisionManagedWallet } from '../stellar/managed.js';
+import { ensureManagedWalletKey } from '../stellar/managed.js';
 
 function normalizeEmail(email: string): string {
   const trimmed = (email ?? '').trim().toLowerCase();
@@ -16,7 +16,7 @@ function accountError(message: string): Error {
   return e;
 }
 
-async function userIdForEmail(email: string, sub: string): Promise<string> {
+export async function userIdForEmail(email: string, sub: string): Promise<string> {
   await db().query(
     'insert into users (email, user_id, google_sub) values ($1, $2, $3) on conflict (email) do nothing',
     [email, randomUUID(), sub],
@@ -45,5 +45,5 @@ export async function ensureAccountForEmail(
   sub: string,
 ): Promise<{ userId: string; wallet: ManagedWallet }> {
   const userId = await userIdForEmail(normalizeEmail(email), sub);
-  return { userId, wallet: await provisionManagedWallet(userId) };
+  return { userId, wallet: await ensureManagedWalletKey(userId) };
 }

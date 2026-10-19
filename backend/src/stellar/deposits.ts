@@ -39,7 +39,7 @@ export function matchDeposit(
   }
   const matching = allowedSenders ? paying.filter((op) => op.from && allowedSenders.includes(op.from)) : paying;
   if (!matching.length) {
-    throw depositError(`Deposit was not paid by the treasury or the routing source (${allowedSenders!.join(', ')})`);
+    throw depositError(`Deposit was not paid by an authorised sender (${allowedSenders!.join(', ') || 'none configured'})`);
   }
   const total = matching.reduce((sum, op) => sum + toStroops(op.amount ?? '0'), 0n);
   if (total < toStroops(minAmount)) {
@@ -49,12 +49,24 @@ export function matchDeposit(
   return { from: senders.join(', '), amount: fromStroops(total) };
 }
 
+export function senderAllowlist(candidates: string[], settlementSource: string): string[] {
+  return [...new Set(candidates.filter((a) => a && a !== settlementSource))];
+}
+
+export function assertDepositMemo(memo: string | undefined, expected: string | undefined): void {
+  if (expected === undefined) return;
+  if ((memo ?? '') !== expected) {
+    throw depositError(`Deposit memo "${memo ?? ''}" does not match the settlement's depositMemo "${expected}"`);
+  }
+}
+
 export async function verifyDeposit(
   txHash: string,
   destination: string,
   ref: AssetRef,
   minAmount: string,
   allowedSenders?: string[],
+  expectedMemo?: string,
 ): Promise<SettlementDeposit> {
   let tx;
   try {
@@ -66,6 +78,7 @@ export async function verifyDeposit(
     throw e;
   }
   if (!tx.successful) throw depositError(`Deposit transaction ${txHash} failed on-chain`);
+  assertDepositMemo((tx as { memo?: string }).memo, expectedMemo);
   const ops = await horizon.operations().forTransaction(txHash).limit(200).call();
   const { from, amount } = matchDeposit(
     ops.records as unknown as DepositOperation[],

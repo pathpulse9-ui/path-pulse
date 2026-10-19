@@ -41,7 +41,10 @@ async function main() {
       .map((b) => `${b.balance} ${'asset_code' in b ? b.asset_code : 'XLM'}`)
       .join(', ');
     const hasKms = acct.signers.some((s) => s.key === kms && s.weight > 0);
-    console.log(`✓ ${a.role}\n    ${address}\n    ${balances}\n    KMS signer: ${hasKms ? 'attached' : 'missing'}`);
+    const masterWeight = acct.signers.find((s) => s.key === address)?.weight ?? 0;
+    console.log(
+      `✓ ${a.role}\n    ${address}\n    ${balances}\n    KMS signer: ${hasKms ? 'attached' : 'missing'} · master weight: ${masterWeight}`,
+    );
 
     if (command === 'attach-kms' && !hasKms) {
       const tx = new TransactionBuilder(acct, { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
@@ -51,6 +54,20 @@ async function main() {
       const signed = await (await serviceAccountMasterSigner(a.userId)).sign(tx);
       const res = await submitToHorizon(signed, 'attach KMS signer');
       console.log(`    KMS signer attached · tx ${res.hash}`);
+    }
+
+    if (command === 'retire-master' && hasKms && masterWeight > 0) {
+      if (!process.argv.includes('--confirm')) {
+        console.log('    would set master weight 0 and thresholds 1/1/1, signed by KMS only (re-run with --confirm)');
+      } else {
+        const tx = new TransactionBuilder(acct, { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
+          .addOperation(Operation.setOptions({ masterWeight: 0, lowThreshold: 1, medThreshold: 1, highThreshold: 1 }))
+          .setTimeout(120)
+          .build();
+        const signed = await (await createSigner()).sign(tx);
+        const res = await submitToHorizon(signed, 'retire service-account master key');
+        console.log(`    master key retired; KMS is now the only signer · tx ${res.hash}`);
+      }
     }
     console.log('');
   }

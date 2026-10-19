@@ -54,6 +54,23 @@ export function scoreToTier(score: number): ScoutTier {
   return 1;
 }
 
+export const SCORE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const KEEP_AT_OR_ABOVE: Record<ScoutTier, number> = { 1: 0, 2: 0.45, 3: 0.75 };
+
+export function retainedTier(
+  held: ScoutTier,
+  score: number | undefined,
+  scoredAt: string | undefined,
+  now = Date.now(),
+): ScoutTier {
+  if (score === undefined || !scoredAt) return 1;
+  const at = Date.parse(scoredAt);
+  if (Number.isNaN(at) || now - at > SCORE_MAX_AGE_MS) return 1;
+  let tier = held;
+  while (tier > 1 && score < KEEP_AT_OR_ABOVE[tier]) tier = (tier - 1) as ScoutTier;
+  return tier;
+}
+
 function assetFor(issuer: string, tier: ScoutTier): Asset {
   return new Asset(TIER_CODE[tier], issuer);
 }
@@ -82,7 +99,7 @@ export async function getOnchainTier(address: string): Promise<{ tier: ScoutTier
   return { tier: null, multiplier: 1 };
 }
 
-export async function assignTierForDriver(driverId: string): Promise<ScoutAssignment> {
+export async function assignTierForDriver(driverId: string, forcedTier?: ScoutTier): Promise<ScoutAssignment> {
   const wallet = await getManagedWallet(driverId);
   if (!wallet) {
     throw new Error(
@@ -92,7 +109,7 @@ export async function assignTierForDriver(driverId: string): Promise<ScoutAssign
   const address = wallet.address;
 
   const validation = await resolveScore(driverId);
-  const tier = scoreToTier(validation.score);
+  const tier = forcedTier ?? scoreToTier(validation.score);
 
   const issuer = await ensureIssuer();
   const asset = assetFor(issuer, tier);

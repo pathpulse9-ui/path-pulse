@@ -107,15 +107,19 @@ const provision = (email: string, phone: string) => ({
 });
 
 test("an unverified caller cannot adopt another driver's Carret account by email or phone", { skip }, async () => {
-  const attempts = [
+  const unverified = [
     call(unmapped, 'POST', '/v1/carret/provision-subaccount', provision(ownerEmail, '9999999999')),
     call(unmapped, 'POST', '/v1/carret/provision-subaccount', provision(`x_${randomUUID()}@example.com`, ownerPhone)),
     call(unmapped, 'POST', '/v1/carret/provision-subaccount', provision(ownerEmail, ownerPhone), `other_${randomUUID()}@example.com`),
   ];
-  for (const res of await Promise.all(attempts)) {
-    assert.equal(res.status, 409);
-    assert.equal(((await res.json()) as { error: string }).error, 'CarretAccountExists');
+  for (const res of await Promise.all(unverified)) {
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { error: string }).error, 'EmailNotVerified');
   }
+  const ownEmail = `x_${randomUUID()}@example.com`;
+  const phoneClash = await call(unmapped, 'POST', '/v1/carret/provision-subaccount', provision(ownEmail, ownerPhone), ownEmail);
+  assert.equal(phoneClash.status, 409);
+  assert.equal(((await phoneClash.json()) as { error: string }).error, 'CarretAccountExists');
   assert.equal(await getMapping(unmapped), null);
   assert.equal((await getMapping(owner))?.carretAccountId, ownerAccount);
 });

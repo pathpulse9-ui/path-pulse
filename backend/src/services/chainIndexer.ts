@@ -67,34 +67,50 @@ export function toIndexedPayment(record: HorizonPaymentRecord, watched: WatchedA
 
 export const ALERT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
+export const OUTFLOW_ALARM_ROLES = new Set(['reserve', 'settlement_source', 'routing_source']);
+
+function expectedOutflow(p: IndexedPayment): boolean {
+  return p.type === 'create_account' && toStroopsSafe(p.amount) === 0n;
+}
+
+function toStroopsSafe(amount: string): bigint | null {
+  if (!/^\d{1,15}(\.\d{1,7})?$/.test(amount)) return null;
+  const [whole, frac = ''] = amount.split('.');
+  return BigInt(whole) * 10_000_000n + BigInt((frac + '0000000').slice(0, 7));
+}
+
 export function unexplainedOutflows(
   payments: IndexedPayment[],
-  settlementSource: string,
+  watched: string,
   knownTxHashes: Set<string>,
   now = Date.now(),
 ): IndexedPayment[] {
   return payments.filter(
     (p) =>
-      p.from === settlementSource &&
-      p.to !== settlementSource &&
+      p.from === watched &&
+      p.to !== watched &&
       !knownTxHashes.has(p.txHash) &&
+      !expectedOutflow(p) &&
       now - Date.parse(p.createdAt) < ALERT_LOOKBACK_MS,
   );
 }
 
 export async function watchedAccounts(): Promise<WatchedAccount[]> {
-  const { getManagedWallet } = await import('../stellar/managed.js');
+  const { getManagedWallet, RESERVE_SPONSOR_USER } = await import('../stellar/managed.js');
   const accounts: WatchedAccount[] = [
     { role: 'treasury', address: env.distribution.treasury },
     { role: 'partner_revenue', address: env.distribution.partnerRevenue },
     { role: 'driver_pool', address: env.distribution.driverPool },
   ];
   for (const [role, userId] of [
+    ['reserve', RESERVE_SPONSOR_USER],
     ['settlement_source', '__settlement_source__'],
     ['routing_source', '__routing_swap_source__'],
   ] as const) {
     const wallet = await getManagedWallet(userId).catch(() => null);
-    if (wallet?.provisioned) accounts.push({ role, address: wallet.address });
+    if (wallet?.provisioned && !accounts.some((a) => a.address === wallet.address)) {
+      accounts.push({ role, address: wallet.address });
+    }
   }
   return accounts.filter((a) => a.address);
 }
@@ -128,7 +144,8 @@ async function knownSettlementTxHashes(hashes: string[]): Promise<Set<string>> {
   if (!hashes.length) return new Set();
   const r = await db().query<{ h: string }>(
     `select tx_hash as h from settlement_batches where tx_hash = any($1)
-     union select deposit_tx_hash from settlement_batches where deposit_tx_hash = any($1)`,
+     union select deposit_tx_hash from settlement_batches where deposit_tx_hash = any($1)
+     union select conversion->>'transferTxHash' from settlement_batches where conversion->>'transferTxHash' = any($1)`,
     [hashes],
   );
   return new Set(r.rows.map((x) => x.h));
@@ -146,13 +163,13 @@ export async function indexAccount(watched: WatchedAccount): Promise<number> {
     const rows = records.map((r) => toIndexedPayment(r, watched)).filter((p): p is IndexedPayment => p !== null);
     await savePayments(rows);
     indexed += rows.length;
-    if (watched.role === 'settlement_source') {
+    if (OUTFLOW_ALARM_ROLES.has(watched.role)) {
       const known = await knownSettlementTxHashes([...new Set(rows.map((r) => r.txHash))]);
       for (const p of unexplainedOutflows(rows, watched.address, known)) {
         sendAlertInBackground({
           key: `indexer:outflow:${p.txHash}`,
           severity: 'critical',
-          title: 'Settlement source paid out outside a settlement batch',
+          title: `Unexplained outflow from the ${watched.role.replace('_', ' ')} account`,
           detail: `${p.amount} ${p.assetCode} to ${p.to} in tx ${p.txHash}`,
         });
       }
@@ -228,10 +245,14 @@ export async function listLedger(query: { account?: string; cursor?: string; lim
   }
   if (query.cursor) {
     const [at, id] = Buffer.from(query.cursor, 'base64url').toString('utf8').split('|');
-    if (at && id) {
-      params.push(at, id);
-      where.push(`(p.created_at, p.id) < ($${params.length - 1}, $${params.length})`);
+    if (!at || !id || Number.isNaN(Date.parse(at))) {
+      const e = new Error('cursor is not a valid page cursor') as Error & { status: number };
+      e.name = 'ValidationError';
+      e.status = 400;
+      throw e;
     }
+    params.push(at, id);
+    where.push(`(p.created_at, p.id) < ($${params.length - 1}, $${params.length})`);
   }
   const r = await db().query<Row>(
     `select p.*,

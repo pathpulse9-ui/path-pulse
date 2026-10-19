@@ -15,7 +15,7 @@ import type {
 import { env, horizonTxUrl } from '../config/env.js';
 import { horizon, submitToHorizon } from './network.js';
 import { assertMainnetAllowed } from './networkGuard.js';
-import { getManagedWallet, getManagedSigner, getReserveSponsor } from './managed.js';
+import { getManagedWallet, getManagedSigner, getReserveSponsor, provisionManagedWallet } from './managed.js';
 import { sponsorFees } from './sponsorship.js';
 import { logUpstream } from '../util/upstreamLog.js';
 
@@ -50,11 +50,15 @@ function toOperation(op: TransactionOperation) {
   }
 }
 
-export async function buildTransaction(req: BuildTransactionRequest): Promise<BuildTransactionResponse> {
-  const wallet = await getManagedWallet(req.userId);
+export async function buildTransaction(
+  userId: string,
+  req: Omit<BuildTransactionRequest, 'userId'>,
+): Promise<BuildTransactionResponse> {
+  const existing = await getManagedWallet(userId);
+  const wallet = existing && !existing.provisioned ? await provisionManagedWallet(userId) : existing;
   if (!wallet || !wallet.provisioned) {
     throw httpError(
-      `No provisioned managed wallet for user ${req.userId} — sign in first`,
+      `No provisioned managed wallet for user ${userId} — sign in first`,
       404,
       'AccountNotFound',
     );
@@ -69,7 +73,7 @@ export async function buildTransaction(req: BuildTransactionRequest): Promise<Bu
   if (req.memo) builder.addMemo(Memo.text(req.memo));
 
   let tx = builder.setTimeout(180).build();
-  tx = (await (await getManagedSigner(req.userId)).sign(tx)) as typeof tx;
+  tx = (await (await getManagedSigner(userId)).sign(tx)) as typeof tx;
 
   const envelope = env.accountFunding === 'sponsor' ? await sponsorFees(await getReserveSponsor(), tx) : tx;
   return { xdr: envelope.toXDR(), hash: envelope.hash().toString('hex') };

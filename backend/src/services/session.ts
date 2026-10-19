@@ -39,11 +39,15 @@ export function withRole(session: SessionPayload, role: SessionRole | undefined,
   return { userId, method, email, address, role, roleExpiresAt: now + ttl * 1000 };
 }
 
+export function sessionMaxAgeSeconds(payload: SessionPayload): number {
+  return payload.role || payload.method === 'partner' ? env.session.privilegedMaxAgeSeconds : env.session.maxAgeSeconds;
+}
+
 export function createSessionToken(payload: SessionPayload): string {
   const { jti: _jti, exp: _exp, ...claims } = payload;
   return jwt.sign(claims, env.session.secret, {
     algorithm: 'HS256',
-    expiresIn: env.session.maxAgeSeconds,
+    expiresIn: sessionMaxAgeSeconds(payload),
     issuer: ISSUER,
     audience: AUDIENCE,
     jwtid: randomUUID(),
@@ -99,7 +103,30 @@ export async function revokeSession(session: SessionPayload | null): Promise<voi
     );
   } catch (e) {
     logger.error({ err: e }, 'failed to persist session revocation');
+    const failure = new Error('Sign-out could not be recorded; try again') as Error & { status: number };
+    failure.name = 'RevocationUnavailable';
+    failure.status = 503;
+    throw failure;
   }
+}
+
+export function dropRevokedSessions() {
+  return async (req: Request, _res: Response, next: (e?: unknown) => void): Promise<void> => {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      next();
+      return;
+    }
+    try {
+      if (await isSessionRevokedInDb(session)) {
+        revoked.set(session.jti!, (session.exp ?? Math.floor(Date.now() / 1000)) * 1000);
+        delete req.cookies[env.session.cookieName];
+      }
+      next();
+    } catch (e) {
+      next(e);
+    }
+  };
 }
 
 export async function isSessionRevokedInDb(session: SessionPayload): Promise<boolean> {
@@ -127,7 +154,7 @@ function cookieOptions() {
 export function setSessionCookie(res: Response, payload: SessionPayload) {
   res.cookie(env.session.cookieName, createSessionToken(payload), {
     ...cookieOptions(),
-    maxAge: env.session.maxAgeSeconds * 1000,
+    maxAge: sessionMaxAgeSeconds(payload) * 1000,
   });
 }
 

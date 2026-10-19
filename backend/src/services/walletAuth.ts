@@ -8,16 +8,27 @@ const CHALLENGE_TIMEOUT_SECONDS = 5 * 60;
 const MAX_USED_CHALLENGES = 10_000;
 const usedChallenges = new Map<string, number>();
 
-function claimChallenge(signedTransaction: string, now = Date.now()): void {
-  for (const [hash, until] of usedChallenges) if (until <= now) usedChallenges.delete(hash);
+function alreadyUsed(): Error {
+  const e = new Error('This challenge has already been used — request a new one') as Error & { status: number };
+  e.status = 401;
+  return e;
+}
+
+export async function claimChallenge(signedTransaction: string, now = Date.now()): Promise<void> {
   const tx = TransactionBuilder.fromXDR(signedTransaction, env.networkPassphrase);
   const inner = 'innerTransaction' in tx ? tx.innerTransaction : tx;
   const hash = inner.hash().toString('hex');
-  if (usedChallenges.has(hash)) {
-    const e = new Error('This challenge has already been used — request a new one') as Error & { status: number };
-    e.status = 401;
-    throw e;
+  if (env.databaseUrl) {
+    await db().query('delete from sep10_used_challenges where expires_at < now()');
+    const claimed = await db().query(
+      'insert into sep10_used_challenges (hash, expires_at) values ($1, $2) on conflict (hash) do nothing returning hash',
+      [hash, new Date(now + CHALLENGE_TIMEOUT_SECONDS * 1000)],
+    );
+    if (claimed.rowCount === 0) throw alreadyUsed();
+    return;
   }
+  for (const [h, until] of usedChallenges) if (until <= now) usedChallenges.delete(h);
+  if (usedChallenges.has(hash)) throw alreadyUsed();
   if (usedChallenges.size >= MAX_USED_CHALLENGES) usedChallenges.delete(usedChallenges.keys().next().value as string);
   usedChallenges.set(hash, now + CHALLENGE_TIMEOUT_SECONDS * 1000);
 }
@@ -85,6 +96,6 @@ export async function verifyChallenge(signedTransaction: string): Promise<Wallet
     env.sep10.homeDomain,
   );
 
-  claimChallenge(signedTransaction);
+  await claimChallenge(signedTransaction);
   return upsertWalletUser(clientAccountID);
 }

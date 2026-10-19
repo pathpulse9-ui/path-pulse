@@ -82,6 +82,8 @@ export function pathpulseInternalLive(): boolean {
   return !!env.pulseGen?.internal;
 }
 
+const SCORED_AT_SKEW_MS = 30 * 1000;
+
 export async function resolveScore(driverId: string): Promise<ResolvedScore> {
   if (pulseGenLive()) {
     try {

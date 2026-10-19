@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Keypair } from '@stellar/stellar-sdk';
-import { matchDeposit, type DepositOperation } from './deposits.js';
+import { assertDepositMemo, senderAllowlist, matchDeposit, type DepositOperation } from './deposits.js';
 
 const source = Keypair.random().publicKey();
 const ministry = Keypair.random().publicKey();
@@ -55,5 +55,20 @@ test('on mainnet only payments from the allowed senders count toward the deposit
   const ops = [pay({ amount: '60', from: treasury }), pay({ amount: '60' })];
   assert.equal(matchDeposit(ops, source, usdc, '50', [treasury]).amount, '60.0000000');
   assert.throws(() => matchDeposit(ops, source, usdc, '100', [treasury]), { name: 'DepositInvalid' });
-  assert.throws(() => matchDeposit([pay({})], source, usdc, '1', [treasury]), /not paid by the treasury/);
+  assert.throws(() => matchDeposit([pay({})], source, usdc, '1', [treasury]), /not paid by an authorised sender/);
+});
+
+test('the settlement source can never fund its own settlement', () => {
+  const allowed = senderAllowlist(['GTREASURY', source, 'GEXTRA', 'GTREASURY', ''], source);
+  assert.deepEqual(allowed, ['GTREASURY', 'GEXTRA']);
+  assert.throws(() => matchDeposit([pay({ amount: '60', from: source })], source, usdc, '50', allowed), {
+    name: 'DepositInvalid',
+  });
+});
+
+test('a deposit memo must match the one named by the settlement request', () => {
+  assert.doesNotThrow(() => assertDepositMemo('stl-2026-10-19-a', 'stl-2026-10-19-a'));
+  assert.doesNotThrow(() => assertDepositMemo(undefined, undefined));
+  assert.throws(() => assertDepositMemo(undefined, 'stl-2026-10-19-a'), { name: 'DepositInvalid' });
+  assert.throws(() => assertDepositMemo('other', 'stl-2026-10-19-a'), /does not match/);
 });

@@ -11,6 +11,8 @@ if (testDatabaseUrl) process.env.DATABASE_URL = testDatabaseUrl;
 let server: Server | undefined;
 let base = '';
 let executions = 0;
+let emptyExecutions = 0;
+let failingExecutions = 0;
 let cookieName = '';
 let closeDb: () => Promise<void> = async () => {};
 let createSessionToken: (p: { userId: string; method: 'google' | 'guest' }) => string = () => '';
@@ -34,6 +36,15 @@ before(async () => {
     executions += 1;
     await new Promise((r) => setTimeout(r, 300));
     res.status(201).json({ execution: executions, amount: req.body.amount });
+  });
+  app.post('/empty', idempotency(), (_req, res) => {
+    emptyExecutions += 1;
+    res.status(204).end();
+  });
+  app.post('/fails', idempotency(), (req, res) => {
+    failingExecutions += 1;
+    if (req.body.fundsMoved) res.locals.keepIdempotencyKey = true;
+    res.status(req.body.status).json({ error: 'Failed' });
   });
   server = app.listen(0);
   await new Promise<void>((r) => server!.once('listening', () => r()));
@@ -99,4 +110,62 @@ test('the same key from two different users executes for each', { skip }, async 
   assert.equal(a.status, 201);
   assert.equal(b.status, 201);
   assert.equal(executions - before, 2);
+});
+
+test(
+  'a response without a JSON body still completes the key and replays',
+  { skip },
+  async () => {
+    const key = randomUUID();
+    const first = await fetch(`${base}/empty`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': key,
+        cookie: `${cookieName}=${createSessionToken({ userId: 'empty-user', method: 'google' })}`,
+      },
+      body: JSON.stringify({ amount: '1' }),
+    });
+    assert.equal(first.status, 204);
+    await new Promise((r) => setTimeout(r, 200));
+    const second = await fetch(`${base}/empty`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': key,
+        cookie: `${cookieName}=${createSessionToken({ userId: 'empty-user', method: 'google' })}`,
+      },
+      body: JSON.stringify({ amount: '1' }),
+    });
+    assert.equal(second.status, 204);
+    assert.equal(second.headers.get('idempotent-replayed'), 'true');
+    assert.equal(emptyExecutions, 1);
+  },
+);
+
+test('a failed request frees its key at once, unless funds may have moved', { skip }, async () => {
+  const post = (key: string, body: unknown) =>
+    fetch(`${base}/fails`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': key,
+        cookie: `${cookieName}=${createSessionToken({ userId: 'fail-user', method: 'google' })}`,
+      },
+      body: JSON.stringify(body),
+    });
+  const released = randomUUID();
+  await post(released, { status: 503 });
+  await new Promise((r) => setTimeout(r, 150));
+  const before = failingExecutions;
+  const retry = await post(released, { status: 503 });
+  assert.equal(retry.headers.get('idempotent-replayed'), null);
+  assert.equal(failingExecutions, before + 1);
+
+  const held = randomUUID();
+  await post(held, { status: 502, fundsMoved: true });
+  await new Promise((r) => setTimeout(r, 150));
+  const again = await post(held, { status: 502, fundsMoved: true });
+  assert.equal(again.headers.get('idempotent-replayed'), 'true');
+  assert.equal(failingExecutions, before + 2);
 });

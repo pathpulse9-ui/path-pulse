@@ -198,10 +198,12 @@ test('POST /v1/settlement/group-payouts rejects an empty recipient list', async 
   assert.equal(res.status, 400);
 });
 
-test('GET /v1/offramp/quotes requires a positive amount', async () => {
-  assert.equal((await get('/v1/offramp/quotes')).status, 400);
-  assert.equal((await get('/v1/offramp/quotes?amount=-3')).status, 400);
-  assert.equal((await get('/v1/offramp/quotes?amount=abc')).status, 400);
+test('GET /v1/offramp/quotes needs a session and a positive amount', async () => {
+  assert.equal((await get('/v1/offramp/quotes?amount=1')).status, 401);
+  const guest = authed(mintedGuest());
+  assert.equal((await get('/v1/offramp/quotes', guest)).status, 400);
+  assert.equal((await get('/v1/offramp/quotes?amount=-3', guest)).status, 400);
+  assert.equal((await get('/v1/offramp/quotes?amount=abc', guest)).status, 400);
 });
 
 test('POST /v1/offramp/callback fails closed without a valid signature', async () => {
@@ -473,7 +475,7 @@ test('group payout reads need a partner or operator session', async () => {
 test('oversized amounts and malformed list params are rejected with 400', async () => {
   const ops = await opsCookie();
   const huge = '9'.repeat(40);
-  assert.equal((await get(`/v1/offramp/quotes?amount=${huge}`)).status, 400);
+  assert.equal((await get(`/v1/offramp/quotes?amount=${huge}`, authed(mintedGuest()))).status, 400);
   assert.equal((await postJson('/v1/settlement/batches', { grossAmount: huge, drivers: [] }, keyed(ops))).status, 400);
   assert.equal((await get('/v1/settlement/batches?limit=abc')).status, 400);
   assert.equal((await get('/v1/settlement/batches?limit=-5')).status, 400);
@@ -495,4 +497,123 @@ test('reserved service-account ids cannot be used as drivers', async () => {
 test('the Carret claim-account route is gone', async () => {
   const res = await postJson('/v1/carret/claim-account', { account_id: '1' }, authedJson(await guestCookie()));
   assert.equal(res.status, 404);
+});
+
+test('a session revoked in the database is refused on session and role routes', async () => {
+  const { db } = await import('../db/client.js');
+  const jwt = (await import('jsonwebtoken')).default;
+  const revoke = async (cookie: string) => {
+    const token = cookie.split('=')[1];
+    const { jti } = jwt.decode(token) as { jti: string };
+    await db().query("insert into revoked_sessions (jti, expires_at) values ($1, now() + interval '1 hour')", [jti]);
+  };
+  const guest = mintedGuest();
+  assert.equal((await get('/v1/offramp/sessions', authed(guest))).status, 200);
+  await revoke(guest);
+  assert.equal((await get('/v1/offramp/sessions', authed(guest))).status, 401);
+  const ops = await opsCookie();
+  assert.equal((await get('/v1/ops/payouts/batches', authed(ops))).status, 200);
+  await revoke(ops);
+  assert.equal((await get('/v1/ops/payouts/batches', authed(ops))).status, 401);
+});
+
+test('building a transaction signs for the session user, never a body-supplied one', async () => {
+  const guestId = `guest_${randomUUID()}`;
+  const res = await postJson(
+    '/v1/tx/build',
+    { userId: 'victim-user-id', operations: [{ type: 'changeTrust', asset: { code: 'USDC' } }] },
+    authedJson(mintedGuest(guestId)),
+  );
+  const body = await json(res);
+  assert.equal(res.status, 404);
+  assert.ok(String(body.message).includes(guestId));
+  assert.ok(!String(body.message).includes('victim-user-id'));
+});
+
+test('random partner key ids from one address share a single rate limit', async () => {
+  let limited = 0;
+  for (let i = 0; i < 320; i += 1) {
+    const fake = `pp_${randomUUID().replace(/-/g, '').slice(0, 16)}_${'A'.repeat(43)}`;
+    const res = await get('/v1/settlement/batches?limit=1', { headers: { authorization: `Bearer ${fake}` } });
+    if (res.status === 429) limited += 1;
+  }
+  assert.ok(limited > 0);
+});
+
+test('a driver reads only their own validation score; the score feed is operator-only', async () => {
+  const me = `guest_${randomUUID()}`;
+  assert.equal((await get(`/v1/scout/score/someone-else`, authed(mintedGuest(me)))).status, 403);
+  assert.notEqual((await get(`/v1/scout/score/${me}`, authed(mintedGuest(me)))).status, 403);
+  assert.equal((await get('/v1/scout/feed', authed(mintedGuest()))).status, 403);
+  assert.equal((await get('/v1/scout/feed', authed(await opsCookie()))).status, 200);
+});
+
+test('KYC uploads outside the image, PDF and XML allowlist are refused before reaching Carret', async () => {
+  const form = new FormData();
+  form.set('kyc_session', '1');
+  form.set('doc_type', 'pan');
+  form.set('file_type', 'image');
+  form.set('doc_front', new Blob(['#!/bin/sh'], { type: 'application/x-sh' }), 'evil.sh');
+  const res = await fetch(`${base}/v1/carret/kyc/file`, { method: 'POST', body: form, headers: { cookie: mintedGuest() } });
+  assert.equal(res.status, 415);
+});
+
+test('the Carret deposit route no longer accepts a caller-supplied transaction hash', async () => {
+  const res = await postJson('/v1/carret/deposit', { amount: '1', txHash: 'a'.repeat(64) }, keyed(mintedGuest()));
+  assert.equal(res.status, 400);
+});
+
+test('a fund move above the approval threshold waits for a second, different operator', async () => {
+  const approvalConfig = env.opsApproval as { threshold: string };
+  const previous = approvalConfig.threshold;
+  approvalConfig.threshold = '0.5';
+  try {
+    const first = await opsCookie();
+    const body = {
+      grossAmount: '1',
+      drivers: [{ userId: `drv_${randomUUID()}`, address: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' }],
+    };
+    const requested = await postJson('/v1/settlement/batches', body, keyed(first));
+    assert.equal(requested.status, 202);
+    const approval = await json(requested);
+    assert.match(approval.id, /^apr_/);
+    assert.equal(approval.status, 'pending');
+
+    const self = await postJson(`/v1/ops/approvals/${approval.id}/approve`, {}, keyed(first));
+    assert.equal(self.status, 403);
+    assert.equal((await json(self)).error, 'SameOperator');
+
+    const pending = await json(await get('/v1/ops/approvals', authed(first)));
+    assert.ok(pending.items.some((a: { id: string }) => a.id === approval.id));
+
+    const second = await opsCookie();
+    const ran = await postJson(`/v1/ops/approvals/${approval.id}/approve`, {}, keyed(second));
+    assert.equal(ran.status, 422);
+    assert.equal((await json(ran)).error, 'DriverAddressMismatch');
+    const again = await postJson(`/v1/ops/approvals/${approval.id}/approve`, {}, keyed(await opsCookie()));
+    assert.equal((await json(again)).error, 'ApprovalNotPending');
+  } finally {
+    approvalConfig.threshold = previous;
+  }
+});
+
+test('a settlement below the threshold still refuses payout addresses the driver does not own', async () => {
+  const res = await postJson(
+    '/v1/settlement/batches',
+    { grossAmount: '0.1', drivers: [{ userId: `drv_${randomUUID()}`, address: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' }] },
+    keyed(await opsCookie()),
+  );
+  assert.equal(res.status, 422);
+  assert.equal((await json(res)).error, 'DriverAddressMismatch');
+});
+
+test('a session revoked by another instance is dropped on every route, not only gated ones', async () => {
+  const { db } = await import('../db/client.js');
+  const jwt = (await import('jsonwebtoken')).default;
+  const cookie = mintedGuest();
+  assert.notEqual((await json(await get('/v1/auth/me', authed(cookie)))).user, null);
+  const { jti } = jwt.decode(cookie.split('=')[1]) as { jti: string };
+  await db().query("insert into revoked_sessions (jti, expires_at) values ($1, now() + interval '1 hour')", [jti]);
+  assert.equal((await json(await get('/v1/auth/me', authed(cookie)))).user, null);
+  assert.equal((await postJson('/v1/tx/build', { operations: [] }, authedJson(cookie))).status, 401);
 });
