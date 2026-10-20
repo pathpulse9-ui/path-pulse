@@ -79,3 +79,5 @@ docs/RUNBOOK.md
 docs/MAINNET_CUTOVER.md
 docs/AWS_COST_AND_KEY_STORAGE.md
 docs/SECURITY_REMEDIATION.md
+docs/*
+
