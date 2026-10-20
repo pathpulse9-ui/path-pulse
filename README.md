@@ -40,8 +40,8 @@ Institutional reward programmes have the same failure mode everywhere: money goe
 
 ### Accounts & custody
 - **Protocol-governed distribution accounts** — Partner Revenue, Driver Pool and Treasury are provisioned as distinct on-chain accounts, so every flow of funds has a named, auditable origin and destination.
-- **Multisig treasury** — on testnet the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set. **The mainnet treasury is not a multisig yet** — see [Mainnet custody status](#mainnet-custody-status).
-- **Human-gated signing** — the `Signer` interface abstracts keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware. On testnet, protocol service accounts sign through it. **On mainnet they do not yet** — see [Mainnet custody status](#mainnet-custody-status).
+- **Multisig treasury** — on testnet the treasury carries a signer set with a 2-of-3 threshold and the master key disabled at weight 0. The configuration transaction is *built* by the backend and handed to a human to review and sign; the service never auto-provisions its own signer set. The mainnet treasury is a 2-of-3 on the ledger, but its three keys are not yet held by three people — see [Mainnet custody status](#mainnet-custody-status).
+- **Human-gated signing** — the `Signer` interface abstracts keypairs from KMS- and HSM-backed production signing. The dev signer refuses mainnet outright, so no code path can produce a mainnet signature without an explicit, gated backend. `SIGNER_BACKEND` is validated at boot and `dev` is rejected on mainnet, so a misconfigured mainnet deploy fails to start rather than at the first signature. Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware. On testnet, protocol service accounts sign through it. On mainnet the reserve and SCOUT issuer sign through it too, while their original master keys remain signers until retired — see [Mainnet custody status](#mainnet-custody-status).
 - **Delegated transaction construction** — clients describe intent (`payment`, `createAccount`, `changeTrust`); the backend builds, signs and submits, for the account named by the caller's own session. The client never holds a key — which also means this path is **custodial**, not self-custody.
 
 ### Identity & wallet interop
@@ -227,18 +227,18 @@ signing but cannot strand an account.
 
 ### Mainnet custody status
 
-Stated as of 2026-10-19, because earlier versions of this README overstated it.
+Stated as of 2026-10-20 and checked against the ledger, because earlier versions of this README overstated it.
 
 | Claim | Testnet | Mainnet today |
 |---|---|---|
-| Protocol accounts sign through AWS KMS | Yes — the KMS key is a signer on each service account | **No.** The deployed build signs every protocol account with a seed unsealed in the API process. One reserve key signs settlements, swaps, sponsorship and fee bumps. |
-| Treasury is a 2-of-3 multisig | Yes — `GBRXUTNC…`, master weight 0, thresholds 2/2/2 | **No.** The mainnet treasury has one signer and thresholds 0/0/0, so one leaked key can empty it. |
-| Driver seeds are sealed under a KMS-wrapped key | Yes | Yes — but the key-encryption key is unwrapped once and held in the API process for its lifetime. |
+| Protocol accounts sign through AWS KMS | Yes — the KMS key is a signer on each service account | **Partly.** The Ed25519 KMS key `GAKYXUFD…` is a signer on the reserve and the SCOUT issuer, and the API signs through it: settlement tx `da04acbd…` (ledger 65041701) carries only the KMS signature. Each account's original master key is **still a signer at weight 1** until it is retired. |
+| Treasury is a 2-of-3 multisig | Yes — `GBRXUTNC…`, master weight 0, thresholds 2/2/2 | **On the ledger, not yet in custody.** The treasury is `GCESVOGE…`: three signers at weight 1, master weight 0, thresholds 2/2/2 (tx `e4cb1462…`). All three signer keys are currently held by one party, so it does not yet give the protection of three independent holders. |
+| Driver seeds are sealed under a KMS-wrapped key | Yes | Yes, bound to their row with authenticated data. The key-encryption key is unwrapped once and held in the API process for its lifetime. |
 
 What closes the gap, in order:
 
-1. **Service-account signing through KMS.** The code on `main` now signs a service account through KMS whenever the ledger shows the KMS key can authorise it alone, and the readiness check `kms-service-signing` fails while any service account still signs with its seed. The ceremony is `backend/scripts/mainnet-setup.ts attach-kms`, then `retire-master --confirm`, which zeroes each master key in a transaction signed by KMS only.
-2. **Treasury ceremony.** Three signers held by three people, master weight 0, thresholds 2/2/2, verified on Horizon — runbook in [`docs/TREASURY_CEREMONY.md`](docs/TREASURY_CEREMONY.md).
+1. **Retire the service-account master keys.** `backend/scripts/mainnet-setup.ts retire-master --confirm` sets each master weight to 0 in a transaction signed by KMS only; after it, the KMS key is the only signer on the reserve and the SCOUT issuer.
+2. **Hand two treasury signer keys to two other people.** A signer swap signed by two of the current three, verified on Horizon — runbook in [`docs/TREASURY_CEREMONY.md`](docs/TREASURY_CEREMONY.md).
 
 Until both are done and verified on the ledger, mainnet activity is limited to operator-funded smoke tests.
 
