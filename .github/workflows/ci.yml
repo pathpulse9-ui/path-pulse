@@ -61,6 +61,10 @@ jobs:
     # Enabled once ios/ has an Xcode project (Phase 1, Daiwik).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Generate Xcode project
+        if: ${{ hashFiles('ios/project.yml') != '' }}
+        working-directory: ios
+        run: brew install xcodegen && xcodegen generate
       - name: Build
         if: ${{ hashFiles('ios/**/*.xcodeproj/project.pbxproj') != '' }}
         working-directory: ios

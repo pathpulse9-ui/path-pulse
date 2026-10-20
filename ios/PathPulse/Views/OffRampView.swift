@@ -25,7 +25,6 @@ struct OffRampView: View {
 
     private var kycVerified: Bool { resume?.kycStatus == "verified" }
     private var verifiedBank: CarretBank? { banks?.first(where: \.isVerified) }
-    private var hasPendingBank: Bool { (banks ?? []).contains { $0.status.lowercased() == "pending" } }
     private var primaryUsdcBalance: Double? {
         guard let w = wallets else { return nil }
         let usdc = w.first { $0.asset.uppercased() == "USDC" }
@@ -55,12 +54,6 @@ struct OffRampView: View {
 
                 if let l = limits {
                     limitsChip(l)
-                }
-
-                if kycVerified, banks?.isEmpty == true {
-                    bankCta
-                } else if kycVerified, hasPendingBank, !hasVerifiedBank {
-                    pendingBankBanner
                 }
 
                 PpCard {
@@ -176,6 +169,35 @@ struct OffRampView: View {
                     Spacer()
                     PpStatusPill(text: "verified", color: PathPulseColor.mint)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder private var balanceAndBankStrip: some View {
+        HStack(spacing: PpSpace.sm) {
+            if let usdc = primaryUsdcBalance {
+                HStack(spacing: 6) {
+                    Image(systemName: "dollarsign.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(PathPulseColor.mint)
+                    Text("\(formatUsdc(usdc)) USDC available")
+                        .font(PathPulseFont.labelSmall)
+                        .foregroundStyle(PathPulseColor.mintInk)
+                }
+                .padding(.horizontal, PpSpace.md)
+                .padding(.vertical, PpSpace.xs)
+                .background(PathPulseColor.mint26)
+                .clipShape(Capsule())
+            }
+            if let b = verifiedBank {
+                Text("→ \(b.bank_name) ••\(b.last4)")
+                    .font(PathPulseFont.bodySmall)
+                    .foregroundStyle(PathPulseColor.black60)
+                    .lineLimit(1)
+                Spacer()
+                Button("Manage") { bankSheetOpen = true }
+                    .font(PathPulseFont.labelSmall)
+                    .foregroundStyle(PathPulseColor.black70)
             }
         }
     }
