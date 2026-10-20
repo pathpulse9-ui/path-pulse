@@ -157,7 +157,9 @@ status: ## deployed image + status of both services
 verify: verify-api verify-web ## hit the live endpoints
 
 verify-api:
-	echo "== $(API_URL) ==" && curl -fsS $(API_URL)/health && echo && curl -fsS $(API_URL)/v1/routing/assets && echo && curl -fsS -o /dev/null -w "routing/treasury/plan  %{http_code}\n" $(API_URL)/v1/routing/treasury/plan
+	echo "== $(API_URL) ==" && curl -fsS $(API_URL)/health && echo && curl -fsS $(API_URL)/v1/routing/assets && echo && \
+	  code=$$(curl -sS -o /dev/null -w '%{http_code}' $(API_URL)/v1/routing/treasury/plan) && \
+	  echo "routing/treasury/plan  $$code (operator-only, expect 401)" && [ "$$code" = 401 ]
 
 verify-web:
 	echo "== $(WEB_URL) ==" && curl -fsS -o /dev/null -w "home    %{http_code}\n" $(WEB_URL)/ && curl -fsS -o /dev/null -w "signin  %{http_code}\n" $(WEB_URL)/signin

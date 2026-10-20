@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=node:24-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+ARG NODE_IMAGE=node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
 
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
@@ -18,6 +18,7 @@ COPY backend backend
 RUN pnpm --filter @pathpulse/backend build
 
 FROM ${NODE_IMAGE}
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
