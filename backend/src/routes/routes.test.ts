@@ -617,3 +617,61 @@ test('a session revoked by another instance is dropped on every route, not only 
   assert.equal((await json(await get('/v1/auth/me', authed(cookie)))).user, null);
   assert.equal((await postJson('/v1/tx/build', { operations: [] }, authedJson(cookie))).status, 401);
 });
+
+test('an operator with an enrolled authenticator cannot sign in without a fresh code', async () => {
+  const { generateTotpSecret, totpAt } = await import('../services/totp.js');
+  const email = `op_${randomUUID()}@example.com`;
+  const operators = env.opsOperators as string[];
+  const secrets = env.opsTotpSecrets as Map<string, string>;
+  const secret = generateTotpSecret();
+  operators.push(email);
+  secrets.set(email, secret);
+  try {
+    const cookie = mintedOperator(email);
+    const missing = await postJson('/v1/auth/ops/login', { passcode: env.opsPasscode }, authedJson(cookie));
+    assert.equal(missing.status, 401);
+    assert.equal((await json(missing)).error, 'TotpRequired');
+    const wrong = await postJson('/v1/auth/ops/login', { passcode: env.opsPasscode, totp: '000000' }, authedJson(cookie));
+    assert.equal(wrong.status, 401);
+    const code = totpAt(secret, Math.floor(Date.now() / 30_000));
+    const ok = await postJson('/v1/auth/ops/login', { passcode: env.opsPasscode, totp: code }, authedJson(cookie));
+    assert.equal(ok.status, 200);
+    const replay = await postJson('/v1/auth/ops/login', { passcode: env.opsPasscode, totp: code }, authedJson(cookie));
+    assert.equal(replay.status, 401);
+  } finally {
+    operators.splice(operators.indexOf(email), 1);
+    secrets.delete(email);
+  }
+});
+
+test('with GOV_PARTNERS set, the partner passcode only works for a listed signed-in identity', async () => {
+  const partners = env.govPartners as string[];
+  const email = `partner_${randomUUID()}@example.com`;
+  partners.push(email);
+  try {
+    const anonymous = await postJson('/v1/auth/partner/login', { passcode: env.govPartnerPasscode });
+    assert.equal(anonymous.status, 403);
+    const stranger = await postJson('/v1/auth/partner/login', { passcode: env.govPartnerPasscode }, authedJson(mintedOperator(`x_${randomUUID()}@example.com`)));
+    assert.equal(stranger.status, 403);
+    const listed = await postJson('/v1/auth/partner/login', { passcode: env.govPartnerPasscode }, authedJson(mintedOperator(email)));
+    assert.equal(listed.status, 200);
+  } finally {
+    partners.splice(partners.indexOf(email), 1);
+  }
+});
+
+test('GET requests are rate limited from the shared store', async () => {
+  const res = await get('/v1/routing/assets');
+  assert.equal(res.status, 200);
+  assert.ok(res.headers.get('ratelimit-limit'));
+  assert.ok(res.headers.get('ratelimit-remaining'));
+});
+
+test('the demo SCOUT driver route exists only off mainnet', async () => {
+  const res = await postJson('/v1/ops/demo/scout-drivers', {});
+  assert.equal(env.network, 'testnet');
+  assert.notEqual(res.status, 404);
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+  assert.match(source, /if \(env\.network !== 'mainnet'\) \{\s*router\.post\('\/v1\/ops\/demo\/scout-drivers'/);
+});

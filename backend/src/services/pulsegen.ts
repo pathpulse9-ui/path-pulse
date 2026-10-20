@@ -166,7 +166,7 @@ export function validateScoreBatch(rows: unknown): ParsedBatch {
     const scoredAtRaw = typeof row.scoredAt === 'string' ? row.scoredAt : '';
     const scoredAt = Date.parse(scoredAtRaw);
     if (Number.isNaN(scoredAt)) throw batchError(`${at}.scoredAt must be an ISO-8601 timestamp`);
-    if (scoredAt > now + 5 * 60 * 1000) throw batchError(`${at}.scoredAt is in the future`);
+    if (scoredAt > now + SCORED_AT_SKEW_MS) throw batchError(`${at}.scoredAt is in the future`);
 
     scores.push({ driverId, score, scoredAt: new Date(scoredAt).toISOString() });
   });

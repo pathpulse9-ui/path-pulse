@@ -930,7 +930,7 @@ struct WithdrawalReceiptSheet: View {
 }
 
 enum ReceiptFormat {
-    private static let parser: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let parser: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f

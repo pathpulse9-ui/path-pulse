@@ -394,8 +394,17 @@ begin
 end $$;
 `;
 
+const MIGRATION_LOCK = 7_420_011;
+
 export async function migrate(): Promise<void> {
-  await db().query(SCHEMA);
+  const client = await db().connect();
+  try {
+    await client.query('select pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    await client.query(SCHEMA);
+  } finally {
+    await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => {});
+    client.release();
+  }
   logger.info('database schema ready');
 }
 
