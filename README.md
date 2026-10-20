@@ -158,7 +158,7 @@ revenue ─▶ split 50/30/20 ─▶ weight by SCOUT tier ─▶ one Stellar tx 
 
 ## Deployed on testnet
 
-**Demo:** <https://demo.pathpulse.ai>
+**Demo:** <https://pay.pathpulse.ai>
 
 All accounts below are on the Stellar **testnet**. Addresses are public keys.
 

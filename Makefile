@@ -23,8 +23,8 @@ ACCOUNT   = $(shell aws sts get-caller-identity --query Account --output text 2>
 ECR       = $(ACCOUNT).dkr.ecr.$(REGION).amazonaws.com
 API_ARN   = $(shell aws apprunner list-services --region $(REGION) --query "ServiceSummaryList[?ServiceName=='pathpulse-demo-api'].ServiceArn | [0]" --output text 2>/dev/null)
 WEB_ARN   = $(shell aws apprunner list-services --region $(REGION) --query "ServiceSummaryList[?ServiceName=='pathpulse-demo-web'].ServiceArn | [0]" --output text 2>/dev/null)
-API_URL  := https://demo-api.pathpulse.ai
-WEB_URL  := https://demo.pathpulse.ai
+API_URL  := https://pay-api.pathpulse.ai
+WEB_URL  := https://pay.pathpulse.ai
 
 NETWORK  ?= testnet
 ifeq ($(NETWORK),mainnet)
@@ -41,7 +41,7 @@ DIRTY    := $(shell git diff --quiet 2>/dev/null || echo -dirty)
 TAG      ?= $(GIT_SHA)$(DIRTY)
 
 # web build args are baked into the image; client id read from the live API config
-NEXT_PUBLIC_API_URL          ?= https://demo-api.pathpulse.ai
+NEXT_PUBLIC_API_URL          ?= https://pay-api.pathpulse.ai
 NEXT_PUBLIC_STELLAR_NETWORK  ?= $(NETWORK)
 NEXT_PUBLIC_GOOGLE_CLIENT_ID ?= $(shell aws apprunner describe-service --region $(REGION) --service-arn $(API_ARN) --query 'Service.SourceConfiguration.ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables.GOOGLE_CLIENT_ID' --output text 2>/dev/null)
 

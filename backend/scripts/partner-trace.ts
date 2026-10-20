@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const API = process.env.PATHPULSE_API_URL ?? 'https://demo-api.pathpulse.ai';
+const API = process.env.PATHPULSE_API_URL ?? 'https://pay-api.pathpulse.ai';
 const HORIZON = process.env.HORIZON_URL ?? 'https://horizon.stellar.org';
 const KEY = process.env.PARTNER_API_KEY ?? '';
 const BATCH_ID = process.argv[2] ?? '';

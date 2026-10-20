@@ -87,7 +87,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"  # iPhone only
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
-        PATHPULSE_API_BASE: https://demo-api.pathpulse.ai
+        PATHPULSE_API_BASE: https://pay-api.pathpulse.ai
         PATHPULSE_STELLAR_NETWORK: testnet
         PATHPULSE_SENTRY_DSN: ""
         CODE_SIGN_STYLE: Automatic

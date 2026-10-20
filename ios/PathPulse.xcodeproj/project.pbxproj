@@ -289,7 +289,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				CODE_SIGN_ENTITLEMENTS = PathPulse/PathPulse.entitlements;
 				INFOPLIST_FILE = PathPulse/Info.plist;
-				PATHPULSE_API_BASE = "https://demo-api.pathpulse.ai";
+				PATHPULSE_API_BASE = "https://pay-api.pathpulse.ai";
 				PATHPULSE_STELLAR_NETWORK = testnet;
 				PATHPULSE_SENTRY_DSN = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -438,7 +438,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				CODE_SIGN_ENTITLEMENTS = PathPulse/PathPulse.entitlements;
 				INFOPLIST_FILE = PathPulse/Info.plist;
-				PATHPULSE_API_BASE = "https://demo-api.pathpulse.ai";
+				PATHPULSE_API_BASE = "https://pay-api.pathpulse.ai";
 				PATHPULSE_STELLAR_NETWORK = testnet;
 				PATHPULSE_SENTRY_DSN = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

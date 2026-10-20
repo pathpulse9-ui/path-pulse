@@ -4,11 +4,11 @@ import Foundation
 /// and stays in lock-step with the backend contract at `packages/contract/openapi.yaml`.
 enum Config {
     /// Backend base URL. Local dev: `http://localhost:8080` (Simulator reaches the Mac host
-    /// directly). Deployed: `https://demo-api.pathpulse.ai`.
+    /// directly). Deployed: `https://pay-api.pathpulse.ai`.
     static let apiBaseURL: URL = {
         let raw = Bundle.main.object(forInfoDictionaryKey: "PathPulseAPIBase") as? String
         guard let raw, !raw.isEmpty, let url = URL(string: raw) else {
-            return URL(string: "https://demo-api.pathpulse.ai")!
+            return URL(string: "https://pay-api.pathpulse.ai")!
         }
         precondition(
             stellarNetwork != "mainnet" || url.scheme == "https",

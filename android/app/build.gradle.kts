@@ -39,7 +39,7 @@ android {
         release {
             val network = providers.gradleProperty("pathpulse.network").getOrElse("testnet")
             val apiBase = providers.gradleProperty("pathpulse.apiBase").orNull
-                ?: if (network == "mainnet") "" else "https://demo-api.pathpulse.ai"
+                ?: if (network == "mainnet") "" else "https://pay-api.pathpulse.ai"
             buildConfigField("String", "API_BASE", "\"$apiBase\"")
             optimization {
                 enable = false
