@@ -40,7 +40,7 @@ async function runConvertedSettlement(
 
   const swapSource = await provisionManagedWallet(SWAP_SOURCE_USER);
   const settlementSource = await provisionManagedWallet(SETTLEMENT_SOURCE_USER);
-  const swap = await executeSwap(req.from, env.routing.settlementAssetCode, req.amount);
+  const swap = await executeSwap(req.from, env.routing.settlementAssetCode, req.amount, req.provider);
   if (!swap.destinationAmount) {
     throw httpError(
       `Swap ${swap.txHash} reported no output amount — refusing to settle from a balance estimate`,

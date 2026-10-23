@@ -177,3 +177,22 @@ test('runSwap throws RoutingUnavailable when no provider can execute', async () 
     return true;
   });
 });
+
+test('runSwap pinned to StellarBroker executes there even when Aquarius quotes better', async () => {
+  const providers = [fake('aquarius', { dest: 120n }), fake('stellarbroker', { dest: 100n })];
+  const result = await runSwap(providers, 'XLM', 'USDC', '10', undefined, 'stellarbroker');
+  assert.equal(result.provider, 'stellarbroker');
+});
+
+test('runSwap pinned to a provider never falls back to another venue', async () => {
+  const providers = [
+    fake('aquarius', { dest: 120n }),
+    fake('stellarbroker', { quoteError: routingError('no route', 422, 'NoRoute') }),
+  ];
+  await assert.rejects(runSwap(providers, 'XLM', 'USDC', '10', undefined, 'stellarbroker'));
+});
+
+test('runSwap pinned to a provider that cannot execute is refused before quoting', async () => {
+  const providers = [fake('aquarius', { dest: 120n }), fake('stellarbroker', { canExecute: false })];
+  await assert.rejects(runSwap(providers, 'XLM', 'USDC', '10', undefined, 'stellarbroker'), /not able to execute/);
+});

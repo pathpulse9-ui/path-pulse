@@ -1,4 +1,4 @@
-import type { RoutingQuote, RoutingSwapResult } from '@pathpulse/contract';
+import type { RoutingProviderName, RoutingQuote, RoutingSwapResult } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { toStroops, fromStroops } from '../stellar/settlement.js';
@@ -109,11 +109,16 @@ export async function runSwap(
   to: string,
   amount: string,
   timeoutMs: number = env.routing.quoteTimeoutMs,
+  only?: RoutingProviderName,
 ): Promise<RoutingSwapResult> {
   const [f, t] = validatePair(from, to);
   const sourceStroops = toStroops(amount);
-  const ranked = await gatherQuotes(providers, f, t, sourceStroops, timeoutMs);
-  const byName = new Map(providers.map((p) => [p.name, p]));
+  const pool = only ? providers.filter((p) => p.name === only) : providers;
+  if (only && !pool[0]?.canExecute) {
+    throw routingError(`${only} is not able to execute swaps here`, 422, 'RoutingUnavailable');
+  }
+  const ranked = await gatherQuotes(pool, f, t, sourceStroops, timeoutMs);
+  const byName = new Map(pool.map((p) => [p.name, p]));
 
   const best = ranked.find((q) => byName.get(q.provider)?.canExecute);
   const provider = best && byName.get(best.provider);
@@ -127,6 +132,11 @@ export function quoteSwap(from: string, to: string, amount: string): Promise<Rou
   return runQuote(activeProviders(), from, to, amount);
 }
 
-export function executeSwap(from: string, to: string, amount: string): Promise<RoutingSwapResult> {
-  return runSwap(activeProviders(), from, to, amount);
+export function executeSwap(
+  from: string,
+  to: string,
+  amount: string,
+  only?: RoutingProviderName,
+): Promise<RoutingSwapResult> {
+  return runSwap(activeProviders(), from, to, amount, undefined, only);
 }

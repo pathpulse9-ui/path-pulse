@@ -219,6 +219,7 @@ export interface CreateConvertedSettlementRequest {
   from: string;
   amount: string;
   drivers: CreateSettlementBatchRequest['drivers'];
+  provider?: RoutingProviderName;
 }
 
 export interface LedgerEntry {

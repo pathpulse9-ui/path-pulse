@@ -718,6 +718,7 @@ const createConvertedSettlementSchema = z.object({
     .array(z.object({ userId: userIdSchema, address: stellarAddressSchema }))
     .min(1)
     .max(500),
+  provider: z.enum(['aquarius', 'stellarbroker']).optional(),
 });
 
 router.post('/v1/settlement/converted', requireRole('ops'), idempotency(), async (req, res, next) => {

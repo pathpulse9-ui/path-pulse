@@ -239,7 +239,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OffRampSessionPage' }
     post:
-      summary: Start a Ramp Network off-ramp withdrawal
+      summary: Start a Carret off-ramp withdrawal
       operationId: createOffRampWithdrawal
       requestBody:
         required: true

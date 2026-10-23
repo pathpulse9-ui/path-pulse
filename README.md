@@ -71,8 +71,8 @@ Institutional reward programmes have the same failure mode everywhere: money goe
 
 ### Payout rails & off-ramp
 - **SDP batch disbursements** — settlement batches hand off to the Stellar Disbursement Platform for orchestrated, receipted bulk payout with per-recipient status.
-- **Fiat off-ramp via Ramp Network** — a signed widget URL (`enabledFlows=OFFRAMP`) carries the driver into Ramp's hosted flow; Ramp runs KYC, conversion and bank payout, including INR.
-- **ECDSA-verified webhooks** — off-ramp status callbacks are verified against the raw request body with `X-Body-Signature`, because re-serialised JSON has different bytes and would silently pass.
+- **Fiat off-ramp via Carret** — the backend broadcasts the driver's deposit itself, registers that hash with Carret (`/crypto_deposit/`), and Carret converts it and pays out to the driver's verified bank account. Every session must name the settlement batch it draws from and cannot exceed that driver's payout in it.
+- **HMAC-verified webhooks** — Carret status callbacks are checked with HMAC-SHA256 over the raw request body (`X-Carret-Signature`), because re-serialised JSON has different bytes and would silently pass; without a configured secret the check fails closed.
 - **Session reconciliation** — every withdrawal is recorded against its settlement batch, so fiat arrival is traceable back to the on-chain split that produced it.
 
 ### Governance & audit
@@ -107,7 +107,7 @@ graph TD
   SIGN -->|"signed envelope"| HZ["Stellar Horizon<br/>classic operations"]
   ROUTE -->|"invokeHostFunction"| SRB["Soroban RPC<br/>Aquarius router"]
   ENG --> SDP["Stellar SDP<br/>batch disbursement"]
-  ENG --> RAMP["Ramp Network<br/>fiat off-ramp"]
+  ENG --> CARRET["Carret<br/>fiat off-ramp"]
   HZ --> IDX
   SRB --> IDX
 ```
@@ -139,7 +139,7 @@ revenue ─▶ split 50/30/20 ─▶ weight by SCOUT tier ─▶ one Stellar tx 
 3. **Weight** — each driver's SCOUT badge is read on-chain and applied as a multiplier against the driver pool.
 4. **Settle** — every leg becomes an operation in one envelope, signed and submitted to Horizon. One hash covers the whole distribution.
 5. **Index** — the batch is surfaced as Source → Split → Driver, each node linking to Stellar Expert.
-6. **Deliver** — recipients hold value on-chain, hand off to SDP for orchestrated disbursement, or exit to fiat through Ramp.
+6. **Deliver** — recipients hold value on-chain, hand off to SDP for orchestrated disbursement, or exit to fiat through Carret.
 
 ---
 
@@ -247,9 +247,9 @@ Until that is done and verified on the ledger, mainnet activity is limited to op
 
 **Keys never reach a client.** Managed accounts are signed server-side; the mobile and web clients describe intent and receive hashes. The one piece of client-side crypto is the user's own wallet signing a SEP-10 challenge.
 
-**Webhooks are verified against raw bytes.** Off-ramp callbacks check `X-Body-Signature` before any status is applied, and correlation happens on a server-issued reference rather than a caller-supplied id.
+**Webhooks are verified against raw bytes.** Off-ramp callbacks check the HMAC in `X-Carret-Signature` before any status is applied, and correlation happens on a server-issued reference rather than a caller-supplied id.
 
-**Protocol accounts sign through AWS KMS on testnet.** Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware — key spec `ECC_NIST_EDWARDS25519`, algorithm `ED25519_SHA_512` over `MessageType: RAW`, so the private key never enters the application process. The four protocol service accounts each carry the KMS-derived address as an authorized signer; live proof is transaction [`3b73c013…`](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47), whose signature verifies against the KMS key. Full record in [`docs/KMS_VERIFICATION.md`](docs/KMS_VERIFICATION.md). Mainnet is not there yet — see [Mainnet custody status](#mainnet-custody-status).
+**Protocol accounts sign through AWS KMS on testnet.** Signing uses **AWS KMS**, whose keys are generated in and never leave AWS-managed HSM hardware — key spec `ECC_NIST_EDWARDS25519`, algorithm `ED25519_SHA_512` over `MessageType: RAW`, so the private key never enters the application process. The four protocol service accounts each carry the KMS-derived address as an authorized signer; live proof is transaction [`3b73c013…`](https://stellar.expert/explorer/testnet/tx/3b73c013dc1f7e1cc7f0dd57b6642421db4e87ddfd11b99c838c10de69c70c47), whose signature verifies against the KMS key. Full record in [`docs/KMS_VERIFICATION.md`](docs/KMS_VERIFICATION.md). On mainnet the KMS key is the only signer on the reserve and the SCOUT issuer — see [Mainnet custody status](#mainnet-custody-status).
 
 **Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. That key-encryption key is itself wrapped by AWS KMS (`alias/pathpulse-kek`) and unwrapped at startup, so **KMS is the root of trust for every user key**. A separate KMS key per driver is deliberately avoided: at $1 per key per month it would cost $10,000/month at 10,000 drivers.
 
