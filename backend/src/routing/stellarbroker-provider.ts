@@ -11,13 +11,14 @@ import {
   nativeToScVal,
   scValToNative,
   xdr,
-  type Operation,
+  BASE_FEE,
+  Operation,
 } from '@stellar/stellar-sdk';
 import type { Signer } from '../stellar/signing.js';
 import type { RoutingSwapResult } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { toStroops, fromStroops } from '../stellar/settlement.js';
-import { horizon } from '../stellar/network.js';
+import { horizon, submitToHorizon } from '../stellar/network.js';
 import { assertMainnetAllowed } from '../stellar/networkGuard.js';
 import { getManagedSigner, provisionManagedWallet } from '../stellar/managed.js';
 import { logger } from '../config/logger.js';
@@ -334,6 +335,50 @@ function interceptBrokerTxRequests(
   };
 }
 
+export const BROKER_ACCOUNT_FUNDING_XLM = '2.5';
+
+async function balanceView(address: string): Promise<HorizonBalanceView> {
+  return (await horizon.loadAccount(address)) as unknown as HorizonBalanceView;
+}
+
+async function accountExists(address: string): Promise<boolean> {
+  try {
+    await horizon.loadAccount(address);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pushTransfer(
+  hashes: string[],
+  signer: Signer,
+  from: string,
+  to: string,
+  asset: Asset,
+  stroops: bigint,
+  context: string,
+): Promise<void> {
+  if (stroops <= 0n) return;
+  const tx = new TransactionBuilder(await horizon.loadAccount(from), { fee: BASE_FEE, networkPassphrase: env.networkPassphrase })
+    .addOperation(Operation.payment({ destination: to, asset, amount: fromStroops(stroops) }))
+    .setTimeout(120)
+    .build();
+  hashes.push((await submitToHorizon(await signer.sign(tx), context)).hash);
+}
+
+async function returnUnsold(
+  hashes: string[],
+  signer: Signer,
+  trader: string,
+  wallet: string,
+  asset: Asset,
+  baseline: bigint,
+): Promise<void> {
+  const left = spendableStroops(await balanceView(trader), asset) - baseline;
+  await pushTransfer(hashes, signer, trader, wallet, asset, left, 'stellarbroker unsold return');
+}
+
 function waitForQuote(client: StellarBrokerClient, params: QuoteParams): Promise<QuoteResult> {
   return new Promise((resolve, reject) => {
     let lastError = 'no quote received';
@@ -538,7 +583,7 @@ export const stellarBrokerProvider: RoutingProvider = {
     const wallet = await provisionManagedWallet(SWAP_SOURCE_USER);
     const selling = resolveAsset(from);
     const buying = resolveAsset(to);
-    const free = spendableStroops((await horizon.loadAccount(wallet.address)) as unknown as HorizonBalanceView, selling.asset);
+    const free = spendableStroops(await balanceView(wallet.address), selling.asset);
     if (free < sourceStroops) {
       throw routingError(
         `The swap wallet can spend ${fromStroops(free)} ${selling.ref.code}; it cannot sell ${fromStroops(sourceStroops)}`,
@@ -546,13 +591,31 @@ export const stellarBrokerProvider: RoutingProvider = {
         'InsufficientBalance',
       );
     }
-    await ensureTrustline(wallet.address, to);
     const signer = await getManagedSigner(SWAP_SOURCE_USER);
-    let guard: ReturnType<typeof createBrokerGuard> | undefined;
+    const trader = signer.publicKey;
+    const separate = trader !== wallet.address;
+    if (separate && !(await accountExists(trader))) {
+      throw routingError(
+        `The Stellar Broker trading account ${trader} does not exist yet. Its own key is the KMS key; send it ${BROKER_ACCOUNT_FUNDING_XLM} XLM once to create it.`,
+        422,
+        'BrokerAccountMissing',
+      );
+    }
+    await ensureTrustline(trader, from);
+    await ensureTrustline(trader, to);
+    const inbound: string[] = [];
+    const outbound: string[] = [];
+    const baseline = separate ? spendableStroops(await balanceView(trader), selling.asset) : 0n;
+    if (separate) {
+      const xlmFree = spendableStroops(await balanceView(trader), Asset.native());
+      await pushTransfer(inbound, signer, wallet.address, trader, Asset.native(), BROKER_MAX_FEE_STROOPS - xlmFree, 'stellarbroker fee buffer');
+      await pushTransfer(inbound, signer, wallet.address, trader, selling.asset, sourceStroops, 'stellarbroker funding');
+    }
 
+    let guard: ReturnType<typeof createBrokerGuard> | undefined;
     const latestLedger = (await horizon.ledgers().order('desc').limit(1).call()).records[0].sequence;
     const client = new StellarBrokerClient({ partnerKey: env.routing.stellarBroker.partnerKey });
-    interceptBrokerTxRequests(client, wallet.address, signer, () => guard);
+    interceptBrokerTxRequests(client, trader, signer, () => guard);
     try {
       await client.connect();
       const quote = await waitForQuote(client, {
@@ -563,7 +626,7 @@ export const stellarBrokerProvider: RoutingProvider = {
       });
       const estimated = toStroops(quote.estimatedBuyingAmount!);
       const tradeGuard = createBrokerGuard({
-        trader: wallet.address,
+        trader,
         selling: selling.asset,
         buying: buying.asset,
         maxSellStroops: sourceStroops,
@@ -573,7 +636,7 @@ export const stellarBrokerProvider: RoutingProvider = {
         maxAuthLedger: latestLedger + BROKER_MAX_AUTH_LEDGERS,
       });
       guard = tradeGuard;
-      const outcome = await runTrade(client, wallet.address, async (payload) => signer.sign(tradeGuard.approve(payload)));
+      const outcome = await runTrade(client, trader, async (payload) => signer.sign(tradeGuard.approve(payload)));
       const txHashes = await confirmedOnChain(tradeGuard.submittedHashes);
       if (outcome.status !== 'success' || !txHashes.length) {
         throw routingError(
@@ -582,12 +645,16 @@ export const stellarBrokerProvider: RoutingProvider = {
           'RoutingUnavailable',
         );
       }
-      const delivered = await deliveredOnChain(txHashes, wallet.address, buying.asset);
+      const delivered = await deliveredOnChain(txHashes, trader, buying.asset);
       if (delivered < tradeGuard.minBuyStroops) {
         logger.error(
           { delivered: fromStroops(delivered), minimum: fromStroops(tradeGuard.minBuyStroops), txHashes },
           'stellarbroker delivered less than the quoted minimum',
         );
+      }
+      if (separate) {
+        await pushTransfer(outbound, signer, trader, wallet.address, buying.asset, delivered, 'stellarbroker proceeds');
+        await returnUnsold(outbound, signer, trader, wallet.address, selling.asset, baseline);
       }
       return {
         id: `swp_${Date.now()}_${randomBytes(4).toString('hex')}`,
@@ -604,12 +671,17 @@ export const stellarBrokerProvider: RoutingProvider = {
         hops: quote.directTrade?.path?.length ?? 0,
         pools: [],
         txHash: txHashes[txHashes.length - 1],
-        txHashes,
+        txHashes: [...inbound, ...txHashes, ...outbound],
         horizonUrl: horizonTxUrl(txHashes[txHashes.length - 1]),
       };
     } catch (e) {
       if (guard && guard.committedSellStroops > 0n) {
         logger.error({ err: e, committed: fromStroops(guard.committedSellStroops) }, 'stellarbroker trade failed after signing');
+      }
+      if (separate) {
+        await returnUnsold(outbound, signer, trader, wallet.address, selling.asset, baseline).catch((err) =>
+          logger.error({ err, trader }, 'stellarbroker could not return unsold funds to the swap wallet'),
+        );
       }
       throw e;
     } finally {

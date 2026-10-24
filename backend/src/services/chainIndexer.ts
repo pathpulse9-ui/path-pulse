@@ -67,7 +67,7 @@ export function toIndexedPayment(record: HorizonPaymentRecord, watched: WatchedA
 
 export const ALERT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
-export const OUTFLOW_ALARM_ROLES = new Set(['reserve', 'settlement_source', 'routing_source']);
+export const OUTFLOW_ALARM_ROLES = new Set(['reserve', 'settlement_source', 'routing_source', 'broker_trading']);
 
 function expectedOutflow(p: IndexedPayment): boolean {
   return p.type === 'create_account' && toStroopsSafe(p.amount) === 0n;
@@ -84,11 +84,13 @@ export function unexplainedOutflows(
   watched: string,
   knownTxHashes: Set<string>,
   now = Date.now(),
+  internal: Set<string> = new Set(),
 ): IndexedPayment[] {
   return payments.filter(
     (p) =>
       p.from === watched &&
       p.to !== watched &&
+      !internal.has(p.to) &&
       !knownTxHashes.has(p.txHash) &&
       !expectedOutflow(p) &&
       now - Date.parse(p.createdAt) < ALERT_LOOKBACK_MS,
@@ -96,7 +98,7 @@ export function unexplainedOutflows(
 }
 
 export async function watchedAccounts(): Promise<WatchedAccount[]> {
-  const { getManagedWallet, RESERVE_SPONSOR_USER } = await import('../stellar/managed.js');
+  const { getManagedWallet, kmsServiceAddress, RESERVE_SPONSOR_USER } = await import('../stellar/managed.js');
   const accounts: WatchedAccount[] = [
     { role: 'treasury', address: env.distribution.treasury },
     { role: 'partner_revenue', address: env.distribution.partnerRevenue },
@@ -111,6 +113,10 @@ export async function watchedAccounts(): Promise<WatchedAccount[]> {
     if (wallet?.provisioned && !accounts.some((a) => a.address === wallet.address)) {
       accounts.push({ role, address: wallet.address });
     }
+  }
+  const brokerTrading = await kmsServiceAddress().catch(() => null);
+  if (brokerTrading && !accounts.some((a) => a.address === brokerTrading)) {
+    accounts.push({ role: 'broker_trading', address: brokerTrading });
   }
   return accounts.filter((a) => a.address);
 }
@@ -151,7 +157,7 @@ async function knownSettlementTxHashes(hashes: string[]): Promise<Set<string>> {
   return new Set(r.rows.map((x) => x.h));
 }
 
-export async function indexAccount(watched: WatchedAccount): Promise<number> {
+export async function indexAccount(watched: WatchedAccount, internal: Set<string> = new Set()): Promise<number> {
   const cur = await db().query<{ cursor: string }>('select cursor from chain_cursors where account = $1', [
     watched.address,
   ]);
@@ -165,7 +171,7 @@ export async function indexAccount(watched: WatchedAccount): Promise<number> {
     indexed += rows.length;
     if (OUTFLOW_ALARM_ROLES.has(watched.role)) {
       const known = await knownSettlementTxHashes([...new Set(rows.map((r) => r.txHash))]);
-      for (const p of unexplainedOutflows(rows, watched.address, known)) {
+      for (const p of unexplainedOutflows(rows, watched.address, known, Date.now(), internal)) {
         sendAlertInBackground({
           key: `indexer:outflow:${p.txHash}`,
           severity: 'critical',
@@ -193,7 +199,9 @@ export function indexerStatus() {
 
 export async function runIndexerOnce(): Promise<number> {
   let total = 0;
-  for (const watched of await watchedAccounts()) total += await indexAccount(watched);
+  const accounts = await watchedAccounts();
+  const internal = new Set(accounts.filter((a) => OUTFLOW_ALARM_ROLES.has(a.role)).map((a) => a.address));
+  for (const watched of accounts) total += await indexAccount(watched, internal);
   return total;
 }
 

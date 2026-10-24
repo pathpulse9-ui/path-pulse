@@ -65,3 +65,14 @@ test('the reserve alarm ignores zero-balance sponsored account creations but not
     ['fund', 'drain'],
   );
 });
+
+test('moves between KMS-controlled service accounts are internal, payments anywhere else still alert', () => {
+  const now = Date.now();
+  const at = new Date(now - 60_000).toISOString();
+  const toTrading = { id: 't', account: 'GRESERVE', role: 'reserve', txHash: 'fund', type: 'payment', from: 'GRESERVE', to: 'GTRADING', assetCode: 'USDC', assetIssuer: 'GISSUER', amount: '1.0000000', createdAt: at };
+  const elsewhere = { ...toTrading, id: 'e', txHash: 'leak', to: 'GSTRANGER' };
+  assert.deepEqual(
+    unexplainedOutflows([toTrading, elsewhere], 'GRESERVE', new Set(), now, new Set(['GRESERVE', 'GTRADING'])).map((p) => p.txHash),
+    ['leak'],
+  );
+});

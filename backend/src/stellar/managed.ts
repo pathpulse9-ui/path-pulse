@@ -243,6 +243,11 @@ async function serviceKmsSigner(): Promise<Signer> {
   return kmsSigner;
 }
 
+export async function kmsServiceAddress(): Promise<string | null> {
+  if (env.signerBackend !== 'aws-kms') return null;
+  return (await serviceKmsSigner()).publicKey;
+}
+
 export function serviceSigningMode(): Record<string, 'kms' | 'sealed-seed'> {
   return Object.fromEntries([...kmsRoute].map(([address, r]) => [address, r.kms ? 'kms' : 'sealed-seed']));
 }
