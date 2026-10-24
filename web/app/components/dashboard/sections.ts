@@ -73,7 +73,7 @@ export const SECTIONS = [
     href: '/dashboard/treasury',
     icon: Landmark,
     description:
-      'Protocol-governed distribution accounts, multisig configuration and Aquarius liquidity conversion.',
+      'Protocol-governed distribution accounts, multisig configuration and liquidity conversion through Aquarius and Stellar Broker.',
   },
   {
     label: 'Status',

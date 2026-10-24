@@ -117,8 +117,9 @@ function ConversionPanel() {
             </span>
           </h2>
           <p className="text-sm text-black/60 mt-1">
-            Convert operating balances between routable assets. Aquarius and StellarBroker are
-            quoted in parallel. Aquarius is chosen when it can execute. StellarBroker executes on mainnet only.
+            Convert operating balances between routable assets. Aquarius and Stellar Broker are
+            quoted in parallel and the swap executes on the venue with the better rate. Stellar Broker
+            executes on mainnet only; on testnet every swap goes through Aquarius.
           </p>
         </div>
       </div>
