@@ -227,19 +227,15 @@ signing but cannot strand an account.
 
 ### Mainnet custody status
 
-Stated as of 2026-10-20 and checked against the ledger, because earlier versions of this README overstated it.
+Stated as of 2026-10-24 and checked against the ledger, because earlier versions of this README overstated it.
 
 | Claim | Testnet | Mainnet today |
 |---|---|---|
 | Protocol accounts sign through AWS KMS | Yes — the KMS key is a signer on each service account | **Yes.** The Ed25519 KMS key `GAKYXUFD…` is the only signer on the reserve and the SCOUT issuer: master keys retired at weight 0 in KMS-signed txs `c2a863b1…` and `8a4431ed…` (ledgers 65042001 and 65042004). Settlement tx `da04acbd…` carries only the KMS signature. |
-| Treasury is a 2-of-3 multisig | Yes — `GBRXUTNC…`, master weight 0, thresholds 2/2/2 | **On the ledger, not yet in custody.** The treasury is `GCESVOGE…`: three signers at weight 1, master weight 0, thresholds 2/2/2 (tx `e4cb1462…`). All three signer keys are currently held by one party, so it does not yet give the protection of three independent holders. |
+| Treasury is a 2-of-3 multisig | Yes — `GBRXUTNC…`, master weight 0, thresholds 2/2/2 | **Yes, three independent holders.** The treasury is `GCESVOGE…`: master weight 0, thresholds 2/2/2, and three signers at weight 1 — `GCSB6O5G…` (Naved), `GBMEJVBF…` (Umair), `GD325OSZ…` (Daiwik). Each key was created by its holder in their own wallet; only public keys were shared. Signers set in set_options tx [`678113af…`](https://stellar.expert/explorer/public/tx/678113af8c0f6256a4f1b37d6c692d62cb30300c2159318d1549f2d2ff1d6ffd). Every pair has signed a test payment — [`31763e63…`](https://stellar.expert/explorer/public/tx/31763e63fab07372b37a610488fa19de239663958f423934b70bfa755f7ead1a), [`486ca341…`](https://stellar.expert/explorer/public/tx/486ca341dc8c71623d95d7cb0834d6bea2d101a48af152980d05632e63a5193c), [`27c3f966…`](https://stellar.expert/explorer/public/tx/27c3f966e9551c9d718c00eee8e5149f02df39dff8a96b54e6938177370f2156) — and a single signature is rejected with `tx_bad_auth`. |
 | Driver seeds are sealed under a KMS-wrapped key | Yes | Yes, bound to their row with authenticated data. The key-encryption key is unwrapped once and held in the API process for its lifetime. |
 
-What closes the gap, in order:
-
-1. **Hand two treasury signer keys to two other people.** A signer swap signed by two of the current three, verified on Horizon — runbook in [`docs/TREASURY_CEREMONY.md`](docs/TREASURY_CEREMONY.md).
-
-Until that is done and verified on the ledger, mainnet activity is limited to operator-funded smoke tests.
+The treasury ceremony and its evidence log are in [`docs/TREASURY_CEREMONY.md`](docs/TREASURY_CEREMONY.md).
 
 **The signer is the boundary.** Every mainnet-capable path goes through the `Signer` interface, and the dev implementation throws on mainnet by construction. Promoting to production means supplying a KMS or HSM backend, not flipping a flag.
 
@@ -253,7 +249,7 @@ Until that is done and verified on the ledger, mainnet activity is limited to op
 
 **Key encryption for driver keys.** Encrypt-at-rest, decrypt only in-memory at signing time. Seeds are sealed with AES-256-GCM under a 32-byte key-encryption key before they touch the database — fresh IV per seal, authentication tag verified on every read — and the plaintext exists only inside the signing module, only long enough to build a keypair. That key-encryption key is itself wrapped by AWS KMS (`alias/pathpulse-kek`) and unwrapped at startup, so **KMS is the root of trust for every user key**. A separate KMS key per driver is deliberately avoided: at $1 per key per month it would cost $10,000/month at 10,000 drivers.
 
-**Secrets stay out of the repo.** `.env` and `secrets/` are gitignored and have never been committed. Testnet provisioning writes only public keys to disk; treasury provisioning writes signer secrets to `secrets/treasury-v2.json` at mode 0600, which is a single point of failure until it moves to a managed secret store.
+**Secrets stay out of the repo.** `.env` and `secrets/` are gitignored and have never been committed. Testnet provisioning writes only public keys to disk. The mainnet treasury's signer secrets never reach the backend, its config or the repo: each signatory holds their own key in their own wallet.
 
 ---
 

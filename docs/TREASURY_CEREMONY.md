@@ -12,11 +12,10 @@ Target state, checked on the ledger at the end:
 
 Why each rule exists:
 
-- The old testnet treasury `GADPEI5O…` was left with master weight 1, which made it 2-of-4, and three of its
-  secrets were lost. It can never sign again. Setting master weight to 0 and proving every signer works
-  before real funds arrive is what prevents a repeat.
-- `backend/scripts/provision-treasury-v2.ts` generates all three signer secrets in one process and writes them to
-  one file. **Do not use it on mainnet.** On mainnet each signatory generates their own key on their own device.
+- On Stellar the master key is itself a signer. Leaving it above weight 0 turns a 2-of-3 into a 2-of-4, so
+  master weight 0 and a proof that every signer pair works come before real funds arrive.
+- Each signatory generates their own key on their own device. Signer keys are never generated together in
+  one process or kept in one file.
 - The backend only ever builds unsigned transactions for the treasury (`buildTreasuryMultisigTx`,
   `buildTreasuryConversion`). It never signs them.
 
@@ -175,16 +174,16 @@ For every treasury payment (for example the pilot deposit to the settlement sour
 
 | Item | Value |
 |---|---|
-| Ceremony date | |
-| Signer 1 / 2 / 3 (names) | |
-| `TREASURY_PUBLIC` | |
-| Signer public keys | |
-| Funding tx (5 XLM) | |
-| Configuration tx | |
-| Pair A / B / C tx | |
-| Negative test (one signer, `tx_bad_auth`) | |
-| `GET /v1/treasury/config` captured | |
-| Master secret destroyed (who witnessed) | |
+| Ceremony date | 2026-10-24 (mainnet) |
+| Signer 1 / 2 / 3 (names) | Naved / Umair / Daiwik |
+| `TREASURY_PUBLIC` | `GCESVOGE2FLAWTV6D2BQ7H3KRRJT5D74IXWEGR7MZQUJK2MNMBD5MIA3` |
+| Signer public keys | `GCSB6O5GAL3GUUBA5VJAXZYISHVYA3EGZ3HDBRAE3DUI5ADUSPQLIIM3` (Naved), `GBMEJVBF43QQ372QEBEW6AVHMBM6DDH4Z6CATFAJOF7VNPHAELFFLIVU` (Umair), `GD325OSZQUOU5FMXXQKGXMIMO4E5CJUX6GZVVYSJPIVQLDHC7YI6FMIV` (Daiwik) — each created by its holder in their own wallet |
+| Funding tx (5 XLM) | Not needed: the account already existed with master weight 0 and thresholds 2/2/2 |
+| Configuration tx | `678113af8c0f6256a4f1b37d6c692d62cb30300c2159318d1549f2d2ff1d6ffd` (ledger 65107770): the three keys above at weight 1; master 0, thresholds 2/2/2 |
+| Pair A / B / C tx | A Naved + Umair `31763e63fab07372b37a610488fa19de239663958f423934b70bfa755f7ead1a` (ledger 65108620) · B Umair + Daiwik `486ca341dc8c71623d95d7cb0834d6bea2d101a48af152980d05632e63a5193c` (ledger 65108676) · C Naved + Daiwik `27c3f966e9551c9d718c00eee8e5149f02df39dff8a96b54e6938177370f2156` (ledger 65108835; its memo reads "test B", it was built with the wrong label). Both signatures on each verified against the keys |
+| Negative test (one signer, `tx_bad_auth`) | Rejected twice: Naved alone on test A, Daiwik alone on test B |
+| `GET /v1/treasury/config` captured | 2026-10-24: the three keys above at weight 1, master 0, thresholds 2/2/2 |
+| Master secret destroyed (who witnessed) | Not applicable: master weight is 0 |
 
 Keep the completed log under `docs/evidence/` (local only) and reference the transaction hashes in
 `docs/MAINNET_CUTOVER.md`.

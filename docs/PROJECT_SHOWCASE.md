@@ -274,18 +274,17 @@ Measured from this repository on 2026-09-27 at commit `c8b458d`.
 
 ### Open items, stated plainly
 
-- **Treasury signer distribution is not done.** The on-chain 2-of-3 is real, but all three signer secrets currently sit in one file on one machine (`secrets/treasury-v2.json`, mode 0600, gitignored). Operationally that is a 1-of-1 until distributed to separate signatories. This is a mainnet-cutover prerequisite and is not claimed as complete.
+- **Treasury signer distribution — done on mainnet 2026-10-24.** The mainnet treasury `GCESVOGE…` is a 2-of-3 whose three keys were each created by a different signatory (Naved, Umair, Daiwik) in their own wallet. Signers set in set_options tx `678113af…`; every signer pair has signed a test payment, and a single signature is rejected (`docs/TREASURY_CEREMONY.md`, evidence log).
 - **PulseGen score feed is not connected.** Three sources are implemented — live REST, delivered batch, and a deterministic synthetic interim — but the live feed activates only when `PULSEGEN_BASE_URL` and `PULSEGEN_API_KEY` are supplied. The scores themselves are PathPulse.ai's system and the one input that cannot be supplied from this side.
 - **On-chain off-ramp deposit remains a mainnet criterion.** Carret has no testnet; its dev environment transacts real mainnet USDC while PathPulse runs testnet, and the backend deliberately refuses to place a Carret order on testnet without an explicit override.
 - **Operator actions are not yet attributable to a person.** `POST /v1/auth/ops/login` mints a throwaway `ops_<uuid>` and discards the caller's real identity, so a shared passcode makes two operators indistinguishable in the audit trail. Splitting authentication from authorisation is tracked in `docs/MAINNET_CUTOVER.md`.
 - **Carret KYC ownership binding is open.** Anonymous access is closed, but resolving the account from the caller's own mapping is still outstanding.
 - **Rate-limit counters are in-memory**, so limits are only correct while the service runs a single instance.
-- **Three Tranche 1 accounts are permanently frozen** — seeds unrecoverable, and the old treasury was a 2-of-4 (master counted as a signer) rather than the documented 2-of-3. All three are replaced and the defect cannot be reproduced; `buildTreasuryMultisigTx` now sets `masterWeight: 0`.
 - **`README.md` links `docs/PHASE_PLAN.md`, which does not exist** in the repository — a stale reference worth correcting or creating.
 
 ### Next levers
 
-- **Complete the mainnet cutover** — key ceremony with three separate signatories, Carret and SDP production tenants, monitoring and alerting, then staged low-value pilot payouts behind the existing human gate.
+- **Complete the mainnet cutover** — Carret and SDP production tenants, monitoring and alerting, then staged low-value pilot payouts behind the existing human gate.
 - **Connect the live PulseGen feed** — the contract is written (`docs/SCORE_FEED_CONTRACT.md`) and the client is implemented and tested; it activates on credentials alone.
 - **Enable Broker execution on mainnet**, where its quotes are correctly priced and a partner key can be issued, converting the aggregator from one execution venue to two.
 - **Distribute the KMS treatment to the remaining distribution accounts** — the two are named as next in line.
