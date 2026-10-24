@@ -84,6 +84,7 @@ function ConversionPanel() {
     }
     let cancelled = false;
     setQuoting(true);
+    setConvertError(null);
     const t = setTimeout(async () => {
       try {
         const q = await getRoutingQuote(from, to, amount);
@@ -195,6 +196,7 @@ function ConversionPanel() {
             onChange={(e) => {
               setVenue(e.target.value as Venue);
               setResult(null);
+              setConvertError(null);
             }}
             className="rounded-full border border-black/10 px-4 h-10 text-sm bg-white outline-none focus:border-black/30 transition-colors duration-200"
           >
@@ -210,7 +212,10 @@ function ConversionPanel() {
       {from === to && <p className="text-sm text-red-600">Pick two different assets.</p>}
       {quoteError && <p className="text-sm text-red-600">{quoteError}</p>}
       {quote && !shown && venue !== 'best' && (
-        <p className="text-sm text-red-600">{VENUE_LABEL[venue]} did not quote this pair and amount.</p>
+        <p className="text-sm text-red-600">
+          {VENUE_LABEL[venue]} did not quote this pair and amount.
+          {venue === 'stellarbroker' && ' Its minimum trade is worth 1 USD.'}
+        </p>
       )}
 
       {shown && (

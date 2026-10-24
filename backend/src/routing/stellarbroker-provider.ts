@@ -108,6 +108,30 @@ export function createBrokerGuard(limits: BrokerTradeLimits) {
   };
 }
 
+const BASE_RESERVE_STROOPS = 5_000_000n;
+
+export interface HorizonBalanceView {
+  balances: { asset_type: string; asset_code?: string; asset_issuer?: string; balance: string; selling_liabilities?: string }[];
+  subentry_count: number;
+  num_sponsoring?: number;
+  num_sponsored?: number;
+}
+
+export function spendableStroops(account: HorizonBalanceView, asset: Asset): bigint {
+  const line = account.balances.find((b) =>
+    asset.isNative()
+      ? b.asset_type === 'native'
+      : b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
+  );
+  if (!line) return 0n;
+  let free = toStroops(line.balance) - toStroops(line.selling_liabilities ?? '0');
+  if (asset.isNative()) {
+    const entries = 2 + account.subentry_count + (account.num_sponsoring ?? 0) - (account.num_sponsored ?? 0);
+    free -= BigInt(entries) * BASE_RESERVE_STROOPS;
+  }
+  return free > 0n ? free : 0n;
+}
+
 function waitForQuote(client: StellarBrokerClient, params: QuoteParams): Promise<QuoteResult> {
   return new Promise((resolve, reject) => {
     let lastError = 'no quote received';
@@ -150,7 +174,12 @@ function runTrade(client: StellarBrokerClient, trader: string, sign: (p: unknown
     client.once('error', (e: Event & { error?: unknown }) => {
       clearTimeout(timer);
       client.stop();
-      reject(routingError(`StellarBroker trade failed: ${String(e.error ?? 'unknown error')}`, 502, 'RoutingUnavailable'));
+      const message = String(e.error ?? 'unknown error');
+      reject(
+        /enough selling asset|insufficient/i.test(message)
+          ? routingError(`StellarBroker refused the trade: ${message}`, 422, 'InsufficientBalance')
+          : routingError(`StellarBroker trade failed: ${message}`, 502, 'RoutingUnavailable'),
+      );
     });
     client.confirmQuote(trader, sign as never);
   });
@@ -290,10 +319,18 @@ export const stellarBrokerProvider: RoutingProvider = {
     if (env.network !== 'mainnet') throw routingError('StellarBroker trades on mainnet only', 422, 'NoRoute');
     assertMainnetAllowed('stellarbroker swap');
     const wallet = await provisionManagedWallet(SWAP_SOURCE_USER);
-    await ensureTrustline(wallet.address, to);
-    const signer = await getManagedSigner(SWAP_SOURCE_USER);
     const selling = resolveAsset(from);
     const buying = resolveAsset(to);
+    const free = spendableStroops((await horizon.loadAccount(wallet.address)) as unknown as HorizonBalanceView, selling.asset);
+    if (free < sourceStroops) {
+      throw routingError(
+        `The swap wallet can spend ${fromStroops(free)} ${selling.ref.code}; it cannot sell ${fromStroops(sourceStroops)}`,
+        422,
+        'InsufficientBalance',
+      );
+    }
+    await ensureTrustline(wallet.address, to);
+    const signer = await getManagedSigner(SWAP_SOURCE_USER);
     let guard: ReturnType<typeof createBrokerGuard> | undefined;
 
     const client = new StellarBrokerClient({ partnerKey: env.routing.stellarBroker.partnerKey });

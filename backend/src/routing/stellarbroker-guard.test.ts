@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder, type xdr } from '@stellar/stellar-sdk';
-import { createBrokerGuard } from './stellarbroker-provider.js';
+import { createBrokerGuard, spendableStroops } from './stellarbroker-provider.js';
 
 const trader = Keypair.random().publicKey();
 const brokerFeeAccount = Keypair.random().publicKey();
@@ -140,4 +140,26 @@ test('an Aquarius amount that is not a whole stroop count is refused', async () 
   for (const bad of ['-1', '1.5', '1e30', '', 'NaN', '9'.repeat(40)]) {
     assert.throws(() => parseStroopAmount(bad), { name: 'RoutingUnavailable' });
   }
+});
+
+test('spendable XLM excludes the minimum balance of sponsored entries and open offers', () => {
+  const account = {
+    balances: [{ asset_type: 'native', balance: '12.4723882', selling_liabilities: '0.5000000' }],
+    subentry_count: 2,
+    num_sponsoring: 17,
+    num_sponsored: 0,
+  };
+  assert.equal(spendableStroops(account, xlm), 14_723_882n);
+});
+
+test('spendable USDC is the line balance minus liabilities, and zero without a trustline', () => {
+  const account = {
+    balances: [
+      { asset_type: 'native', balance: '20.0000000' },
+      { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: usdc.getIssuer(), balance: '0.3586489' },
+    ],
+    subentry_count: 1,
+  };
+  assert.equal(spendableStroops(account, usdc), 3_586_489n);
+  assert.equal(spendableStroops(account, new Asset('USDC', Keypair.random().publicKey())), 0n);
 });
