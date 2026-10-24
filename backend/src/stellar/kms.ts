@@ -79,4 +79,8 @@ export class AwsKmsSigner implements Signer {
     tx.addSignature(this.publicKey, Buffer.from(signature).toString('base64'));
     return tx;
   }
+
+  async signHash(hash: Buffer): Promise<Buffer> {
+    return Buffer.from(await this.kms.sign(this.keyId, hash));
+  }
 }

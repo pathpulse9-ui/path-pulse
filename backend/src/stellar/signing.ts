@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 export interface Signer {
   readonly publicKey: string;
   sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T>;
+  signHash(hash: Buffer): Promise<Buffer>;
 }
 
 export class DevSigner implements Signer {
@@ -24,6 +25,10 @@ export class DevSigner implements Signer {
     tx.sign(this.keypair);
     return tx;
   }
+
+  async signHash(hash: Buffer): Promise<Buffer> {
+    return this.keypair.sign(hash);
+  }
 }
 
 export class CustodialSigner implements Signer {
@@ -38,6 +43,10 @@ export class CustodialSigner implements Signer {
   async sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T> {
     tx.sign(this.keypair);
     return tx;
+  }
+
+  async signHash(hash: Buffer): Promise<Buffer> {
+    return this.keypair.sign(hash);
   }
 }
 

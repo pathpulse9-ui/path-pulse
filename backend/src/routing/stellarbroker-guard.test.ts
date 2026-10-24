@@ -16,6 +16,8 @@ const limits = {
   maxSellStroops: 200_000_000n,
   minBuyStroops: 20_000_000n,
   maxFeeStroops: 10_000_000n,
+  networkPassphrase: Networks.PUBLIC,
+  maxAuthLedger: Number.MAX_SAFE_INTEGER,
 };
 
 function tx(ops: xdr.Operation[], source = trader, fee = '100', timeout = 60) {

@@ -145,3 +145,12 @@ test('a service account routes through KMS only when the KMS key alone meets eve
   assert.equal(kmsCanSignAlone(account([{ key: 'GMASTER', weight: 2 }, { key: kmsKey, weight: 1 }], [1, 2, 2]), kmsKey), false);
   assert.equal(kmsCanSignAlone(account([{ key: kmsKey, weight: 0 }], [0, 0, 0]), kmsKey), false);
 });
+
+test('signHash signs the raw 32-byte hash with the KMS key, verifiable against its address', async () => {
+  const calls: string[] = [];
+  const signer = await AwsKmsSigner.create('k1', fakeKms({ k1: makeKey() }, calls));
+  const digest = Buffer.alloc(32, 7);
+  const signature = await signer.signHash(digest);
+  assert.ok(calls.includes('sign:k1:32'));
+  assert.ok(Keypair.fromPublicKey(signer.publicKey).verify(digest, signature));
+});

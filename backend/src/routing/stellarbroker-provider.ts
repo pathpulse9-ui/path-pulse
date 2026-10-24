@@ -1,6 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { StellarBrokerClient, type QuoteParams, type QuoteResult } from '@stellar-broker/client';
-import { Asset, FeeBumpTransaction, Transaction, type Operation } from '@stellar/stellar-sdk';
+import {
+  Address,
+  Asset,
+  FeeBumpTransaction,
+  StrKey,
+  Transaction,
+  TransactionBuilder,
+  hash,
+  nativeToScVal,
+  scValToNative,
+  xdr,
+  type Operation,
+} from '@stellar/stellar-sdk';
+import type { Signer } from '../stellar/signing.js';
 import type { RoutingSwapResult } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
 import { toStroops, fromStroops } from '../stellar/settlement.js';
@@ -17,6 +30,8 @@ const QUOTE_TIMEOUT_MS = 15_000;
 const TRADE_TIMEOUT_MS = 120_000;
 export const BROKER_MAX_FEE_STROOPS = 10_000_000n;
 export const BROKER_MAX_TX_LIFETIME_SECONDS = 60;
+export const BROKER_ROUTER = 'CASH5JQCCHHKSZXFTDP7V2FLUJYMENUXZJTE65ORQLKJPFZLEZ5FRNGA';
+export const BROKER_MAX_AUTH_LEDGERS = 60;
 
 export interface BrokerTradeLimits {
   trader: string;
@@ -25,7 +40,23 @@ export interface BrokerTradeLimits {
   maxSellStroops: bigint;
   minBuyStroops: bigint;
   maxFeeStroops: bigint;
+  networkPassphrase: string;
+  maxAuthLedger: number;
   now?: () => number;
+}
+
+interface BrokerRoute {
+  amount?: unknown;
+  min?: unknown;
+  path?: { asset?: unknown }[];
+}
+
+const contractOf = (fn: xdr.InvokeContractArgs) => Address.fromScAddress(fn.contractAddress()).toString();
+const nativeArgs = (fn: xdr.InvokeContractArgs) => fn.args().map((a) => scValToNative(a) as unknown);
+
+export function isSorobanTx(tx: Transaction): boolean {
+  const op = tx.operations[0] as { auth?: unknown[] } | undefined;
+  return (op?.auth?.length ?? 0) > 0;
 }
 
 function refuse(reason: string): never {
@@ -85,6 +116,83 @@ export function createBrokerGuard(limits: BrokerTradeLimits) {
     return tx;
   }
 
+  function checkSorobanSwap(tx: Transaction): bigint {
+    if (tx.operations.length !== 1) refuse('a Soroban swap must be a single operation');
+    const op = tx.operations[0] as Operation.InvokeHostFunction;
+    if (op.type !== 'invokeHostFunction') refuse(`unexpected ${op.type} operation`);
+    if (op.source !== limits.trader) refuse('the contract call is not sourced from the trading account');
+    assertExpiresSoon(tx);
+    const maxLedger = tx.ledgerBounds?.maxLedger ?? 0;
+    if (!maxLedger || maxLedger > limits.maxAuthLedger) refuse('the authorisation would stay valid for too many ledgers');
+    if (op.func.switch().name !== 'hostFunctionTypeInvokeContract') refuse('the host function is not a contract call');
+    const call = op.func.invokeContract();
+    if (contractOf(call) !== BROKER_ROUTER) refuse(`contract ${contractOf(call)} is not the StellarBroker router`);
+    if (call.functionName().toString() !== 'swap') refuse(`router function ${call.functionName().toString()} is not swap`);
+
+    const sellingSac = limits.selling.contractId(limits.networkPassphrase);
+    const buyingSac = limits.buying.contractId(limits.networkPassphrase);
+    const args = nativeArgs(call);
+    if (args[0] !== sellingSac) refuse(`the router call sells something other than ${limits.selling.getCode()}`);
+    if (args[2] !== limits.trader) refuse('the router call pays an account other than the trading account');
+    const routes = args[1] as BrokerRoute[];
+    if (!Array.isArray(routes) || !routes.length) refuse('the router call has no routes');
+    let sold = 0n;
+    let minOut = 0n;
+    for (const route of routes) {
+      if (typeof route.amount !== 'bigint' || typeof route.min !== 'bigint' || route.amount <= 0n || route.min < 0n) {
+        refuse('a route has malformed amounts');
+      }
+      if (route.path?.[route.path.length - 1]?.asset !== buyingSac) refuse(`a route does not end in ${limits.buying.getCode()}`);
+      sold += route.amount;
+      minOut += route.min;
+    }
+    assertRate(minOut, sold);
+
+    if (op.auth?.length !== 1) refuse('expected exactly one authorisation entry');
+    const entry = op.auth[0];
+    if (entry.credentials().switch().name !== 'sorobanCredentialsAddress') refuse('the authorisation is not address-bound');
+    if (Address.fromScAddress(entry.credentials().address().address()).toString() !== limits.trader) {
+      refuse('the authorisation is for another account');
+    }
+    const root = entry.rootInvocation();
+    if (root.function().switch().name !== 'sorobanAuthorizedFunctionTypeContractFn') refuse('the authorisation is not a contract call');
+    if (!root.function().contractFn().toXDR().equals(call.toXDR())) refuse('the authorisation covers a different call than the transaction');
+    const subs = root.subInvocations();
+    if (subs.length !== 1) refuse('the authorisation must cover exactly one token transfer');
+    const sub = subs[0];
+    if (sub.subInvocations().length) refuse('the authorised transfer has nested calls');
+    if (sub.function().switch().name !== 'sorobanAuthorizedFunctionTypeContractFn') refuse('the authorised sub-call is not a contract call');
+    const transfer = sub.function().contractFn();
+    if (contractOf(transfer) !== sellingSac || transfer.functionName().toString() !== 'transfer') {
+      refuse(`the authorised sub-call is not a ${limits.selling.getCode()} transfer`);
+    }
+    const [from, to, amount] = nativeArgs(transfer);
+    if (from !== limits.trader || to !== BROKER_ROUTER || amount !== sold) {
+      refuse('the authorised transfer does not match the routed amount');
+    }
+    return sold;
+  }
+
+  let pendingSoroban: bigint | undefined;
+
+  function approveSoroban(tx: Transaction): void {
+    const sold = checkSorobanSwap(tx);
+    if (committedSell + sold > limits.maxSellStroops) {
+      refuse(`would sell more than the ${fromStroops(limits.maxSellStroops)} ${limits.selling.getCode()} requested`);
+    }
+    committedSell += sold;
+    pendingSoroban = sold;
+  }
+
+  function approveSorobanSigned(tx: Transaction): Transaction {
+    if (pendingSoroban === undefined || checkSorobanSwap(tx) !== pendingSoroban) {
+      refuse('the signed contract call differs from the approved one');
+    }
+    pendingSoroban = undefined;
+    approvedInner.add(tx.hash().toString('hex'));
+    return tx;
+  }
+
   function approveFeeBump(tx: FeeBumpTransaction): FeeBumpTransaction {
     if (tx.feeSource !== limits.trader) refuse('fee bump is not paid by the trading account');
     if (!approvedInner.has(tx.innerTransaction.hash().toString('hex'))) refuse('fee bump wraps an unapproved transaction');
@@ -99,8 +207,13 @@ export function createBrokerGuard(limits: BrokerTradeLimits) {
       if (payload instanceof Transaction) return approveInner(payload);
       return refuse('raw authorization payloads (Soroban routes) are not signed');
     },
+    approveSoroban,
+    approveSorobanSigned,
     get committedSellStroops() {
       return committedSell;
+    },
+    get minBuyStroops() {
+      return limits.minBuyStroops;
     },
     get submittedHashes() {
       return [...submitted];
@@ -132,19 +245,92 @@ export function spendableStroops(account: HorizonBalanceView, asset: Asset): big
   return free > 0n ? free : 0n;
 }
 
-function logBrokerTxRequests(client: StellarBrokerClient): void {
-  const target = client as unknown as { processMessage: (m: { data: string }) => void };
+export async function authoriseBrokerInvocation(tx: Transaction, signer: Signer, networkPassphrase: string): Promise<Transaction> {
+  const envelope = tx.toEnvelope();
+  const entry = envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth()[0];
+  const credentials = entry.credentials().address();
+  credentials.signatureExpirationLedger((tx.ledgerBounds?.maxLedger ?? 0) + 1);
+  const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+    new xdr.HashIdPreimageSorobanAuthorization({
+      networkId: hash(Buffer.from(networkPassphrase)),
+      nonce: credentials.nonce(),
+      invocation: entry.rootInvocation(),
+      signatureExpirationLedger: credentials.signatureExpirationLedger(),
+    }),
+  );
+  const signature = await signer.signHash(hash(preimage.toXDR()));
+  credentials.signature(
+    xdr.ScVal.scvVec([
+      nativeToScVal(
+        { public_key: StrKey.decodeEd25519PublicKey(signer.publicKey), signature },
+        { type: { public_key: ['symbol', null], signature: ['symbol', null] } },
+      ),
+    ]),
+  );
+  return new Transaction(envelope, networkPassphrase);
+}
+
+type BrokerGuard = ReturnType<typeof createBrokerGuard>;
+
+async function signSorobanRequest(
+  tx: Transaction,
+  networkFee: string,
+  trader: string,
+  signer: Signer,
+  guard: BrokerGuard | undefined,
+): Promise<string> {
+  if (!guard) refuse('no trade is in progress');
+  if (!tx.signatures.length) {
+    guard.approveSoroban(tx);
+    const authorised = guard.approveSorobanSigned(await authoriseBrokerInvocation(tx, signer, env.networkPassphrase));
+    return (await signer.sign(authorised)).toXDR();
+  }
+  const bump = TransactionBuilder.buildFeeBumpTransaction(trader, networkFee, tx, env.networkPassphrase);
+  return (await signer.sign(guard.approve(bump) as FeeBumpTransaction)).toXDR();
+}
+
+interface BrokerClientInternals {
+  processMessage: (message: { data: string }) => void;
+  status: string;
+  send: (data: unknown) => void;
+  notifyError: (e: unknown) => void;
+}
+
+function interceptBrokerTxRequests(
+  client: StellarBrokerClient,
+  trader: string,
+  signer: Signer,
+  currentGuard: () => BrokerGuard | undefined,
+): void {
+  const target = client as unknown as BrokerClientInternals;
   const original = target.processMessage.bind(client);
   target.processMessage = (message) => {
+    let raw: { type?: string; hash?: string; xdr?: string; networkFee?: string };
     try {
-      const raw = JSON.parse(message.data) as { type?: string; hash?: string; xdr?: string; networkFee?: string };
-      if (raw.type === 'tx') {
-        logger.info({ brokerTx: { hash: raw.hash, xdr: raw.xdr, networkFee: raw.networkFee } }, 'stellarbroker tx request');
-      }
+      raw = JSON.parse(message.data);
     } catch {
-      logger.warn('stellarbroker message was not JSON');
+      original(message);
+      return;
     }
-    original(message);
+    if (raw.type !== 'tx' || !raw.xdr) {
+      original(message);
+      return;
+    }
+    logger.info({ brokerTx: { hash: raw.hash, xdr: raw.xdr, networkFee: raw.networkFee } }, 'stellarbroker tx request');
+    let tx: Transaction | FeeBumpTransaction;
+    try {
+      tx = TransactionBuilder.fromXDR(raw.xdr, env.networkPassphrase);
+    } catch {
+      original(message);
+      return;
+    }
+    if (!(tx instanceof Transaction) || !isSorobanTx(tx) || target.status !== 'trade') {
+      original(message);
+      return;
+    }
+    signSorobanRequest(tx, raw.networkFee ?? '0', trader, signer, currentGuard())
+      .then((signed) => target.send({ type: 'tx', hash: raw.hash, xdr: signed }))
+      .catch((e) => target.notifyError(e));
   };
 }
 
@@ -224,20 +410,33 @@ interface DeliveredOperation {
   asset_code?: string;
   asset_issuer?: string;
   transaction_successful?: boolean;
+  asset_balance_changes?: {
+    type?: string;
+    to?: string;
+    amount?: string;
+    asset_type?: string;
+    asset_code?: string;
+    asset_issuer?: string;
+  }[];
 }
 
+const isBuying = (buying: Asset, x: { asset_type?: string; asset_code?: string; asset_issuer?: string }) =>
+  buying.isNative() ? x.asset_type === 'native' : x.asset_code === buying.getCode() && x.asset_issuer === buying.getIssuer();
+
 export function sumDelivered(ops: DeliveredOperation[], trader: string, buying: Asset): bigint {
-  return ops
-    .filter(
-      (op) =>
-        (op.type === 'path_payment_strict_send' || op.type === 'path_payment_strict_receive') &&
-        op.transaction_successful !== false &&
-        op.to === trader &&
-        (buying.isNative()
-          ? op.asset_type === 'native'
-          : op.asset_code === buying.getCode() && op.asset_issuer === buying.getIssuer()),
-    )
-    .reduce((sum, op) => sum + toStroops(op.amount ?? '0'), 0n);
+  let total = 0n;
+  for (const op of ops) {
+    if (op.transaction_successful === false) continue;
+    if ((op.type === 'path_payment_strict_send' || op.type === 'path_payment_strict_receive') && op.to === trader && isBuying(buying, op)) {
+      total += toStroops(op.amount ?? '0');
+    }
+    if (op.type === 'invoke_host_function') {
+      for (const change of op.asset_balance_changes ?? []) {
+        if (change.type === 'transfer' && change.to === trader && isBuying(buying, change)) total += toStroops(change.amount ?? '0');
+      }
+    }
+  }
+  return total;
 }
 
 async function deliveredOnChain(hashes: string[], trader: string, buying: Asset): Promise<bigint> {
@@ -351,8 +550,9 @@ export const stellarBrokerProvider: RoutingProvider = {
     const signer = await getManagedSigner(SWAP_SOURCE_USER);
     let guard: ReturnType<typeof createBrokerGuard> | undefined;
 
+    const latestLedger = (await horizon.ledgers().order('desc').limit(1).call()).records[0].sequence;
     const client = new StellarBrokerClient({ partnerKey: env.routing.stellarBroker.partnerKey });
-    logBrokerTxRequests(client);
+    interceptBrokerTxRequests(client, wallet.address, signer, () => guard);
     try {
       await client.connect();
       const quote = await waitForQuote(client, {
@@ -369,6 +569,8 @@ export const stellarBrokerProvider: RoutingProvider = {
         maxSellStroops: sourceStroops,
         minBuyStroops: applySlippage(estimated),
         maxFeeStroops: BROKER_MAX_FEE_STROOPS,
+        networkPassphrase: env.networkPassphrase,
+        maxAuthLedger: latestLedger + BROKER_MAX_AUTH_LEDGERS,
       });
       guard = tradeGuard;
       const outcome = await runTrade(client, wallet.address, async (payload) => signer.sign(tradeGuard.approve(payload)));
@@ -378,6 +580,13 @@ export const stellarBrokerProvider: RoutingProvider = {
           `StellarBroker trade ended "${outcome.status}" after selling ${outcome.sold} ${selling.ref.code}`,
           502,
           'RoutingUnavailable',
+        );
+      }
+      const delivered = await deliveredOnChain(txHashes, wallet.address, buying.asset);
+      if (delivered < tradeGuard.minBuyStroops) {
+        logger.error(
+          { delivered: fromStroops(delivered), minimum: fromStroops(tradeGuard.minBuyStroops), txHashes },
+          'stellarbroker delivered less than the quoted minimum',
         );
       }
       return {
@@ -391,7 +600,7 @@ export const stellarBrokerProvider: RoutingProvider = {
         sourceAmount: outcome.sold,
         estimatedDestinationAmount: fromStroops(estimated),
         minDestinationAmount: fromStroops(applySlippage(estimated)),
-        destinationAmount: fromStroops(await deliveredOnChain(txHashes, wallet.address, buying.asset)),
+        destinationAmount: fromStroops(delivered),
         hops: quote.directTrade?.path?.length ?? 0,
         pools: [],
         txHash: txHashes[txHashes.length - 1],
