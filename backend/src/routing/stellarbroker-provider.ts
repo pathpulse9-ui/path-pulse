@@ -434,14 +434,20 @@ function runTrade(client: StellarBrokerClient, trader: string, sign: (p: unknown
   });
 }
 
+const CONFIRM_ATTEMPTS = 15;
+const CONFIRM_INTERVAL_MS = 2_000;
+
 async function confirmedOnChain(hashes: string[]): Promise<string[]> {
   const landed: string[] = [];
   for (const hash of hashes) {
-    try {
-      const record = await horizon.transactions().transaction(hash).call();
-      if (record.successful) landed.push(hash);
-    } catch {
-      continue;
+    for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
+      try {
+        const record = await horizon.transactions().transaction(hash).call();
+        if (record.successful) landed.push(hash);
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, CONFIRM_INTERVAL_MS));
+      }
     }
   }
   return landed;
@@ -679,6 +685,7 @@ export const stellarBrokerProvider: RoutingProvider = {
         logger.error({ err: e, committed: fromStroops(guard.committedSellStroops) }, 'stellarbroker trade failed after signing');
       }
       if (separate) {
+        await confirmedOnChain(guard?.submittedHashes ?? []);
         await returnUnsold(outbound, signer, trader, wallet.address, selling.asset, baseline).catch((err) =>
           logger.error({ err, trader }, 'stellarbroker could not return unsold funds to the swap wallet'),
         );
