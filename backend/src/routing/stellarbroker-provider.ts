@@ -132,6 +132,22 @@ export function spendableStroops(account: HorizonBalanceView, asset: Asset): big
   return free > 0n ? free : 0n;
 }
 
+function logBrokerTxRequests(client: StellarBrokerClient): void {
+  const target = client as unknown as { processMessage: (m: { data: string }) => void };
+  const original = target.processMessage.bind(client);
+  target.processMessage = (message) => {
+    try {
+      const raw = JSON.parse(message.data) as { type?: string; hash?: string; xdr?: string; networkFee?: string };
+      if (raw.type === 'tx') {
+        logger.info({ brokerTx: { hash: raw.hash, xdr: raw.xdr, networkFee: raw.networkFee } }, 'stellarbroker tx request');
+      }
+    } catch {
+      logger.warn('stellarbroker message was not JSON');
+    }
+    original(message);
+  };
+}
+
 function waitForQuote(client: StellarBrokerClient, params: QuoteParams): Promise<QuoteResult> {
   return new Promise((resolve, reject) => {
     let lastError = 'no quote received';
@@ -178,7 +194,9 @@ function runTrade(client: StellarBrokerClient, trader: string, sign: (p: unknown
       reject(
         /enough selling asset|insufficient/i.test(message)
           ? routingError(`StellarBroker refused the trade: ${message}`, 422, 'InsufficientBalance')
-          : routingError(`StellarBroker trade failed: ${message}`, 502, 'RoutingUnavailable'),
+          : /Refused to sign/.test(message)
+            ? routingError(`${message}. Nothing was signed or sent.`, 422, 'BrokerTxRefused')
+            : routingError(`StellarBroker trade failed: ${message}`, 502, 'RoutingUnavailable'),
       );
     });
     client.confirmQuote(trader, sign as never);
@@ -334,6 +352,7 @@ export const stellarBrokerProvider: RoutingProvider = {
     let guard: ReturnType<typeof createBrokerGuard> | undefined;
 
     const client = new StellarBrokerClient({ partnerKey: env.routing.stellarBroker.partnerKey });
+    logBrokerTxRequests(client);
     try {
       await client.connect();
       const quote = await waitForQuote(client, {
