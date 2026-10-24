@@ -1150,7 +1150,9 @@ const routingQuoteSchema = z.object({
   to: routableSchema,
   amount: amountSchema,
 });
-const routingSwapSchema = routingQuoteSchema;
+const routingSwapSchema = routingQuoteSchema.extend({
+  provider: z.enum(['aquarius', 'stellarbroker']).optional(),
+});
 
 router.get('/v1/routing/assets', (_req, res, next) => {
   try {
@@ -1171,8 +1173,8 @@ router.get('/v1/routing/quote', async (req, res, next) => {
 
 router.post('/v1/routing/swap', requireRole('ops'), idempotency(), async (req, res, next) => {
   try {
-    const { from, to, amount } = routingSwapSchema.parse(req.body);
-    res.status(201).json(await withSwapLock(() => executeSwap(from, to, amount)));
+    const { from, to, amount, provider } = routingSwapSchema.parse(req.body);
+    res.status(201).json(await withSwapLock(() => executeSwap(from, to, amount, provider)));
   } catch (e) {
     next(e);
   }

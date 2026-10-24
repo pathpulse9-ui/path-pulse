@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
   DistributionAccount,
   TreasuryConfig,
+  RoutingProviderName,
   RoutingQuote,
   RoutingSwapResult,
   TreasuryConversionTx,
@@ -28,6 +29,19 @@ const FALLBACK_ROUTABLE = ['XLM', 'USDC', 'EURC'];
 const assetLabel = (a: { code: string }) => a.code;
 const trimAmount = (v: string) => v.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 
+type Venue = 'best' | RoutingProviderName;
+
+const VENUES: { value: Venue; label: string; mainnetOnly?: boolean }[] = [
+  { value: 'best', label: 'Best rate' },
+  { value: 'aquarius', label: 'Aquarius' },
+  { value: 'stellarbroker', label: 'Stellar Broker', mainnetOnly: true },
+];
+
+const VENUE_LABEL: Record<RoutingProviderName, string> = {
+  aquarius: 'Aquarius',
+  stellarbroker: 'Stellar Broker',
+};
+
 const ROLE_LABEL: Record<string, string> = {
   partner_revenue: 'Partner revenue',
   driver_pool: 'Driver pool',
@@ -40,6 +54,7 @@ function ConversionPanel() {
   const [from, setFrom] = useState('XLM');
   const [to, setTo] = useState('USDC');
   const [amount, setAmount] = useState('100');
+  const [venue, setVenue] = useState<Venue>('best');
   const [quote, setQuote] = useState<RoutingQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -48,6 +63,10 @@ function ConversionPanel() {
   const [result, setResult] = useState<RoutingSwapResult | null>(null);
 
   const valid = /^\d+(\.\d{1,7})?$/.test(amount) && Number(amount) > 0 && from !== to;
+  const allQuotes = quote ? [quote, ...(quote.alternatives ?? [])] : [];
+  const shown = venue === 'best' ? quote : (allQuotes.find((q) => q.provider === venue) ?? null);
+  const others = allQuotes.filter((q) => q.provider !== shown?.provider);
+  const provider = venue === 'best' ? undefined : venue;
 
   useEffect(() => {
     getRoutableAssets()
@@ -98,13 +117,14 @@ function ConversionPanel() {
     setConvertError(null);
     setResult(null);
     try {
-      setResult(await runSwap({ from, to, amount }, (key) => executeRoutingSwap({ from, to, amount }, key)));
+      const req = { from, to, amount, provider };
+      setResult(await runSwap(req, (key) => executeRoutingSwap(req, key)));
     } catch (e) {
       setConvertError(e instanceof Error ? e.message : 'Conversion failed');
     } finally {
       setConverting(false);
     }
-  }, [from, to, amount, runSwap]);
+  }, [from, to, amount, provider, runSwap]);
 
   return (
     <div className="rounded-2xl bg-white p-6 space-y-5">
@@ -118,8 +138,8 @@ function ConversionPanel() {
           </h2>
           <p className="text-sm text-black/60 mt-1">
             Convert operating balances between routable assets. Aquarius and Stellar Broker are
-            quoted in parallel and the swap executes on the venue with the better rate. Stellar Broker
-            executes on mainnet only; on testnet every swap goes through Aquarius.
+            quoted in parallel. Best rate executes on the venue with the better quote; picking a venue
+            executes there only, with no fallback. Stellar Broker executes on mainnet only.
           </p>
         </div>
       </div>
@@ -168,52 +188,74 @@ function ConversionPanel() {
             ))}
           </select>
         </label>
+        <label className="flex flex-col gap-2">
+          <span className="text-xs text-black/50">Venue</span>
+          <select
+            value={venue}
+            onChange={(e) => {
+              setVenue(e.target.value as Venue);
+              setResult(null);
+            }}
+            className="rounded-full border border-black/10 px-4 h-10 text-sm bg-white outline-none focus:border-black/30 transition-colors duration-200"
+          >
+            {VENUES.map((v) => (
+              <option key={v.value} value={v.value} disabled={v.mainnetOnly && STELLAR_NETWORK !== 'mainnet'}>
+                {v.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {from === to && <p className="text-sm text-red-600">Pick two different assets.</p>}
       {quoteError && <p className="text-sm text-red-600">{quoteError}</p>}
+      {quote && !shown && venue !== 'best' && (
+        <p className="text-sm text-red-600">{VENUE_LABEL[venue]} did not quote this pair and amount.</p>
+      )}
 
-      {quote && (
+      {shown && (
         <div className="rounded-xl bg-black/[0.03] p-4 space-y-3">
           <div className="flex items-baseline justify-between flex-wrap gap-2">
             <div className="text-black">
-              <span className="text-xl font-medium">{trimAmount(quote.sourceAmount)}</span>{' '}
-              <span className="text-black/50 text-sm">{assetLabel(quote.from)}</span>
+              <span className="text-xl font-medium">{trimAmount(shown.sourceAmount)}</span>{' '}
+              <span className="text-black/50 text-sm">{assetLabel(shown.from)}</span>
               <span className="text-black/30 mx-2">→</span>
-              <span className="text-xl font-medium">{trimAmount(quote.destinationAmount)}</span>{' '}
-              <span className="text-black/50 text-sm">{assetLabel(quote.to)}</span>
+              <span className="text-xl font-medium">{trimAmount(shown.destinationAmount)}</span>{' '}
+              <span className="text-black/50 text-sm">{assetLabel(shown.to)}</span>
             </div>
             <span className="text-xs text-black/50">
               {quoting
                 ? 'refreshing…'
-                : `via ${quote.provider} · ${quote.hops} hop${quote.hops === 1 ? '' : 's'} · aquarius + stellarbroker`}
+                : `${venue === 'best' ? 'best rate' : 'pinned'} · via ${VENUE_LABEL[shown.provider]} · ${shown.hops} hop${shown.hops === 1 ? '' : 's'}`}
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div>
               <div className="text-xs text-black/50">Minimum received</div>
               <div className="text-black mt-1">
-                {trimAmount(quote.minDestinationAmount)} {assetLabel(quote.to)}
+                {trimAmount(shown.minDestinationAmount)} {assetLabel(shown.to)}
               </div>
             </div>
             <div>
               <div className="text-xs text-black/50">Slippage tolerance</div>
-              <div className="text-black mt-1">{(quote.slippageBps / 100).toFixed(2)}%</div>
+              <div className="text-black mt-1">{(shown.slippageBps / 100).toFixed(2)}%</div>
             </div>
           </div>
-          <div>
-            <div className="text-xs text-black/50 mb-1">Route</div>
-            <div className="text-xs font-mono text-black/60 break-all">
-              {quote.route.map((t) => (t === 'native' ? 'XLM' : t.split(':')[0])).join(' → ')}
+          {shown.route.length > 0 && (
+            <div>
+              <div className="text-xs text-black/50 mb-1">Route</div>
+              <div className="text-xs font-mono text-black/60 break-all">
+                {shown.route.map((t) => (t === 'native' ? 'XLM' : t.split(':')[0])).join(' → ')}
+              </div>
             </div>
-          </div>
-          {quote.alternatives && quote.alternatives.length > 0 && (
+          )}
+          {others.length > 0 && (
             <div>
               <div className="text-xs text-black/50 mb-1">Other sources</div>
               <div className="space-y-1">
-                {quote.alternatives.map((alt) => (
+                {others.map((alt) => (
                   <div key={alt.provider} className="flex justify-between text-xs text-black/60">
-                    <span>{alt.provider}</span>
+                    <span>{VENUE_LABEL[alt.provider]}</span>
                     <span>
                       {trimAmount(alt.destinationAmount)} {assetLabel(alt.to)}
                     </span>
@@ -228,10 +270,10 @@ function ConversionPanel() {
       <div className="flex items-center gap-4 flex-wrap">
         <button
           onClick={convert}
-          disabled={!valid || !quote || converting}
+          disabled={!valid || !shown || converting}
           className="bg-black text-white text-sm font-medium px-6 h-10 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
         >
-          {converting ? 'Converting…' : 'Convert'}
+          {converting ? 'Converting…' : venue === 'best' ? 'Convert' : `Convert via ${VENUE_LABEL[venue]}`}
         </button>
         {!quote && valid && quoting && <span className="text-sm text-black/50">Quoting…</span>}
       </div>
@@ -243,7 +285,7 @@ function ConversionPanel() {
           <div>
             Converted {trimAmount(result.sourceAmount)} {assetLabel(result.from)} →{' '}
             {trimAmount(result.destinationAmount ?? result.estimatedDestinationAmount)} {assetLabel(result.to)} via{' '}
-            {result.provider}
+            {VENUE_LABEL[result.provider]}
             {result.destinationAmount ? '' : ' (estimated)'}
           </div>
           {result.txHashes && result.txHashes.length > 1 && (

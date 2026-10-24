@@ -525,6 +525,7 @@ export interface RoutingSwapRequest {
   from: string;
   to: string;
   amount: string;
+  provider?: RoutingProviderName;
 }
 
 export interface RoutingSwapResult {

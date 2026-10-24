@@ -357,6 +357,15 @@ test('value-moving endpoints refuse a request with no Idempotency-Key', async ()
   }
 });
 
+test('POST /v1/routing/swap refuses an unknown venue before any network call', async () => {
+  const res = await postJson(
+    '/v1/routing/swap',
+    { from: 'XLM', to: 'USDC', amount: '10', provider: 'sdex' },
+    keyed(await opsCookie(), 'venue-check'),
+  );
+  assert.equal(res.status, 400);
+});
+
 test('an oversized Idempotency-Key is refused', async () => {
   const res = await postJson('/v1/settlement/batches', {}, keyed(await opsCookie(), 'k'.repeat(256)));
   assert.equal(res.status, 400);
