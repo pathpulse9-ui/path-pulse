@@ -363,7 +363,20 @@ export async function createWithdrawal(
       'ValidationError',
     );
   }
-  await getSettlementBatch(req.settlementBatchId);
+  // Strict network match. Caught by a T2 reviewer on 2026-10-25: a mainnet
+  // off-ramp session referenced a leftover testnet settlement_batch_id because
+  // we only validated the id existed. Letting a cross-network reference through
+  // breaks the audit chain (mainnet payout → mainnet batch → mainnet off-ramp)
+  // reviewers rely on, so refuse upfront rather than silently.
+  const batch = await getSettlementBatch(req.settlementBatchId);
+  if (batch.network && batch.network !== env.network) {
+    throw httpError(
+      `settlement_batch_id ${req.settlementBatchId} is on ${batch.network}, ` +
+        `but STELLAR_NETWORK=${env.network}. Use a batch from the same network.`,
+      422,
+      'NetworkMismatch',
+    );
+  }
 
   const now = new Date().toISOString();
   const fiatFallback = provider.name === 'carret' ? env.carret.fiat : env.ramp.fiat;
