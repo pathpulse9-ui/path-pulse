@@ -56,6 +56,20 @@ function withTransferAmount(tx: Transaction, amount: bigint): Transaction {
   return new Transaction(envelope, Networks.PUBLIC);
 }
 
+function withRouteMin(tx: Transaction, min: bigint): Transaction {
+  const envelope = tx.toEnvelope();
+  const op = envelope.v1().tx().operations()[0].body().invokeHostFunctionOp();
+  const setMin = (call: xdr.InvokeContractArgs) => {
+    const args = call.args();
+    const entry = args[1].vec()![0].map()!.find((e) => e.key().sym().toString() === 'min')!;
+    entry.val(nativeToScVal(min, { type: 'i128' }));
+    call.args(args);
+  };
+  setMin(op.hostFunction().invokeContract());
+  setMin(op.auth()[0].rootInvocation().function().contractFn());
+  return new Transaction(envelope, Networks.PUBLIC);
+}
+
 test('the captured StellarBroker request is a Soroban router swap from the reserve', () => {
   const tx = load();
   assert.equal(isSorobanTx(tx), true);
@@ -146,6 +160,30 @@ test('a fee bump of the signed swap is approved only after the swap itself was a
   guard.approveSorobanSigned(authorised);
   assert.doesNotThrow(() => guard.approve(bump()));
   assert.equal(guard.submittedHashes.length, 1);
+});
+
+test('two legs approved in parallel are each signed against their own approval', async () => {
+  const signer = new CustodialSigner(Keypair.random());
+  const guard = createBrokerGuard(limits({ maxSellStroops: 20_000_000n }));
+  const first = load();
+  const second = withRouteMin(load(), 58_100_000n);
+  guard.approveSoroban(first);
+  guard.approveSoroban(second);
+  const [signedFirst, signedSecond] = await Promise.all([
+    authoriseBrokerInvocation(first, signer, Networks.PUBLIC),
+    authoriseBrokerInvocation(second, signer, Networks.PUBLIC),
+  ]);
+  assert.doesNotThrow(() => guard.approveSorobanSigned(signedFirst));
+  assert.doesNotThrow(() => guard.approveSorobanSigned(signedSecond));
+  assert.equal(guard.committedSellStroops, 20_000_000n);
+  assert.throws(() => guard.approveSorobanSigned(signedFirst), /differs from the approved one/);
+});
+
+test('the same contract call cannot be approved twice while it awaits signature', () => {
+  const guard = createBrokerGuard(limits({ maxSellStroops: 20_000_000n }));
+  guard.approveSoroban(load());
+  assert.throws(() => guard.approveSoroban(load()), /already awaiting signature/);
+  assert.equal(guard.committedSellStroops, 10_000_000n);
 });
 
 test('the signed swap must match the approved one', async () => {

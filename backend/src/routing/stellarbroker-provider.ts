@@ -174,22 +174,30 @@ export function createBrokerGuard(limits: BrokerTradeLimits) {
     return sold;
   }
 
-  let pendingSoroban: bigint | undefined;
+  const pendingSoroban = new Map<string, bigint>();
+
+  function sorobanCallKey(tx: Transaction): string {
+    return (tx.operations[0] as Operation.InvokeHostFunction).func.toXDR('base64');
+  }
 
   function approveSoroban(tx: Transaction): void {
     const sold = checkSorobanSwap(tx);
+    const key = sorobanCallKey(tx);
+    if (pendingSoroban.has(key)) refuse('the same contract call is already awaiting signature');
     if (committedSell + sold > limits.maxSellStroops) {
       refuse(`would sell more than the ${fromStroops(limits.maxSellStroops)} ${limits.selling.getCode()} requested`);
     }
     committedSell += sold;
-    pendingSoroban = sold;
+    pendingSoroban.set(key, sold);
   }
 
   function approveSorobanSigned(tx: Transaction): Transaction {
-    if (pendingSoroban === undefined || checkSorobanSwap(tx) !== pendingSoroban) {
+    const sold = checkSorobanSwap(tx);
+    const key = sorobanCallKey(tx);
+    if (pendingSoroban.get(key) !== sold) {
       refuse('the signed contract call differs from the approved one');
     }
-    pendingSoroban = undefined;
+    pendingSoroban.delete(key);
     approvedInner.add(tx.hash().toString('hex'));
     return tx;
   }
