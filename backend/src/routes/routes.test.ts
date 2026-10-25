@@ -431,6 +431,18 @@ test('the ops status page is operator-only and reports checks and alerting', asy
   assert.ok(Array.isArray(body.alerts));
 });
 
+test('the monitoring test is operator-only and raises a critical alert', async () => {
+  assert.equal((await postJson('/v1/ops/monitoring-test', {})).status, 401);
+  assert.equal((await postJson('/v1/ops/monitoring-test', {}, authedJson(mintedGuest()))).status, 403);
+  const res = await postJson('/v1/ops/monitoring-test', {}, authedJson(await opsCookie()));
+  assert.equal(res.status, 200);
+  const body = await json(res);
+  assert.equal(body.sentryEventId, null);
+  assert.equal(body.alert, 'disabled');
+  const status = await json(await get('/v1/ops/status', authed(await opsCookie())));
+  assert.ok(status.alerts.some((a: { key: string; severity: string }) => a.key === 'monitoring-test' && a.severity === 'critical'));
+});
+
 test('POST /v1/auth/ops/login rejects a wrong passcode', async () => {
   const res = await postJson('/v1/auth/ops/login', { passcode: 'not-it' });
   assert.equal(res.status, 401);

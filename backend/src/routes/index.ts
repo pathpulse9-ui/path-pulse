@@ -162,7 +162,8 @@ import {
 } from '../services/approvals.js';
 import { getRewards } from '../services/payoutHistory.js';
 import { defaultChecks, runChecks, lastMonitorReport } from '../services/health.js';
-import { recentAlerts, DEDUPE_WINDOW_MS } from '../services/alerts.js';
+import { recentAlerts, sendAlert, DEDUPE_WINDOW_MS } from '../services/alerts.js';
+import { captureTestEvent } from '../observability/sentry.js';
 import { registerDevice, unregisterDevice } from '../services/push.js';
 import { requireSession, requireRole, callerRole, identifyPartnerKey } from '../middleware/requireSession.js';
 import { createPartnerKey, listPartnerKeys, revokePartnerKey } from '../services/partnerKeys.js';
@@ -286,6 +287,21 @@ router.get('/v1/ops/status', requireRole('ops'), async (req, res, next) => {
       alerts: recentAlerts(),
     };
     res.json(body);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/v1/ops/monitoring-test', requireRole('ops'), async (_req, res, next) => {
+  try {
+    const sentryEventId = captureTestEvent();
+    const alert = await sendAlert({
+      key: 'monitoring-test',
+      severity: 'critical',
+      title: 'Monitoring test',
+      detail: 'Raised on purpose from POST /v1/ops/monitoring-test',
+    });
+    res.json({ network: env.network, sentryEventId, alert });
   } catch (e) {
     next(e);
   }

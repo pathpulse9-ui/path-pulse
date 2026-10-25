@@ -94,6 +94,11 @@ export function captureMessage(message: string, context?: Record<string, unknown
   Sentry.captureMessage(message, { extra: context });
 }
 
+export function captureTestEvent(): string | null {
+  if (!initialized) return null;
+  return Sentry.captureMessage('PathPulse monitoring test', 'warning');
+}
+
 /** Express middleware helper to tag the current session's userId onto events. */
 export function sentryUserFromSession() {
   return (req: Request, _res: Response, next: NextFunction) => {
