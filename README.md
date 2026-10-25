@@ -67,7 +67,7 @@ Institutional reward programmes have the same failure mode everywhere: money goe
 - **Router contract execution** — the returned swap chain is executed through the Aquarius router via Soroban `invokeHostFunction`, with a slippage floor enforced on-chain rather than trusted from the client.
 - **Live quotes with slippage bounds** — every quote carries destination amount, minimum received, tolerance in basis points and the readable route, so an operator sees the cost of a conversion before committing.
 - **Trustline preflight** — a destination without the required trustline is named as an actionable error instead of failing opaquely mid-swap.
-- **Multi-source routing** — Stellar Broker sits alongside Aquarius as a second liquidity source, aggregating Stellar DEX, classic AMMs and Soroswap for best-execution comparison.
+- **Multi-source routing** — Aquarius and Stellar Broker are quoted in parallel; an operator swaps at the best rate or pins either venue. Both execute on mainnet: Stellar Broker trades from a dedicated account whose own key is the AWS KMS key, every Broker transaction and Soroban authorisation is checked against the requested amount, minimum output and destination before KMS signs it, and proceeds return to the reserve in the same request.
 
 ### Payout rails & off-ramp
 - **SDP batch disbursements** — settlement batches hand off to the Stellar Disbursement Platform for orchestrated, receipted bulk payout with per-recipient status.
