@@ -142,6 +142,7 @@ export const env = {
     stellarBroker: {
       partnerKey: process.env.STELLARBROKER_PARTNER_KEY ?? '',
       apiUrl: process.env.STELLARBROKER_API_URL ?? 'https://api.stellar.broker',
+      maxSlippageBps: Math.min(numEnv('STELLARBROKER_MAX_SLIPPAGE_BPS', 200), 1000),
     },
   },
 

@@ -540,8 +540,8 @@ function brokerAsset(symbol: RoutableSymbol): string {
   return ref.issuer ? `${ref.code}-${ref.issuer}` : 'XLM';
 }
 
-function applySlippage(stroops: bigint): bigint {
-  const bps = BigInt(env.routing.slippageBps);
+function applySlippage(stroops: bigint, slippageBps = env.routing.slippageBps): bigint {
+  const bps = BigInt(slippageBps);
   return (stroops * (10_000n - bps)) / 10_000n;
 }
 
@@ -636,7 +636,7 @@ export const stellarBrokerProvider: RoutingProvider = {
         selling: selling.asset,
         buying: buying.asset,
         maxSellStroops: sourceStroops,
-        minBuyStroops: applySlippage(estimated),
+        minBuyStroops: applySlippage(estimated, env.routing.stellarBroker.maxSlippageBps),
         maxFeeStroops: BROKER_MAX_FEE_STROOPS,
         networkPassphrase: env.networkPassphrase,
         maxAuthLedger: latestLedger + BROKER_MAX_AUTH_LEDGERS,
@@ -672,7 +672,7 @@ export const stellarBrokerProvider: RoutingProvider = {
         to: buying.ref,
         sourceAmount: outcome.sold,
         estimatedDestinationAmount: fromStroops(estimated),
-        minDestinationAmount: fromStroops(applySlippage(estimated)),
+        minDestinationAmount: fromStroops(tradeGuard.minBuyStroops),
         destinationAmount: fromStroops(delivered),
         hops: quote.directTrade?.path?.length ?? 0,
         pools: [],
