@@ -1,22 +1,19 @@
 import { Horizon, type FeeBumpTransaction, type Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
+import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
 import { assertMainnetAllowed } from './networkGuard.js';
 
-/** Shared Horizon server instance for network. */
 export const horizon = new Horizon.Server(env.horizonUrl, {
   allowHttp: env.horizonUrl.startsWith('http://'),
 });
 
-/** Fund a testnet account via Friendbot. Refuses on mainnet — Friendbot
- *  doesn't exist there and mainnet accounts must be funded manually as
- *  part of the treasury key ceremony. */
 export async function fundWithFriendbot(publicKey: string): Promise<void> {
   if (env.network !== 'testnet') {
     throw new Error('Friendbot funding is testnet-only');
   }
-  const res = await fetch(`${env.friendbotUrl}/?addr=${encodeURIComponent(publicKey)}`);
+  const res = await fetchWithTimeout(`${env.friendbotUrl}/?addr=${encodeURIComponent(publicKey)}`);
   if (!res.ok) {
-    throw new Error(`Friendbot funding failed (${res.status}): ${await res.text()}`);
+    throw new Error(`Friendbot funding failed (${res.status})`);
   }
 }
 

@@ -18,7 +18,6 @@ const ROLE_TO_PUBLIC: Record<DistributionAccountRole, string> = {
   treasury: env.distribution.treasury,
 };
 
-/** On-chain: does this account have a multisig signer set */
 async function hasMultisig(publicKey: string): Promise<boolean> {
   if (!publicKey || !(await accountExists(publicKey))) return false;
   const acct = await horizon.loadAccount(publicKey);
@@ -42,28 +41,24 @@ export async function listDistributionAccounts(): Promise<DistributionAccount[]>
 
 export async function getTreasuryConfig(): Promise<TreasuryConfig> {
   const publicKey = env.distribution.treasury;
-  let signers = env.treasury.signers.map((pk) => ({ publicKey: pk, weight: 1 }));
+  let signers: Array<{ publicKey: string; weight: number }> = [];
+  let thresholds = env.treasury.thresholds;
   if (publicKey && (await accountExists(publicKey))) {
     const acct = await horizon.loadAccount(publicKey);
     signers = acct.signers.map((s) => ({ publicKey: s.key, weight: s.weight }));
+    thresholds = {
+      low: acct.thresholds.low_threshold,
+      medium: acct.thresholds.med_threshold,
+      high: acct.thresholds.high_threshold,
+    };
   }
   return {
     publicKey,
     signers,
-    thresholds: env.treasury.thresholds,
+    thresholds,
     network: env.network,
   };
 }
-
-/**
- * Build the multisig-configuration transaction for the treasury account:
- * add the named signers at weight 1 and disable the master key (weight 0),
- * so the account is a true 2-of-3 rather than 2-of-4. This BUILDS the
- * transaction only — it is human-gated: a signatory reviews and signs/submits
- * it. We never auto-provision the treasury signer set.
- *
- * Returns base64 XDR for review.
- */
 
 export async function buildTreasuryMultisigTx(): Promise<{ xdr: string }> {
   const publicKey = env.distribution.treasury;

@@ -7,34 +7,37 @@ import {
   type SettlementBatch,
   type SettlementDriverPayout,
   type SettlementBatchPage,
+  type SettlementDeposit,
+  type PayoutReceipt,
   type AssetRef,
 } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
-import { horizon } from './network.js';
-import { provisionManagedWallet, getManagedSigner } from './managed.js';
-import { getOnchainTier } from './scout.js';
-import { createPayoutBatch } from '../services/payouts.js';
-import { saveBatch, attachPayoutBatch, listBatches, getBatch, type BatchQuery } from './settlementStore.js';
+import { horizon, submitToHorizon } from './network.js';
+import { provisionManagedWallet, getManagedSigner, getManagedWallet, RESERVE_SPONSOR_USER } from './managed.js';
+import { getOnchainTier, retainedTier } from './scout.js';
+import { createPayoutBatch, getPayoutBatch, storedReceipts } from '../services/payouts.js';
+import {
+  attachPayoutBatch,
+  listBatches,
+  getBatch,
+  findBatchIdByDeposit,
+  recordPendingBatch,
+  setBatchStatus,
+  listUnresolvedBatches,
+  type BatchQuery,
+} from './settlementStore.js';
+import { senderAllowlist, verifyDeposit } from './deposits.js';
+import { db } from '../db/client.js';
+import { sendAlertInBackground } from '../services/alerts.js';
 import { assertMainnetAllowed } from './networkGuard.js';
 import { logger } from '../config/logger.js';
 import { notifyUserInBackground } from '../services/push.js';
 import { resolveScore } from '../services/pulsegen.js';
-
-/**
- * Deterministic 50 / 30 / 20 settlement engine (D6).
- *
- * 50% Authorities · 30% Driver Rewards · 20% Treasury, computed in integer stroops
- * (1 XLM = 10,000,000 stroops) so the parts always sum to the gross exactly — no float
- * drift. The 30% driver pool is split by SCOUT reputation multiplier (1.0 / 1.2 / 1.5).
- *
- *
- * Funds are paid from a dev-tier settlement source account (testnet, backend-controlled).
- * The real PathPulse Treasury multisig is intentionally NOT the signer here — production
- * settlement is signed by the human-gated treasury multisig, never auto-signed.
- */
+import { logUpstream } from '../util/upstreamLog.js';
 
 const STROOPS = 10_000_000n;
-const SETTLEMENT_SOURCE_USER = '__settlement_source__';
+const SETTLEMENT_SOURCE_USER = RESERVE_SPONSOR_USER;
+const ROUTING_SWAP_SOURCE_USER = RESERVE_SPONSOR_USER;
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -44,7 +47,7 @@ function httpError(message: string, status: number, name: string): Error {
 }
 
 export function toStroops(amount: string): bigint {
-  if (!/^\d+(\.\d{1,7})?$/.test(amount)) {
+  if (!/^\d{1,15}(\.\d{1,7})?$/.test(amount)) {
     throw httpError(`Invalid amount "${amount}" (max 7 decimals)`, 400, 'ValidationError');
   }
   const [whole, frac = ''] = amount.split('.');
@@ -68,12 +71,11 @@ export interface ComputedSplit {
   payouts: { userId: string; address: string; tier: ScoutTier; amount: bigint }[];
 }
 
-/** Pure, deterministic split. Sum(authorities + treasury + all payouts) === gross. */
 export function computeSplit(grossStr: string, drivers: CreateSettlementBatchRequest['drivers']): ComputedSplit {
   const gross = toStroops(grossStr);
   const authorities = (gross * 50n) / 100n;
   const treasury = (gross * 20n) / 100n;
-  const driverRewards = gross - authorities - treasury; // 30% + any rounding dust
+  const driverRewards = gross - authorities - treasury;
 
   const sumWeights = drivers.reduce((a, d) => a + tierWeight(d.tier ?? 1), 0n);
   let allocated = 0n;
@@ -82,24 +84,69 @@ export function computeSplit(grossStr: string, drivers: CreateSettlementBatchReq
     allocated += amount;
     return { userId: d.userId, address: d.address, tier: d.tier ?? 1, amount };
   });
-  // Assign the rounding remainder to the first driver so the pool sums exactly.
   if (payouts.length > 0) payouts[0].amount += driverRewards - allocated;
 
   return { authorities, treasury, driverRewards, payouts };
 }
-
-// Persistence lives in ./settlementStore — Postgres when DATABASE_URL is set,
-// in-memory fallback for local dev. This module writes on execute; reads go
-// through the store's list/get helpers so the API can page across restarts.
 
 function assetOf(ref?: AssetRef): { asset: Asset; ref: AssetRef } {
   if (!ref || !ref.issuer) return { asset: Asset.native(), ref: { code: 'XLM' } };
   return { asset: new Asset(ref.code, ref.issuer), ref };
 }
 
-export async function executeSettlementBatch(req: CreateSettlementBatchRequest): Promise<SettlementBatch> {
+async function allowedDepositSenders(settlementSource: string): Promise<string[] | undefined> {
+  if (env.network !== 'mainnet') return undefined;
+  const routing = await getManagedWallet(ROUTING_SWAP_SOURCE_USER);
+  return senderAllowlist(
+    [env.distribution.treasury, ...env.distribution.extraDepositSenders, ...(routing ? [routing.address] : [])],
+    settlementSource,
+  );
+}
+
+function fundsMovedError(message: string, status: number, name: string): Error {
+  const e = httpError(message, status, name) as Error & { keepIdempotencyKey: boolean };
+  e.keepIdempotencyKey = true;
+  return e;
+}
+
+export async function assertDriversOwnAddresses(drivers: CreateSettlementBatchRequest['drivers']): Promise<void> {
+  if (!env.databaseUrl) return;
+  for (const d of drivers) {
+    const managed = await getManagedWallet(d.userId).catch(() => null);
+    if (managed?.address === d.address) {
+      if (!managed.provisioned) await provisionManagedWallet(d.userId);
+      continue;
+    }
+    const external = await db().query('select 1 from wallet_users where address = $1 and user_id = $2', [d.address, d.userId]);
+    if ((external.rowCount ?? 0) > 0) continue;
+    throw httpError(
+      `Driver ${d.userId} does not own ${d.address} — the payout address must be that driver's managed or signed-in wallet`,
+      422,
+      'DriverAddressMismatch',
+    );
+  }
+}
+
+export async function executeSettlementBatch(
+  req: CreateSettlementBatchRequest,
+  opts: { createdBy?: string; approvedBy?: string; conversion?: SettlementBatch['conversion']; fundedBy?: SettlementDeposit } = {},
+): Promise<SettlementBatch> {
   assertMainnetAllowed('settlement batch submit');
   if (!req.drivers?.length) throw httpError('drivers must be a non-empty array', 400, 'ValidationError');
+  if (env.network === 'mainnet' && !req.depositTxHash && !opts.fundedBy) {
+    throw httpError(
+      'depositTxHash is required on mainnet — every settlement must be traceable to the funding deposit that pays it',
+      400,
+      'DepositRequired',
+    );
+  }
+  if (env.network === 'mainnet' && req.depositTxHash && !req.depositMemo) {
+    throw httpError(
+      'depositMemo is required on mainnet — the funding deposit must carry a memo naming this settlement',
+      400,
+      'DepositMemoRequired',
+    );
+  }
   const authoritiesAddress = env.distribution.partnerRevenue;
   const driverPoolAddress = env.distribution.driverPool;
   const treasuryAddress = env.distribution.treasury;
@@ -110,26 +157,36 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
       'ConfigError',
     );
   }
+  await assertDriversOwnAddresses(req.drivers);
 
-  // Dev-tier settlement source (testnet, backend-controlled). Provision + fund once.
   const source = await provisionManagedWallet(SETTLEMENT_SOURCE_USER);
   const { asset, ref } = assetOf(req.asset);
+  const gross = fromStroops(toStroops(req.grossAmount));
+  let deposit: SettlementDeposit | undefined = opts.fundedBy;
+  if (req.depositTxHash) {
+    const usedBy = await findBatchIdByDeposit(req.depositTxHash);
+    if (usedBy) throw httpError(`Deposit ${req.depositTxHash} already funded settlement ${usedBy}`, 409, 'DepositAlreadyUsed');
+    deposit = await verifyDeposit(
+      req.depositTxHash,
+      source.address,
+      ref,
+      gross,
+      await allowedDepositSenders(source.address),
+      req.depositMemo,
+    );
+  }
 
-  // Reputation is on-chain: resolve each driver's SCOUT tier from their held badge,
-  // falling back to the request's tier only when the driver holds no SCOUT asset.
+  const scoreByDriver = new Map(
+    await Promise.all(
+      req.drivers.map(async (d) => [d.userId, await resolveScore(d.userId).catch(() => undefined)] as const),
+    ),
+  );
   const resolvedDrivers = await Promise.all(
     req.drivers.map(async (d) => {
       const { tier } = await getOnchainTier(d.address);
-      return { ...d, tier: tier ?? d.tier ?? 1 };
+      const scored = scoreByDriver.get(d.userId);
+      return { ...d, tier: retainedTier(tier ?? 1, scored?.score, scored?.scoredAt) };
     }),
-  );
-
-  // Capture the score behind each multiplier now, not at read time: a later
-  // rescore must not silently rewrite why this batch paid what it paid.
-  const scoreByDriver = new Map(
-    await Promise.all(
-      req.drivers.map(async (d) => [d.userId, await resolveScore(d.userId)] as const),
-    ),
   );
   const split = computeSplit(req.grossAmount, resolvedDrivers);
 
@@ -138,11 +195,6 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     fee: BASE_FEE,
     networkPassphrase: env.networkPassphrase,
   });
-  // Deterministic 50 / 30 / 20 fan-out — three payment ops in one atomic tx, so
-  // the split is enforced on-chain (visible in Horizon) rather than only in
-  // application code. The driver_pool account then acts as the on-chain
-  // incentive-pool custody, from which SDP fans out to individual drivers by
-  // tier weight.
   if (split.authorities > 0n)
     builder.addOperation(Operation.payment({ destination: authoritiesAddress, asset, amount: fromStroops(split.authorities) }));
   if (split.driverRewards > 0n)
@@ -150,21 +202,9 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
   if (split.treasury > 0n)
     builder.addOperation(Operation.payment({ destination: treasuryAddress, asset, amount: fromStroops(split.treasury) }));
 
-  let tx = builder.setTimeout(180).build();
+  let tx = builder.setTimeout(SETTLEMENT_TX_TIMEOUT_SECONDS).build();
   tx = (await (await getManagedSigner(SETTLEMENT_SOURCE_USER)).sign(tx)) as typeof tx;
-
-  let res;
-  try {
-    res = await horizon.submitTransaction(tx);
-  } catch (e: unknown) {
-    const codes = (e as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response?.data?.extras
-      ?.result_codes;
-    throw httpError(
-      codes ? `Settlement rejected by Horizon: ${JSON.stringify(codes)}` : `Settlement submit failed: ${String(e)}`,
-      422,
-      'HorizonRejected',
-    );
-  }
+  const txHash = tx.hash().toString('hex');
 
   const driverPayouts: SettlementDriverPayout[] = split.payouts.map((p) => {
     const scored = scoreByDriver.get(p.userId);
@@ -182,12 +222,12 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
   });
 
   const batchId = `stl_${Date.now()}_${randomBytes(4).toString('hex')}`;
-
   const batch: SettlementBatch = {
     id: batchId,
+    status: 'submitted',
     createdAt: new Date().toISOString(),
     network: env.network,
-    grossAmount: fromStroops(toStroops(req.grossAmount)),
+    grossAmount: gross,
     asset: ref,
     split: {
       authorities: fromStroops(split.authorities),
@@ -199,46 +239,128 @@ export async function executeSettlementBatch(req: CreateSettlementBatchRequest):
     authoritiesAddress,
     driverPoolAddress,
     treasuryAddress,
-    txHash: res.hash,
-    horizonUrl: horizonTxUrl(res.hash),
+    txHash,
+    horizonUrl: horizonTxUrl(txHash),
+    createdBy: opts.createdBy,
+    approvedBy: opts.approvedBy,
+    deposit,
+    conversion: opts.conversion,
   };
 
-  // Persist BEFORE handing the driver slice to the payout provider. The split is
-  // already irreversible on-chain at this point, so if the provider call fails
-  // (or the process dies) the batch must still be in the indexer to reconcile
-  // against — otherwise funds have moved with no record that they did.
-  await saveBatch(batch);
+  await recordPendingBatch(batch);
 
   try {
-    const payoutBatch = await createPayoutBatch(driverPayouts, ref, { settlementBatchId: batchId });
+    await submitToHorizon(tx, 'settlement batch submit');
+  } catch (e: unknown) {
+    const codes = (e as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response?.data?.extras
+      ?.result_codes;
+    if (codes) {
+      await setBatchStatus(batchId, 'failed');
+      throw httpError(`Settlement rejected by Horizon: ${JSON.stringify(codes)}`, 422, 'HorizonRejected');
+    }
+    logUpstream('settlement submit outcome unknown', e);
+    throw fundsMovedError(
+      `Settlement ${batchId} (tx ${txHash}) was sent but Horizon did not confirm it. It is recorded as submitted ` +
+        'and will be reconciled against the ledger; do not resend.',
+      502,
+      'SettlementPending',
+    );
+  }
+
+  await setBatchStatus(batchId, 'confirmed');
+  batch.status = 'confirmed';
+  return fanOut(batch, opts.createdBy);
+}
+
+async function fanOut(batch: SettlementBatch, createdBy?: string): Promise<SettlementBatch> {
+  try {
+    const payoutBatch = await createPayoutBatch(batch.driverPayouts, batch.asset, {
+      settlementBatchId: batch.id,
+      createdBy,
+    });
     batch.payoutBatchId = payoutBatch.id;
-    await attachPayoutBatch(batchId, payoutBatch.id);
-    for (const p of driverPayouts) {
+    await attachPayoutBatch(batch.id, payoutBatch.id);
+    for (const p of batch.driverPayouts) {
       notifyUserInBackground(p.userId, {
         title: 'Reward on its way',
-        body: `${p.amount} ${ref.code} from settlement ${batchId} is being paid to your wallet.`,
-        data: { kind: 'settlement_payout', settlementBatchId: batchId },
+        body: `${p.amount} ${batch.asset.code} from settlement ${batch.id} is being paid to your wallet.`,
+        data: { kind: 'settlement_payout', settlementBatchId: batch.id },
       });
     }
   } catch (e) {
     logger.error(
-      { err: e, batchId, txHash: res.hash },
+      { err: e, batchId: batch.id, txHash: batch.txHash },
       'settlement settled on-chain but payout batch creation failed — batch persisted, driver fan-out needs reconciliation',
     );
-    throw httpError(
-      `Settlement ${batchId} settled on-chain (tx ${res.hash}) but the driver payout batch failed: ` +
-        `${(e as Error).message}. The settlement is recorded — retry the fan-out with ` +
-        `POST /v1/ops/payouts/batches {"settlementBatchId":"${batchId}"}.`,
+    throw fundsMovedError(
+      `Settlement ${batch.id} settled on-chain (tx ${batch.txHash}) but the driver payout batch failed: ` +
+        `${(e as Error).name}. The settlement is recorded — retry the fan-out with ` +
+        `POST /v1/ops/payouts/batches {"settlementBatchId":"${batch.id}"}.`,
       502,
       'PayoutProviderUnavailable',
     );
   }
-
   return batch;
 }
 
+export const SETTLEMENT_TX_TIMEOUT_SECONDS = 180;
+
+export async function reconcileSubmittedBatches(now = Date.now()): Promise<{ confirmed: string[]; failed: string[] }> {
+  const out = { confirmed: [] as string[], failed: [] as string[] };
+  for (const batch of await listUnresolvedBatches()) {
+    let landed: boolean | null = null;
+    try {
+      const record = await horizon.transactions().transaction(batch.txHash).call();
+      landed = record.successful;
+    } catch (e) {
+      if ((e as { response?: { status?: number } })?.response?.status !== 404) {
+        logUpstream('settlement reconcile lookup failed', e);
+        continue;
+      }
+    }
+    const expired = now - Date.parse(batch.createdAt) > (SETTLEMENT_TX_TIMEOUT_SECONDS + 60) * 1000;
+    if (landed === true) {
+      await setBatchStatus(batch.id, 'confirmed');
+      out.confirmed.push(batch.id);
+      sendAlertInBackground({
+        key: `settlement:reconciled:${batch.id}`,
+        severity: 'critical',
+        title: 'Settlement confirmed by the reconciler',
+        detail: `Batch ${batch.id} (tx ${batch.txHash}) landed after its request failed. Run the driver fan-out with POST /v1/ops/payouts/batches.`,
+      });
+    } else if (landed === false || expired) {
+      await setBatchStatus(batch.id, 'failed');
+      out.failed.push(batch.id);
+    }
+  }
+  return out;
+}
+
 export async function listSettlementBatches(query: BatchQuery = {}): Promise<SettlementBatchPage> {
-  return listBatches(query);
+  return listBatches({ ...query, network: query.network ?? env.network });
+}
+
+export function withPayoutHashes(batch: SettlementBatch, receipts: PayoutReceipt[] | undefined): SettlementBatch {
+  if (!receipts?.length) return batch;
+  return {
+    ...batch,
+    driverPayouts: batch.driverPayouts.map((p) => {
+      const hash = receipts.find((r) => r.userId === p.userId && r.address === p.address)?.stellarTxHash;
+      return hash ? { ...p, payoutTxHash: hash } : p;
+    }),
+  };
+}
+
+export async function getSettlementBatchWithPayouts(id: string): Promise<SettlementBatch> {
+  const batch = await getSettlementBatch(id);
+  if (!batch.payoutBatchId) return batch;
+  const payout = await getPayoutBatch(batch.payoutBatchId).catch(() => null);
+  return withPayoutHashes(batch, payout?.receipts);
+}
+
+export async function attachStoredPayoutHashes(batches: SettlementBatch[]): Promise<SettlementBatch[]> {
+  const receipts = await storedReceipts(batches.map((b) => b.payoutBatchId ?? ''));
+  return batches.map((b) => withPayoutHashes(b, b.payoutBatchId ? receipts.get(b.payoutBatchId) : undefined));
 }
 
 export async function getSettlementBatch(id: string): Promise<SettlementBatch> {

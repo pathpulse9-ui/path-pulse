@@ -13,11 +13,6 @@ import {
   listDistributionAccounts,
 } from '../lib/api';
 
-/**
- * D8 overview — landing card + KPI tiles + treasury multisig health + the
- * three distribution accounts, so a regulator sees the whole picture in one
- * screen and can jump into any drill-down.
- */
 export default function GovOverviewPage() {
   const [batches, setBatches] = useState<SettlementBatch[]>([]);
   const [treasury, setTreasury] = useState<TreasuryConfig | null>(null);

@@ -1,10 +1,37 @@
 import { randomUUID } from 'node:crypto';
-import { Keypair, WebAuth } from '@stellar/stellar-sdk';
+import { Keypair, TransactionBuilder, WebAuth } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 
 const CHALLENGE_TIMEOUT_SECONDS = 5 * 60;
+const MAX_USED_CHALLENGES = 10_000;
+const usedChallenges = new Map<string, number>();
+
+function alreadyUsed(): Error {
+  const e = new Error('This challenge has already been used — request a new one') as Error & { status: number };
+  e.status = 401;
+  return e;
+}
+
+export async function claimChallenge(signedTransaction: string, now = Date.now()): Promise<void> {
+  const tx = TransactionBuilder.fromXDR(signedTransaction, env.networkPassphrase);
+  const inner = 'innerTransaction' in tx ? tx.innerTransaction : tx;
+  const hash = inner.hash().toString('hex');
+  if (env.databaseUrl) {
+    await db().query('delete from sep10_used_challenges where expires_at < now()');
+    const claimed = await db().query(
+      'insert into sep10_used_challenges (hash, expires_at) values ($1, $2) on conflict (hash) do nothing returning hash',
+      [hash, new Date(now + CHALLENGE_TIMEOUT_SECONDS * 1000)],
+    );
+    if (claimed.rowCount === 0) throw alreadyUsed();
+    return;
+  }
+  for (const [h, until] of usedChallenges) if (until <= now) usedChallenges.delete(h);
+  if (usedChallenges.has(hash)) throw alreadyUsed();
+  if (usedChallenges.size >= MAX_USED_CHALLENGES) usedChallenges.delete(usedChallenges.keys().next().value as string);
+  usedChallenges.set(hash, now + CHALLENGE_TIMEOUT_SECONDS * 1000);
+}
 
 const serverKeypair = env.sep10.signingSecret
   ? Keypair.fromSecret(env.sep10.signingSecret)
@@ -69,5 +96,6 @@ export async function verifyChallenge(signedTransaction: string): Promise<Wallet
     env.sep10.homeDomain,
   );
 
+  await claimChallenge(signedTransaction);
   return upsertWalletUser(clientAccountID);
 }

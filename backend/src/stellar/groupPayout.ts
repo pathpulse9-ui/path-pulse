@@ -11,16 +11,10 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { toStroops, fromStroops } from './settlement.js';
 import { createPayoutBatch } from '../services/payouts.js';
-
-/**
- * Flat bulk payout (CSV/Excel group payment). Unlike the 50/30/20
- * settlement engine, every recipient is paid the exact amount supplied —
- * no tier multiplier, no split. Same dev-tier managed source pattern as
- * the settlement engine: funded via Friendbot, testnet only.
- */
+import { decodeKeyset, encodeKeyset } from '../db/keyset.js';
 
 const GROUP_PAYOUT_SOURCE_USER = '__group_payout_source__';
-const MAX_RECIPIENTS = 100; // Stellar tx operation limit
+const MAX_RECIPIENTS = 100;
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -45,6 +39,7 @@ interface GroupPayoutRow {
   memo: string | null;
   network: string;
   receipts: GroupPayoutReceipt[] | null;
+  created_by: string | null;
   created_at: string;
 }
 
@@ -60,6 +55,7 @@ function rowToGroupBatch(r: GroupPayoutRow): GroupPayoutBatch {
     payoutBatchId: r.payout_batch_id ?? undefined,
     disbursementId: r.disbursement_id ?? undefined,
     receipts: r.receipts ?? [],
+    createdBy: r.created_by ?? undefined,
   };
 }
 
@@ -67,8 +63,8 @@ async function insertGroupBatch(batch: GroupPayoutBatch): Promise<void> {
   await db().query(
     `insert into group_payout_batches
        (id, payout_batch_id, disbursement_id, asset_code, asset_issuer, total_amount,
-        source_address, memo, network, receipts, created_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        source_address, memo, network, receipts, created_by, created_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       batch.id,
       batch.payoutBatchId ?? null,
@@ -80,12 +76,16 @@ async function insertGroupBatch(batch: GroupPayoutBatch): Promise<void> {
       batch.memo ?? null,
       batch.network,
       JSON.stringify(batch.receipts),
+      batch.createdBy ?? null,
       batch.createdAt,
     ],
   );
 }
 
-export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise<GroupPayoutBatch> {
+export async function executeGroupPayout(
+  req: CreateGroupPayoutRequest,
+  opts: { createdBy?: string } = {},
+): Promise<GroupPayoutBatch> {
   if (!req.recipients?.length) throw httpError('recipients must be a non-empty array', 400, 'ValidationError');
   if (req.recipients.length > MAX_RECIPIENTS) {
     throw httpError(`recipients exceeds max of ${MAX_RECIPIENTS} per batch`, 400, 'ValidationError');
@@ -97,8 +97,6 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
   }
 
   const { ref } = assetOf(req.asset);
-  // SDP binds a receiver contact to a wallet address permanently, so the contact must be
-  // derived from the address. A run-scoped id would collide on every repeat of the same file.
   const payouts = req.recipients.map((r) => ({
     userId: `grp-${r.address.slice(0, 8).toLowerCase()}`,
     address: r.address,
@@ -107,7 +105,7 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
     amount: r.amount,
   }));
 
-  const payoutBatch = await createPayoutBatch(payouts, ref);
+  const payoutBatch = await createPayoutBatch(payouts, ref, { createdBy: opts.createdBy });
   const totalStroops = req.recipients.reduce((sum, r) => sum + toStroops(r.amount), 0n);
 
   const batch: GroupPayoutBatch = {
@@ -120,6 +118,7 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
     memo: req.memo?.trim() || undefined,
     payoutBatchId: payoutBatch.id,
     disbursementId: payoutBatch.disbursementId,
+    createdBy: opts.createdBy,
     receipts: req.recipients.map((r) => ({
       name: r.name,
       address: r.address,
@@ -132,19 +131,20 @@ export async function executeGroupPayout(req: CreateGroupPayoutRequest): Promise
 }
 
 export async function listGroupPayoutBatches(cursor?: string, limit = 50): Promise<GroupPayoutBatchPage> {
-  const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
-  const size = Math.min(Math.max(1, limit), 100);
-  const [rows, count] = await Promise.all([
-    db().query<GroupPayoutRow>(
-      'select * from group_payout_batches order by created_at desc, id desc limit $1 offset $2',
-      [size, start],
-    ),
-    db().query<{ n: string }>('select count(*)::text as n from group_payout_batches'),
-  ]);
-  const total = Number(count.rows[0].n);
+  const size = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 100) : 50;
+  const key = decodeKeyset(cursor);
+  const rows = await db().query<GroupPayoutRow>(
+    `select * from group_payout_batches
+     where ($1::timestamptz is null or (created_at, id) < ($1::timestamptz, $2::text))
+     order by created_at desc, id desc
+     limit $3`,
+    [key?.createdAt ?? null, key?.id ?? null, size + 1],
+  );
+  const page = rows.rows.slice(0, size);
+  const last = page[page.length - 1];
   return {
-    items: rows.rows.map(rowToGroupBatch),
-    nextCursor: start + size < total ? String(start + size) : null,
+    items: page.map(rowToGroupBatch),
+    nextCursor: rows.rows.length > size && last ? encodeKeyset(last.created_at, last.id) : null,
   };
 }
 

@@ -27,6 +27,12 @@
 			</array>
 		</dict>
 	</array>
+	<key>PathPulseAPIBase</key>
+	<string>$(PATHPULSE_API_BASE)</string>
+	<key>PathPulseStellarNetwork</key>
+	<string>$(PATHPULSE_STELLAR_NETWORK)</string>
+	<key>PathPulseSentryDSN</key>
+	<string>$(PATHPULSE_SENTRY_DSN)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>

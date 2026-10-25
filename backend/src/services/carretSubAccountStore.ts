@@ -1,18 +1,8 @@
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
-
-/**
- * Per-driver Carret sub-account store (PAT-75).
- *
- * Every PathPulse `userId` maps 1:1 to a Carret sub-account. The mapping is
- * created lazily on first KYC / off-ramp interaction: `getOrProvision` returns
- * the existing account_id if one is on file, otherwise creates a new Carret
- * sub-account and persists the mapping in one call.
- *
- * With DATABASE_URL unset (local dev without Docker) the store falls back to
- * an in-memory Map so every existing dev flow keeps working.
- */
+import { evictOldest } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface CarretMapping {
   userId: string;
@@ -20,27 +10,14 @@ export interface CarretMapping {
   referenceId?: string;
   kycStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
   walletWhitelistedAt?: string;
-  /**
-   * Email the sub-account was registered with on Carret. Optional for
-   * backwards-compat with rows written before this column existed.
-   * Used by `getMappingByEmail` to resume a KYC application across a
-   * new browser / phone / guest cookie (i.e. when the userId changes
-   * but the driver returns with the same email).
-   */
   email?: string;
-  /**
-   * Phone the sub-account was registered with on Carret. Same purpose
-   * as `email` above — Carret rejects duplicates on BOTH fields (the
-   * phone becomes their `username`), so we need to be able to resume
-   * on either.
-   */
   phone?: string;
 }
 
 const memoryStore = new Map<string, CarretMapping>();
 
 function hasDb(): boolean {
-  return Boolean(env.databaseUrl);
+  return databaseOrMemory('Carret account store');
 }
 
 function rowToMapping(r: Record<string, unknown>): CarretMapping {
@@ -65,13 +42,6 @@ export async function getMapping(userId: string): Promise<CarretMapping | null> 
   return r ? rowToMapping(r) : null;
 }
 
-/**
- * Look up an existing sub-account by the email it was registered with.
- * Powers cross-session resume: a driver comes back on a new install /
- * browser (fresh guest cookie) with the same email — we adopt the
- * existing Carret account into their new session's mapping instead of
- * hitting Carret's duplicate-email 4xx.
- */
 export async function getMappingByEmail(email: string): Promise<CarretMapping | null> {
   const needle = email.trim().toLowerCase();
   if (!needle) return null;
@@ -89,12 +59,6 @@ export async function getMappingByEmail(email: string): Promise<CarretMapping | 
   return r ? rowToMapping(r) : null;
 }
 
-/**
- * Look up by phone number (bare 10 digits). Carret rejects duplicate
- * phones with a `username already exists` error just as it does for
- * email, so we need this second index to complete the cross-session
- * adopt path.
- */
 export async function getMappingByPhone(phone: string): Promise<CarretMapping | null> {
   const needle = phone.replace(/\D/g, '');
   if (!needle) return null;
@@ -112,10 +76,10 @@ export async function getMappingByPhone(phone: string): Promise<CarretMapping | 
   return r ? rowToMapping(r) : null;
 }
 
-/** Upsert the mapping. Returns the mapping after write. */
 export async function upsertMapping(m: CarretMapping): Promise<CarretMapping> {
   if (!hasDb()) {
     memoryStore.set(m.userId, m);
+    evictOldest(memoryStore, 5_000);
     return m;
   }
   await db().query(
@@ -140,12 +104,6 @@ export async function upsertMapping(m: CarretMapping): Promise<CarretMapping> {
   return m;
 }
 
-/**
- * Delete the mapping row for a session's userId. Called by the wizard's
- * "Start fresh" so a subsequent `provision-subaccount` doesn't silently
- * return the stale row (which would ignore whatever new email/phone the
- * driver just typed and adopt them back into the old Carret account).
- */
 export async function deleteMapping(userId: string): Promise<void> {
   if (!hasDb()) { memoryStore.delete(userId); return; }
   await db().query('delete from carret_subaccounts where user_id = $1', [userId]);

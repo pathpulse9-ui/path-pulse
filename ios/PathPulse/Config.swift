@@ -4,17 +4,27 @@ import Foundation
 /// and stays in lock-step with the backend contract at `packages/contract/openapi.yaml`.
 enum Config {
     /// Backend base URL. Local dev: `http://localhost:8080` (Simulator reaches the Mac host
-    /// directly). Deployed: `https://demo-api.pathpulse.ai`.
+    /// directly). Deployed: `https://pay-api.pathpulse.ai`.
     static let apiBaseURL: URL = {
-        // DEBUG defaults to the deployed backend so the Simulator can exercise
-        // Guest / Google flows without a local server up. Flip to
-        // `http://localhost:8080` when actively developing the backend locally.
-        #if DEBUG
-        return URL(string: "https://demo-api.pathpulse.ai")!
-        #else
-        return URL(string: "https://demo-api.pathpulse.ai")!
-        #endif
+        let raw = Bundle.main.object(forInfoDictionaryKey: "PathPulseAPIBase") as? String
+        guard let raw, !raw.isEmpty, let url = URL(string: raw) else {
+            return URL(string: "https://pay-api.pathpulse.ai")!
+        }
+        precondition(
+            stellarNetwork != "mainnet" || url.scheme == "https",
+            "A mainnet build needs an https PATHPULSE_API_BASE"
+        )
+        return url
     }()
+
+    static let stellarNetwork: String = {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "PathPulseStellarNetwork") as? String
+        return raw == "mainnet" ? "mainnet" : "testnet"
+    }()
+
+    static func explorerTxURL(_ hash: String, network: String = stellarNetwork) -> URL {
+        URL(string: "https://stellar.expert/explorer/\(network == "mainnet" ? "public" : "testnet")/tx/\(hash)")!
+    }
 
     /// Google OAuth **web** client id — same value the Android app uses. This is passed
     /// to `GIDSignIn` as `serverClientID` so the returned id-token's audience matches

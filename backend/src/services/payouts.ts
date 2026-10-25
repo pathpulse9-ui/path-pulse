@@ -17,6 +17,8 @@ import {
   getDisbursementReceivers,
   mapDisbursementStatus,
   mapReceivers,
+  assertDistributionIsDriverPool,
+  assertPayoutRecipient,
 } from './sdp.js';
 import {
   withRetry,
@@ -24,6 +26,10 @@ import {
   attachDisbursement,
   getDisbursementId,
 } from './payoutAttempts.js';
+import { probeSdp } from './health.js';
+import { fromStroops, toStroops } from '../stellar/settlement.js';
+import { decodeKeyset, encodeKeyset } from '../db/keyset.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 function httpError(message: string, status: number, name: string): Error {
   const e = new Error(message) as Error & { status: number };
@@ -34,7 +40,7 @@ function httpError(message: string, status: number, name: string): Error {
 
 interface PayoutProvider {
   readonly sandbox: boolean;
-  start(batch: PayoutBatch, payouts: SettlementDriverPayout[]): Promise<void>;
+  start(batch: PayoutBatch, payouts: SettlementDriverPayout[], disbursementName: string): Promise<void>;
   status(batch: PayoutBatch): Promise<{ status: PayoutBatchStatus; receipts: PayoutReceipt[] }>;
 }
 
@@ -60,7 +66,7 @@ function retryOpts() {
 
 const liveProvider: PayoutProvider = {
   sandbox: false,
-  async start(batch, payouts) {
+  async start(batch, payouts, disbursementName) {
     await recordBatch(batch.id, batch.settlementBatchId, batch.asset.code, batch.asset.issuer);
 
     const existing = await getDisbursementId(batch.id);
@@ -70,7 +76,7 @@ const liveProvider: PayoutProvider = {
         batch.id,
         'createDisbursement',
         async () => {
-          const d = await createDisbursement(`pathpulse-${batch.id}`, batch.asset);
+          const d = await createDisbursement(disbursementName, batch.asset);
           await attachDisbursement(batch.id, d.id);
           return d.id;
         },
@@ -114,6 +120,7 @@ interface PayoutBatchRow {
   receipts: PayoutReceipt[] | null;
   settlement_batch_id: string | null;
   disbursement_id: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string | null;
 }
@@ -129,32 +136,59 @@ function rowToBatch(r: PayoutBatchRow): PayoutBatch {
     receipts: r.receipts ?? [],
     settlementBatchId: r.settlement_batch_id ?? undefined,
     disbursementId: r.disbursement_id ?? undefined,
+    createdBy: r.created_by ?? undefined,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at ?? r.created_at).toISOString(),
   };
 }
 
-async function insertBatch(batch: PayoutBatch): Promise<void> {
-  await db().query(
-    `insert into payout_batches
-       (id, provider, sandbox, status, asset_code, asset_issuer, total_amount, receipts,
-        settlement_batch_id, disbursement_id, created_at, updated_at)
-     values ($1, 'sdp', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-     on conflict (id) do nothing`,
-    [
-      batch.id,
-      batch.sandbox,
-      batch.status,
-      batch.asset.code,
-      batch.asset.issuer ?? null,
-      batch.totalAmount,
-      JSON.stringify(batch.receipts),
-      batch.settlementBatchId ?? null,
-      batch.disbursementId ?? null,
-      batch.createdAt,
-      batch.updatedAt,
-    ],
+async function insertBatch(batch: PayoutBatch): Promise<boolean> {
+  const client = await db().connect();
+  try {
+    await client.query('begin');
+    if (batch.settlementBatchId) {
+      await client.query('select pg_advisory_xact_lock(hashtext($1))', [batch.settlementBatchId]);
+    }
+    const res = await client.query(
+      `insert into payout_batches
+         (id, provider, sandbox, status, asset_code, asset_issuer, total_amount, receipts,
+          settlement_batch_id, disbursement_id, created_by, created_at, updated_at)
+       select $1, 'sdp', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+       where $8::text is null or not exists (
+         select 1 from payout_batches where settlement_batch_id = $8 and status is distinct from 'error'
+       )
+       on conflict (id) do nothing`,
+      [
+        batch.id,
+        batch.sandbox,
+        batch.status,
+        batch.asset.code,
+        batch.asset.issuer ?? null,
+        batch.totalAmount,
+        JSON.stringify(batch.receipts),
+        batch.settlementBatchId ?? null,
+        batch.disbursementId ?? null,
+        batch.createdBy ?? null,
+        batch.createdAt,
+        batch.updatedAt,
+      ],
+    );
+    await client.query('commit');
+    return (res.rowCount ?? 0) > 0;
+  } catch (e) {
+    await client.query('rollback').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function priorBatchCount(settlementBatchId: string): Promise<number> {
+  const r = await db().query<{ n: string }>(
+    'select count(*)::text as n from payout_batches where settlement_batch_id = $1',
+    [settlementBatchId],
   );
+  return Number(r.rows[0].n);
 }
 
 async function saveBatchState(batch: PayoutBatch): Promise<void> {
@@ -166,13 +200,25 @@ async function saveBatchState(batch: PayoutBatch): Promise<void> {
   );
 }
 
+async function assertSdpReachable(): Promise<void> {
+  try {
+    await probeSdp();
+  } catch (e) {
+    logUpstream('sdp unreachable', e);
+    throw httpError('SDP is unreachable', 503, 'PayoutProviderUnavailable');
+  }
+}
+
 export async function createPayoutBatch(
   payouts: SettlementDriverPayout[],
   asset: AssetRef,
-  opts: { settlementBatchId?: string } = {},
+  opts: { settlementBatchId?: string; createdBy?: string } = {},
 ): Promise<PayoutBatch> {
   if (!payouts.length) throw httpError('payouts must be a non-empty array', 400, 'ValidationError');
-  const totalAmount = payouts.reduce((sum, p) => sum + Number(p.amount), 0).toFixed(7);
+  for (const p of payouts) assertPayoutRecipient(p.userId, p.address);
+  if (!provider.sandbox) await assertSdpReachable();
+  if (!provider.sandbox && env.network === 'mainnet') await assertDistributionIsDriverPool();
+  const totalAmount = fromStroops(payouts.reduce((sum, p) => sum + toStroops(p.amount), 0n));
   const now = new Date().toISOString();
   const batch: PayoutBatch = {
     id: `pob_${Date.now()}_${randomBytes(4).toString('hex')}`,
@@ -183,11 +229,29 @@ export async function createPayoutBatch(
     totalAmount,
     receipts: [],
     settlementBatchId: opts.settlementBatchId,
+    createdBy: opts.createdBy,
     createdAt: now,
     updatedAt: now,
   };
-  await insertBatch(batch);
-  await provider.start(batch, payouts);
+  const attempt = opts.settlementBatchId ? await priorBatchCount(opts.settlementBatchId) : 0;
+  const disbursementName = opts.settlementBatchId
+    ? `pathpulse-${opts.settlementBatchId}${attempt > 0 ? `-r${attempt}` : ''}`
+    : `pathpulse-${batch.id}`;
+  if (!(await insertBatch(batch))) {
+    throw httpError(
+      `Settlement batch ${opts.settlementBatchId} already has a payout batch that has not failed`,
+      409,
+      'DuplicatePayout',
+    );
+  }
+  try {
+    await provider.start(batch, payouts, disbursementName);
+  } catch (e) {
+    batch.status = 'error';
+    batch.updatedAt = new Date().toISOString();
+    await saveBatchState(batch);
+    throw e;
+  }
   batch.status = 'started';
   batch.updatedAt = new Date().toISOString();
   await saveBatchState(batch);
@@ -220,16 +284,28 @@ export async function getPayoutBatch(id: string): Promise<PayoutBatch> {
 }
 
 export async function listPayoutBatches(cursor?: string, limit = 50): Promise<PayoutBatchPage> {
-  const start = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
-  const size = Math.min(Math.max(1, limit), 100);
-  const [rows, count] = await Promise.all([
-    db().query<PayoutBatchRow>(
-      'select * from payout_batches where provider is not null order by created_at desc, id desc limit $1 offset $2',
-      [size, start],
-    ),
-    db().query<{ n: string }>('select count(*)::text as n from payout_batches where provider is not null'),
-  ]);
-  const items = await Promise.all(rows.rows.map((row) => refresh(rowToBatch(row))));
-  const total = Number(count.rows[0].n);
-  return { items, nextCursor: start + size < total ? String(start + size) : null };
+  const size = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 100) : 50;
+  const key = decodeKeyset(cursor);
+  const rows = await db().query<PayoutBatchRow>(
+    `select * from payout_batches
+     where provider is not null
+       and ($1::timestamptz is null or (created_at, id) < ($1::timestamptz, $2::text))
+     order by created_at desc, id desc
+     limit $3`,
+    [key?.createdAt ?? null, key?.id ?? null, size + 1],
+  );
+  const page = rows.rows.slice(0, size);
+  const items = await Promise.all(page.map((row) => refresh(rowToBatch(row))));
+  const last = page[page.length - 1];
+  return { items, nextCursor: rows.rows.length > size && last ? encodeKeyset(last.created_at, last.id) : null };
+}
+
+export async function storedReceipts(payoutBatchIds: string[]): Promise<Map<string, PayoutReceipt[]>> {
+  const ids = [...new Set(payoutBatchIds.filter(Boolean))];
+  if (!ids.length || !env.databaseUrl) return new Map();
+  const r = await db().query<{ id: string; receipts: PayoutReceipt[] | null }>(
+    'select id, receipts from payout_batches where id = any($1)',
+    [ids],
+  );
+  return new Map(r.rows.map((row) => [row.id, row.receipts ?? []]));
 }

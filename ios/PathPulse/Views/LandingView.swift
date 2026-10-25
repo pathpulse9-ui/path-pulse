@@ -44,7 +44,7 @@ struct LandingView: View {
                 .font(PathPulseFont.titleLarge)
                 .foregroundStyle(PathPulseColor.black)
             Spacer()
-            Text("TESTNET")
+            Text(Config.stellarNetwork.uppercased())
                 .font(PathPulseFont.labelSmall)
                 .foregroundStyle(PathPulseColor.black50)
                 .padding(.horizontal, PpSpace.md)

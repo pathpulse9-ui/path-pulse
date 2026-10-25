@@ -16,15 +16,6 @@ import {
   _resetInMemoryForTests,
 } from './scoreStore.js';
 
-/**
- * D6 score feed: a delivered PulseGen result must be traceable to the batch
- * that delivered it, must beat the interim fallback, and a malformed batch
- * must land nothing at all.
- *
- * Mirrors `payoutAttempts.test.ts`: needs Postgres at DATABASE_URL and
- * self-skips when one isn't up.
- */
-
 let dbAvailable = false;
 const driverIds: string[] = [];
 const importIds: string[] = [];

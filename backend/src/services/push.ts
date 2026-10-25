@@ -5,6 +5,8 @@ import { env, apnsLive, fcmLive } from '../config/env.js';
 import { db } from '../db/client.js';
 import { logger } from '../config/logger.js';
 import type { PushPlatform } from '@pathpulse/contract';
+import { evictOldest } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface PushMessage {
   title: string;
@@ -22,8 +24,9 @@ type SendOutcome = 'sent' | 'stale' | 'failed';
 const memoryDevices = new Map<string, { userId: string; platform: PushPlatform }>();
 
 export async function registerDevice(userId: string, token: string, platform: PushPlatform): Promise<void> {
-  if (!env.databaseUrl) {
+  if (!databaseOrMemory('push device store')) {
     memoryDevices.set(token, { userId, platform });
+    evictOldest(memoryDevices, 5_000);
     return;
   }
   await db().query(
@@ -35,7 +38,7 @@ export async function registerDevice(userId: string, token: string, platform: Pu
 }
 
 export async function unregisterDevice(userId: string, token: string): Promise<void> {
-  if (!env.databaseUrl) {
+  if (!databaseOrMemory('push device store')) {
     if (memoryDevices.get(token)?.userId === userId) memoryDevices.delete(token);
     return;
   }
@@ -43,7 +46,7 @@ export async function unregisterDevice(userId: string, token: string): Promise<v
 }
 
 async function devicesFor(userId: string): Promise<Device[]> {
-  if (!env.databaseUrl) {
+  if (!databaseOrMemory('push device store')) {
     return [...memoryDevices.entries()]
       .filter(([, d]) => d.userId === userId)
       .map(([token, d]) => ({ token, platform: d.platform }));
@@ -53,7 +56,7 @@ async function devicesFor(userId: string): Promise<Device[]> {
 }
 
 async function forgetToken(token: string): Promise<void> {
-  if (!env.databaseUrl) {
+  if (!databaseOrMemory('push device store')) {
     memoryDevices.delete(token);
     return;
   }

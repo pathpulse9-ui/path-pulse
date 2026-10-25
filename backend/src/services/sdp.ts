@@ -4,7 +4,10 @@ import type { AssetRef,
   PayoutReceiptStatus,
   SettlementDriverPayout,
 } from '@pathpulse/contract';
+import { StrKey } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
+import { fetchWithTimeout } from '../net/fetchWithTimeout.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 interface DisbursementRef {
   id: string;
@@ -24,18 +27,14 @@ function url(path: string): string {
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...(init.headers as Record<string, string>) };
   headers.Authorization = env.sdp.apiKey;
-  // Routing by tenant header avoids depending on a per-tenant hostname, whose
-  // .local resolution is unreliable on macOS and caused spurious retries.
   if (env.sdp.tenantName) headers['SDP-Tenant-Name'] = env.sdp.tenantName;
 
-  const res = await fetch(url(path), { ...init, headers });
+  const res = await fetchWithTimeout(url(path), { ...init, headers });
   const text = await res.text();
   const json = text ? (JSON.parse(text) as unknown) : undefined;
   if (!res.ok) {
-    const body = json as { message?: string; error?: string; extras?: unknown } | undefined;
-    const detail = body?.extras ? ` ${JSON.stringify(body.extras)}` : '';
-    const message = body?.message ?? body?.error ?? res.statusText;
-    const e = new Error(`SDP ${path} → ${res.status}: ${message}${detail}`) as Error & {
+    logUpstream(`sdp ${path} returned ${res.status}`, new Error(JSON.stringify(json ?? text).slice(0, 500)));
+    const e = new Error(`SDP ${path.split('?')[0]} → ${res.status}`) as Error & {
       status: number;
     };
     e.name = 'SdpError';
@@ -51,10 +50,6 @@ interface SdpAsset {
   issuer: string;
 }
 
-/**
- * Resolve the SDP asset id for the batch's asset. Without this the disbursement would
- * always use SDP_ASSET_ID, so a batch in one asset could be paid out in another.
- */
 export async function resolveAssetId(ref?: AssetRef): Promise<string> {
   if (!ref) return env.sdp.assetId;
   const assets = await call<SdpAsset[]>('/assets');
@@ -73,9 +68,29 @@ export async function resolveAssetId(ref?: AssetRef): Promise<string> {
   return match.id;
 }
 
+export async function getDistributionAccount(): Promise<string> {
+  const org = await call<{ distribution_account_public_key?: string; distribution_account?: { address?: string } }>(
+    '/organization',
+  );
+  const address = org.distribution_account?.address ?? org.distribution_account_public_key;
+  if (!address) throw new Error('SDP /organization returned no distribution account');
+  return address;
+}
+
+export async function assertDistributionIsDriverPool(): Promise<void> {
+  const address = await getDistributionAccount();
+  if (address !== env.distribution.driverPool) {
+    const e = new Error(
+      `SDP pays from ${address}, but DRIVER_POOL_PUBLIC is ${env.distribution.driverPool}. On mainnet the driver pool ` +
+        'must be the SDP distribution account so the 30% leg and the driver payments are the same funds on-chain.',
+    ) as Error & { status: number };
+    e.name = 'DriverPoolMismatch';
+    e.status = 500;
+    throw e;
+  }
+}
+
 export async function createDisbursement(name: string, asset?: AssetRef): Promise<DisbursementRef> {
-  // Receiver-supplied addresses pick the user-managed wallet themselves; SDP
-  // rejects an explicit wallet_id for those contact types.
   const receiverSuppliesAddress = env.sdp.registrationContactType.endsWith('_AND_WALLET_ADDRESS');
   const assetId = await resolveAssetId(asset);
   return call<DisbursementRef>('/disbursements', {
@@ -91,17 +106,36 @@ export async function createDisbursement(name: string, asset?: AssetRef): Promis
   });
 }
 
+const USER_ID_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+
+export function assertPayoutRecipient(userId: string, address: string): void {
+  const bad = (m: string) => {
+    const e = new Error(m) as Error & { status: number };
+    e.name = 'ValidationError';
+    e.status = 400;
+    return e;
+  };
+  if (!USER_ID_PATTERN.test(userId)) throw bad('payout userId contains unsupported characters');
+  if (!StrKey.isValidEd25519PublicKey(address)) throw bad('payout address is not a Stellar public key');
+}
+
+function csvCell(value: string): string {
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
 export async function uploadDisbursementInstructions(
   disbursementId: string,
   payouts: SettlementDriverPayout[],
 ): Promise<void> {
-  // SDP always requires a receiver contact alongside the wallet address. Settlement
-  // carries no phone/email, so derive a stable per-driver address from the userId.
   const usesEmail = env.sdp.registrationContactType.startsWith('EMAIL');
   const contact = (userId: string) =>
     usesEmail ? `${userId}@${env.sdp.contactDomain}` : '';
   const header = `id,${usesEmail ? 'email' : 'phone'},amount,walletAddress`;
-  const rows = payouts.map((p) => `${p.userId},${contact(p.userId)},${p.amount},${p.address}`);
+  const rows = payouts.map((p) => {
+    assertPayoutRecipient(p.userId, p.address);
+    return [p.userId, contact(p.userId), p.amount, p.address].map(csvCell).join(',');
+  });
   const csv = [header, ...rows].join('\n');
 
   const form = new FormData();

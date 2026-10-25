@@ -1,39 +1,36 @@
 import type { RoutingProviderName, RoutingQuote, RoutingSwapResult } from '@pathpulse/contract';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import { toStroops, fromStroops } from '../stellar/settlement.js';
 import { resolveAsset, isRoutableSymbol, type RoutableSymbol } from './assets.js';
 import { routingError, type ProviderQuote, type RoutingProvider } from './provider.js';
 import { aquariusProvider } from './aquarius-provider.js';
 import { stellarBrokerProvider } from './stellarbroker-provider.js';
 
-const REGISTRY: Record<RoutingProviderName, RoutingProvider> = {
-  aquarius: aquariusProvider,
-  stellarbroker: stellarBrokerProvider,
-};
-
 function activeProviders(): RoutingProvider[] {
-  const names = env.routing.providers.length ? env.routing.providers : (['aquarius'] as RoutingProviderName[]);
-  const picked = names.filter((n): n is RoutingProviderName => n in REGISTRY).map((n) => REGISTRY[n]);
-  if (!picked.length) {
-    throw routingError('No routing providers are configured (ROUTING_PROVIDERS)', 500, 'ConfigError');
-  }
-  return picked;
+  return [aquariusProvider, stellarBrokerProvider];
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>, ms: number, label: string): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(
-      () => reject(routingError(`${label} quote timed out after ${ms}ms`, 504, 'RoutingTimeout')),
-      ms,
-    );
+    timer = setTimeout(() => {
+      const error = routingError(`${label} quote timed out after ${ms}ms`, 504, 'RoutingTimeout');
+      controller.abort(error);
+      reject(error);
+    }, ms);
     timer.unref?.();
   });
-  return Promise.race([p.finally(() => clearTimeout(timer)), timeout]);
+  return Promise.race([run(controller.signal).finally(() => clearTimeout(timer)), timeout]);
 }
 
 export function rankQuotes(quotes: ProviderQuote[]): ProviderQuote[] {
   return [...quotes].sort((a, b) => {
+    if (a.provider !== b.provider) {
+      if (a.provider === 'aquarius') return -1;
+      if (b.provider === 'aquarius') return 1;
+    }
     if (a.minDestinationStroops === b.minDestinationStroops) return 0;
     return a.minDestinationStroops < b.minDestinationStroops ? 1 : -1;
   });
@@ -51,7 +48,7 @@ async function gatherQuotes(
     throw routingError('No routing providers can produce a quote', 500, 'ConfigError');
   }
   const settled = await Promise.allSettled(
-    quoting.map((p) => withTimeout(p.quote(from, to, sourceStroops), timeoutMs, p.name)),
+    quoting.map((p) => withTimeout((signal) => p.quote(from, to, sourceStroops, signal), timeoutMs, p.name)),
   );
   const ok = settled
     .filter((s): s is PromiseFulfilledResult<ProviderQuote> => s.status === 'fulfilled')
@@ -60,7 +57,8 @@ async function gatherQuotes(
     const reasons = settled
       .map((s) => (s.status === 'rejected' ? String((s.reason as Error)?.message ?? s.reason) : ''))
       .filter(Boolean);
-    throw routingError(`No route found for ${from} → ${to} (${reasons.join(' · ')})`, 422, 'NoRoute');
+    logger.info({ from, to, reasons }, 'no routing provider produced a quote');
+    throw routingError(`No route found for ${from} → ${to}`, 422, 'NoRoute');
   }
   return rankQuotes(ok);
 }
@@ -111,34 +109,34 @@ export async function runSwap(
   to: string,
   amount: string,
   timeoutMs: number = env.routing.quoteTimeoutMs,
+  only?: RoutingProviderName,
 ): Promise<RoutingSwapResult> {
   const [f, t] = validatePair(from, to);
   const sourceStroops = toStroops(amount);
-  const ranked = await gatherQuotes(providers, f, t, sourceStroops, timeoutMs);
-  const byName = new Map(providers.map((p) => [p.name, p]));
-
-  let lastErr: unknown;
-  let attempted = false;
-  for (const q of ranked) {
-    const provider = byName.get(q.provider);
-    if (!provider?.canExecute) continue;
-    attempted = true;
-    try {
-      return await provider.execute(f, t, sourceStroops);
-    } catch (e) {
-      lastErr = e;
-    }
+  const pool = only ? providers.filter((p) => p.name === only) : providers;
+  if (only && !pool[0]?.canExecute) {
+    throw routingError(`${only} is not able to execute swaps here`, 422, 'RoutingUnavailable');
   }
-  if (!attempted) {
+  const ranked = await gatherQuotes(pool, f, t, sourceStroops, timeoutMs);
+  const byName = new Map(pool.map((p) => [p.name, p]));
+
+  const best = ranked.find((q) => byName.get(q.provider)?.canExecute);
+  const provider = best && byName.get(best.provider);
+  if (!provider) {
     throw routingError('No routing provider is able to execute swaps', 502, 'RoutingUnavailable');
   }
-  throw lastErr ?? routingError('Every routing provider failed to execute the swap', 502, 'RoutingUnavailable');
+  return provider.execute(f, t, sourceStroops);
 }
 
 export function quoteSwap(from: string, to: string, amount: string): Promise<RoutingQuote> {
   return runQuote(activeProviders(), from, to, amount);
 }
 
-export function executeSwap(from: string, to: string, amount: string): Promise<RoutingSwapResult> {
-  return runSwap(activeProviders(), from, to, amount);
+export function executeSwap(
+  from: string,
+  to: string,
+  amount: string,
+  only?: RoutingProviderName,
+): Promise<RoutingSwapResult> {
+  return runSwap(activeProviders(), from, to, amount, undefined, only);
 }

@@ -68,17 +68,11 @@ export default function OffRampPage() {
   const [quote, setQuote] = useState<OffRampQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<unknown>(null);
-  // PAT-80: Carret daily limit for this driver's sub-account.
   const [limits, setLimits] = useState<CarretLimits | null>(null);
   useEffect(() => {
     getCarretLimits().then(setLimits).catch(() => setLimits(null));
   }, []);
 
-  // Gate the withdrawal form on KYC status. Resume is authoritative — the
-  // backend refreshes from Carret on every call, so a driver who KYC-d in
-  // another surface (mobile app, dashboard) sees the form unlock as soon as
-  // Carret marks them verified. Null while loading, then verified/pending/
-  // rejected/re_kyc/manual_review.
   const [resume, setResume] = useState<CarretResumeResponse | null | 'loading'>('loading');
   useEffect(() => {
     resumeCarretKyc().then((r) => setResume(r)).catch(() => setResume(null));
@@ -86,9 +80,6 @@ export default function OffRampPage() {
   const kycVerified = resume && resume !== 'loading' && resume.kycStatus === 'verified';
   const kycLoading  = resume === 'loading';
 
-  // Registered banks — the driver's own IFSC + a/c that INR settles to.
-  // Fetched only once KYC is verified; a driver without a verified KYC
-  // isn't allowed to add a bank on Carret's side anyway.
   const [banks, setBanks] = useState<CarretBank[] | null>(null);
   const banksLoading = kycVerified && banks === null;
   useEffect(() => {
@@ -127,10 +118,6 @@ export default function OffRampPage() {
     load();
   }, [load]);
 
-  // Fire the "credited within 30 min" modal exactly once per completion. Uses
-  // a ref to remember the previous status so we don't re-open the modal on
-  // every poll tick, and only triggers on the pending→completed transition —
-  // reopening a historic completed session shouldn't surprise the driver.
   useEffect(() => {
     if (!selected) { previousStatusRef.current = null; return; }
     const prev = previousStatusRef.current;
@@ -140,7 +127,6 @@ export default function OffRampPage() {
     previousStatusRef.current = selected.status;
   }, [selected]);
 
-  // Poll the selected session while it's in flight (status advances anchor-side).
   useEffect(() => {
     if (!selected || selected.status === 'completed' || selected.status === 'error') return;
     const t = setInterval(async () => {
@@ -148,9 +134,7 @@ export default function OffRampPage() {
         const s = await getOffRampSession(selected.id);
         setSelected(s);
         setSessions((prev) => prev.map((x) => (x.id === s.id ? s : x)));
-      } catch {
-        /* ignore transient */
-      }
+      } catch {}
     }, 4000);
     return () => clearInterval(t);
   }, [selected]);
@@ -235,10 +219,7 @@ export default function OffRampPage() {
 
   return (
     <div className="space-y-6">
-      {/* KYC gate. Withdrawals are blocked until Carret marks this driver
-          verified. Backend /v1/carret/resume is authoritative — refreshed
-          live on every call — so users who KYC-d in another surface see
-          this unlock immediately. */}
+      {}
       {kycLoading && (
         <div className="rounded-2xl bg-white p-6 text-sm text-black/50">
           Checking your KYC status…
@@ -280,10 +261,7 @@ export default function OffRampPage() {
         </div>
       )}
 
-      {/* Bank gate. Once KYC is verified we still need at least one bank on
-          the account before Carret's /place_order/ will accept the trade.
-          The shared env bank is a sandbox convenience — flip it off in prod
-          and every driver adds their own bank here first. */}
+      {}
       {kycVerified && !banksLoading && !hasAnyBank && (
         <BankRegistrationCard
           onRegistered={(b) => setBanks((cur) => [...(cur ?? []), b])}
@@ -901,14 +879,6 @@ function ReconcilerEvidence({ sessionId }: { sessionId: string }) {
     </div>
   );
 }
-
-// ─── Bank registration card ──────────────────────────────────────────
-//
-// Inline form the driver fills once per Carret sub-account. IFSC is
-// standardised (^[A-Z]{4}0[A-Z0-9]{6}$) so we can validate client-side
-// before the round-trip; account numbers are 9-18 digits per RBI. Name
-// is what appears on the passbook — Carret's penny-drop compares it
-// against the bank-side record.
 
 function BankRegistrationCard({ onRegistered }: { onRegistered: (b: CarretBank) => void }) {
   const [accountNo, setAccountNo] = useState('');

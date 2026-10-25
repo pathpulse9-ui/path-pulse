@@ -1,37 +1,13 @@
-import { env } from '../config/env.js';
+import { env, numEnv } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { carretLive } from '../config/env.js';
 import { carretTimestampMs, listOfframpOrders, mapCarretStatus, type CarretOrder } from './carret.js';
 import { listOrphanCandidates, type OrphanCandidate } from './offRampStore.js';
 import { attachCarretOrder, reconcileSessionStatus } from './offramp.js';
 
-/**
- * Off-ramp reconciler (D4 / T2).
- *
- * Runs every 60s over every off-ramp session that is still non-terminal and
- * older than the stale window, and converges it against Carret's own order
- * list. Two failure modes are recovered:
- *
- *   1. **Missed callback** — the session holds a Carret order id but the
- *      webhook never arrived (dropped delivery, backend restart mid-flight).
- *      The order is re-read and its status applied.
- *   2. **Interrupted session** — `POST /offramp/place_order/` timed out, so we
- *      never learned the order id. Carret's order list is matched on
- *      (asked_quantity, created_at ±5min) and the order is bound to the
- *      session before its status is applied.
- *
- * Every transition it makes is written to `off_ramp_status_events` with
- * `source = 'reconciler'`, so a recovered session is distinguishable from one
- * that completed normally, and the settlement batch link is preserved
- * throughout — recovery never detaches a session from its batch.
- *
- * Kicks off automatically on server boot via `startOrphanReconciler()`.
- * `CARRET_RECONCILER_INTERVAL_MS` overrides the 60s cadence,
- * `CARRET_RECONCILER_STALE_SECONDS` the 30s stale window.
- */
 
-const INTERVAL_MS = Number(process.env.CARRET_RECONCILER_INTERVAL_MS ?? 60_000);
-const STALE_SECONDS = Number(process.env.CARRET_RECONCILER_STALE_SECONDS ?? 30);
+const INTERVAL_MS = numEnv('CARRET_RECONCILER_INTERVAL_MS', 60_000, 1);
+const STALE_SECONDS = numEnv('CARRET_RECONCILER_STALE_SECONDS', 30);
 const MATCH_WINDOW_MS = 5 * 60 * 1000;
 
 let timer: NodeJS.Timeout | null = null;
@@ -85,11 +61,6 @@ export function stopOrphanReconciler(): void {
   }
 }
 
-/**
- * One reconciliation pass. Exposed so tests, the ops endpoint and cron
- * entrypoints can trigger a single sweep instead of waiting for the interval.
- * `deps` is injectable so the recovery path is testable without Carret.
- */
 export async function reconcileOnce(deps: ReconcileDeps = liveDeps): Promise<ReconcileReport> {
   const candidates = await listOrphanCandidates(STALE_SECONDS).catch((e) => {
     logger.debug({ err: e }, 'reconcile query skipped');
@@ -186,12 +157,6 @@ export async function reconcileOnce(deps: ReconcileDeps = liveDeps): Promise<Rec
   return report;
 }
 
-/**
- * An interrupted `place_order` leaves no order id, so the only handle we have
- * is the amount and roughly when it was placed. Requiring both, and refusing
- * an order another session already owns, keeps one Carret order from being
- * credited to two withdrawals.
- */
 function matchByAmountAndTime(
   orders: CarretOrder[],
   candidate: OrphanCandidate,

@@ -8,7 +8,7 @@ export function PartnerSignOut() {
 
   useEffect(() => {
     getSessionUser()
-      .then(({ user }) => setAuthed(user?.method === 'partner'))
+      .then(({ user }) => setAuthed(user?.role === 'partner'))
       .catch(() => setAuthed(false));
   }, []);
 

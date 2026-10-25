@@ -4,30 +4,6 @@ import { env } from '../config/env.js';
 import { getLatestScore, type ScoreInput } from './scoreStore.js';
 import { pathpulseInternalScoreProvider } from './pathpulseInternalScore.js';
 
-/**
- * PulseGen score feed (D6).
- *
- * PulseGen is PathPulse.ai's own contributor-validation engine and an external
- * dependency of this system — it decides whether a contributor's submissions
- * are trustworthy, and the SCOUT multiplier turns that judgement into money.
- * This module is the contract it satisfies, so the settlement engine never
- * learns which feed produced a score.
- *
- * Three sources, tried in order, each stamping its own `source` so a score can
- * always be traced to where it came from:
- *
- *   1. `pulsegen` live  — REST call, active once PULSEGEN_BASE_URL + API key are set.
- *   2. `pulsegen` batch — a score delivered by PathPulse.ai and imported with
- *      provenance (supplier, arrival time, operator, payload hash).
- *   3. `derived`        — interim fallback, used only when neither of the above
- *      can answer. Deterministic from the driver id, so a tier stays stable and
- *      cannot be selected by an operator.
- *
- * No path accepts a caller-supplied score. That is the point: a tier is worth
- * 1.0x, 1.2x or 1.5x of a contributor's pay, so an operator must not be able
- * to choose one.
- */
-
 export interface ScoreProvider {
   readonly name: ScoreSource;
   readonly live: boolean;
@@ -36,12 +12,6 @@ export interface ScoreProvider {
 
 export type FeedMode = 'pulsegen-live' | 'pulsegen-batch' | 'pathpulse-internal' | 'derived';
 
-/**
- * A score plus where it actually came from. `importId` is set only when the
- * score was read from a delivered batch — a live-feed score belongs to no
- * batch, and attributing one to the most recent import would be a false
- * provenance claim.
- */
 export interface ResolvedScore extends ValidationScore {
   via: FeedMode;
   importId: string | null;
@@ -52,14 +22,6 @@ function clamp(score: number): number {
   return Math.min(1, Math.max(0, score));
 }
 
-/**
- * Deterministic 0..1 from the driver id — first 4 bytes of SHA-256. Stable
- * across processes and restarts, so an assigned tier is reproducible by anyone
- * holding the driver id and cannot be selected by an operator.
- *
- * An interim only: it derives a value rather than measuring one, so
- * `config/env.ts` refuses to boot on mainnet unless a live feed is configured.
- */
 export function derivedScoreFor(driverId: string): number {
   const digest = createHash('sha256').update(driverId).digest();
   return digest.readUInt32BE(0) / 0xffffffff;
@@ -79,12 +41,6 @@ export const derivedScoreProvider: ScoreProvider = {
   },
 };
 
-/**
- * Live PulseGen feed. Shape per the score-feed contract
- * (`docs/SCORE_FEED_CONTRACT.md`): bearer-authenticated
- * `GET {base}/v1/drivers/{driverId}/validation-score` → `{ score, scored_at }`.
- * Inert until both env vars are set.
- */
 export const pulseGenScoreProvider: ScoreProvider = {
   name: 'pulsegen',
   live: true,
@@ -109,15 +65,10 @@ export const pulseGenScoreProvider: ScoreProvider = {
   },
 };
 
-/**
- * Read at call time, not at import: the endpoint can be pointed at a local
- * stub during integration testing without reloading the module.
- */
 export function pulseGenLive(): boolean {
   return !!env.pulseGen?.baseUrl && !!env.pulseGen?.apiKey;
 }
 
-/** Host the live feed is configured against, for the ops feed panel. */
 export function pulseGenEndpointHost(): string | null {
   if (!pulseGenLive()) return null;
   try {
@@ -127,42 +78,25 @@ export function pulseGenEndpointHost(): string | null {
   }
 }
 
-/** Internal PathPulse-native scorer enabled via PATHPULSE_INTERNAL_SCORER=true. */
 export function pathpulseInternalLive(): boolean {
   return !!env.pulseGen?.internal;
 }
 
-/**
- * Resolve a driver's score from the best available source.
- *
- * Preference order:
- *   1. Live PulseGen feed (if PULSEGEN_BASE_URL + API_KEY set)
- *   2. PathPulse internal scorer (if PATHPULSE_INTERNAL_SCORER=true) — reads
- *      from our own tables, defensible for a v1 pilot without a 3rd-party feed
- *   3. Imported batch (CSV / JSON upload)
- *   4. Derived (deterministic hash fallback)
- *
- * A failure in a higher-priority source falls through so one outage doesn't
- * strand a settlement. The returned score always carries which source
- * actually answered.
- */
+const SCORED_AT_SKEW_MS = 30 * 1000;
+
 export async function resolveScore(driverId: string): Promise<ResolvedScore> {
   if (pulseGenLive()) {
     try {
       const live = await pulseGenScoreProvider.getScore(driverId);
       return { ...live, via: 'pulsegen-live', importId: null };
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
 
   if (pathpulseInternalLive()) {
     try {
       const internal = await pathpulseInternalScoreProvider.getScore(driverId);
       return { ...internal, via: 'pathpulse-internal', importId: null };
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
 
   const imported = await getLatestScore(driverId);
@@ -177,10 +111,17 @@ export async function resolveScore(driverId: string): Promise<ResolvedScore> {
     };
   }
 
+  if (env.network === 'mainnet') {
+    const e = new Error(
+      `No PulseGen score for driver ${driverId} — import it with POST /v1/ops/scores/import before using it on mainnet`,
+    ) as Error & { status: number };
+    e.name = 'NoValidationScore';
+    e.status = 422;
+    throw e;
+  }
   return { ...(await derivedScoreProvider.getScore(driverId)), via: 'derived', importId: null };
 }
 
-/** Which source would answer right now, for the ops feed panel. */
 export async function feedMode(driverId?: string): Promise<FeedMode> {
   if (pulseGenLive()) return 'pulsegen-live';
   if (pathpulseInternalLive()) return 'pathpulse-internal';
@@ -200,11 +141,6 @@ export interface ParsedBatch {
   scores: ScoreInput[];
 }
 
-/**
- * Validate a delivered batch. Rejects the whole batch on any bad row: a
- * partially-applied import would leave some drivers scored and others silently
- * not, and the provenance record would overstate what landed.
- */
 export function validateScoreBatch(rows: unknown): ParsedBatch {
   if (!Array.isArray(rows)) throw batchError('scores must be an array');
   if (rows.length === 0) throw batchError('scores must not be empty');
@@ -230,7 +166,7 @@ export function validateScoreBatch(rows: unknown): ParsedBatch {
     const scoredAtRaw = typeof row.scoredAt === 'string' ? row.scoredAt : '';
     const scoredAt = Date.parse(scoredAtRaw);
     if (Number.isNaN(scoredAt)) throw batchError(`${at}.scoredAt must be an ISO-8601 timestamp`);
-    if (scoredAt > now + 5 * 60 * 1000) throw batchError(`${at}.scoredAt is in the future`);
+    if (scoredAt > now + SCORED_AT_SKEW_MS) throw batchError(`${at}.scoredAt is in the future`);
 
     scores.push({ driverId, score, scoredAt: new Date(scoredAt).toISOString() });
   });
@@ -238,11 +174,6 @@ export function validateScoreBatch(rows: unknown): ParsedBatch {
   return { scores };
 }
 
-/**
- * CSV delivery — `driver_id,score,scored_at` with a header row. PathPulse.ai's
- * scoring is not yet an API, so a spreadsheet export is a realistic delivery
- * format and is still a real validation result.
- */
 export function parseScoreCsv(csv: string): unknown[] {
   const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) throw batchError('csv needs a header row and at least one score');

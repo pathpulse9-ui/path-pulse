@@ -1,8 +1,9 @@
-import { rpc, Transaction } from '@stellar/stellar-sdk';
+import { rpc, scValToNative, Transaction, type xdr } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 import { horizon } from './network.js';
 import { assertMainnetAllowed } from './networkGuard.js';
 import type { Signer } from './signing.js';
+import { logUpstream } from '../util/upstreamLog.js';
 
 let server: rpc.Server | null = null;
 
@@ -26,10 +27,26 @@ function httpError(message: string, status: number, name: string): Error {
 export interface SorobanResult {
   hash: string;
   ledger?: number;
+  returnStroops?: bigint;
 }
 
 const POLL_INTERVAL_MS = 1000;
 const POLL_ATTEMPTS = 30;
+
+export function stroopsFromScVal(value: xdr.ScVal): bigint | undefined {
+  const native = scValToNative(value);
+  return typeof native === 'bigint' && native >= 0n ? native : undefined;
+}
+
+async function returnedAmount(hash: string): Promise<bigint | undefined> {
+  try {
+    const tx = await sorobanServer().getTransaction(hash);
+    if (tx.status !== rpc.Api.GetTransactionStatus.SUCCESS || !tx.returnValue) return undefined;
+    return stroopsFromScVal(tx.returnValue);
+  } catch {
+    return undefined;
+  }
+}
 
 export async function simulateAndSubmit(tx: Transaction, signer: Signer): Promise<SorobanResult> {
   assertMainnetAllowed('soroban submit');
@@ -37,7 +54,8 @@ export async function simulateAndSubmit(tx: Transaction, signer: Signer): Promis
   try {
     prepared = (await sorobanServer().prepareTransaction(tx)) as Transaction;
   } catch (e) {
-    throw httpError(`Soroban simulation failed: ${String(e)}`, 422, 'SorobanSimulationFailed');
+    logUpstream('soroban simulation failed', e);
+    throw httpError('Soroban simulation failed', 422, 'SorobanSimulationFailed');
   }
 
   const signed = await signer.sign(prepared);
@@ -59,7 +77,9 @@ export async function simulateAndSubmit(tx: Transaction, signer: Signer): Promis
       if ((e as { response?: { status?: number } })?.response?.status === 404) continue;
       throw e;
     }
-    if (record.successful) return { hash: sent.hash, ledger: record.ledger_attr };
+    if (record.successful) {
+      return { hash: sent.hash, ledger: record.ledger_attr, returnStroops: await returnedAmount(sent.hash) };
+    }
     throw httpError(`Swap transaction failed on-chain (${sent.hash})`, 422, 'SorobanFailed');
   }
   throw httpError(

@@ -1,30 +1,3 @@
-/**
- * D4 evidence: a dropped Carret webhook is recovered by the reconciler, and the
- * recovered session stays linked to the settlement batch it draws from.
- *
- * Prints the reviewer-facing transcript: the persisted session, its full status
- * event timeline (`create` → `reconciler`), and a redacted Carret order record
- * carrying amount, final status, timestamps, the PathPulse session and the
- * settlement batch id.
- *
- * The session is seeded directly rather than through `createWithdrawal`, so no
- * Carret order is placed by running this. The `create` event it records is the
- * same one the live path writes, so the timeline matches what a real withdrawal
- * produces.
- *
- * Two modes:
- *
- *   --order <id>   Live. Reads the real Carret order from `GET /offramp/orders/`
- *                  via the whitelisted egress proxy, binds it to a session that
- *                  never received its webhook, and reconciles against it.
- *
- *   (default)      Offline. Same code path, same tables, same event rows, with
- *                  the Carret order list supplied as a fixture. Nothing is
- *                  placed on Carret and no funds move.
- *
- *   pnpm --filter @pathpulse/backend exec tsx scripts/demo-offramp-recovery.ts \
- *     --batch <settlement-batch-id> [--order <carret-order-id>] [--keep]
- */
 import { randomBytes } from 'node:crypto';
 import { env } from '../src/config/env.js';
 import { migrate, db, closeDb } from '../src/db/client.js';

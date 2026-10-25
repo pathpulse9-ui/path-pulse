@@ -2,6 +2,15 @@ import type { ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
 import type { ApiError } from '@pathpulse/contract';
 import { logger } from '../config/logger.js';
+import { sendAlertInBackground } from '../services/alerts.js';
+import { captureException } from '../observability/sentry.js';
+
+const ALERTING_ERRORS = new Set([
+  'MainnetGateClosed',
+  'PayoutProviderUnavailable',
+  'HorizonRejected',
+  'IdempotencyUnavailable',
+]);
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const requestId = (req as any).id;
@@ -17,10 +26,23 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return;
   }
 
+  const status = err?.status ?? 500;
+  if (err?.keepIdempotencyKey) res.locals.keepIdempotencyKey = true;
+  if (ALERTING_ERRORS.has(err?.name) || status >= 500) {
+    captureException(err, { requestId, path: req.path });
+    sendAlertInBackground({
+      key: `error:${err?.name ?? 'InternalError'}:${req.method}:${(req.route?.path as string | undefined) ?? 'unmatched'}`,
+      severity: 'critical',
+      title: `${err?.name ?? 'InternalError'} on ${req.method} ${req.path}`,
+      detail: err?.message,
+    });
+  }
+
+  const exposed = status < 500;
   const body: ApiError = {
-    error: err?.name ?? 'InternalError',
-    message: err?.message ?? 'Unexpected error',
+    error: exposed ? (err?.name ?? 'Error') : 'InternalError',
+    message: exposed ? (err?.message ?? 'Request failed') : 'Something went wrong on our side. Quote the request id if you contact support.',
     requestId,
   };
-  res.status(err?.status ?? 500).json(body);
+  res.status(status).json(body);
 };

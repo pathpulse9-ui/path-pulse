@@ -2,24 +2,8 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { ScoreSource, ValidationScore } from '@pathpulse/contract';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
-
-/**
- * Score-feed store (D6) — dual-mode, mirroring `settlementStore`.
- *
- * PulseGen is PathPulse.ai's own validation engine and an external dependency
- * of this system. Until a live endpoint exists, its results arrive as batches.
- * A delivered score is only defensible if you can say where it came from, so
- * every batch records its supplier, arrival time, the operator who imported it
- * and a SHA-256 of the exact payload — and every score points at its batch.
- *
- * What that provenance attests to is **receipt, not correctness**: it proves a
- * number was supplied by a named party at a known time, not that the number is
- * right. That distinction is deliberate and must survive into anything built
- * on top of it.
- *
- * Scores are append-only. The newest row for a driver is their current score;
- * history is retained so a past tier assignment stays explainable.
- */
+import { trimHead, trimTail } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface ScoreImportMeta {
   supplier: string;
@@ -50,7 +34,7 @@ const memImports: ScoreImport[] = [];
 const memScores: (StoredScore & { importId: string | null })[] = [];
 
 function hasDb(): boolean {
-  return Boolean(env.databaseUrl);
+  return databaseOrMemory('score store');
 }
 
 export function hashPayload(raw: string): string {
@@ -61,10 +45,6 @@ export function newImportId(): string {
   return `imp_${Date.now()}_${randomBytes(4).toString('hex')}`;
 }
 
-/**
- * Persist a batch and its scores atomically. A partial import would leave the
- * feed claiming provenance it cannot honour, so on any failure nothing lands.
- */
 export async function saveImport(
   meta: ScoreImportMeta,
   scores: ScoreInput[],
@@ -78,9 +58,11 @@ export async function saveImport(
 
   if (!hasDb()) {
     memImports.unshift(record);
+    trimTail(memImports, 200);
     for (const s of scores) {
       memScores.push({ ...s, source: 'pulsegen', importId: record.id });
     }
+    trimHead(memScores, 20_000);
     return record;
   }
 
@@ -165,7 +147,6 @@ export async function listScores(importId: string): Promise<StoredScore[]> {
   return res.rows.map(rowToScore);
 }
 
-/** Newest score per driver, for the feed panel. */
 export async function listLatestScores(limit = 100): Promise<StoredScore[]> {
   if (!hasDb()) {
     const byDriver = new Map<string, StoredScore>();
@@ -210,6 +191,7 @@ const memAssignments: AssignmentRecord[] = [];
 export async function recordAssignment(a: AssignmentRecord): Promise<void> {
   if (!hasDb()) {
     memAssignments.unshift(a);
+    trimTail(memAssignments, 5_000);
     return;
   }
   await db().query(
@@ -222,7 +204,6 @@ export async function recordAssignment(a: AssignmentRecord): Promise<void> {
   );
 }
 
-/** Newest assignment per driver — the current badge and the tx that issued it. */
 export async function latestAssignments(limit = 100): Promise<AssignmentRecord[]> {
   if (!hasDb()) {
     const seen = new Set<string>();
@@ -249,7 +230,6 @@ export async function latestAssignments(limit = 100): Promise<AssignmentRecord[]
   }));
 }
 
-/** Only called by test fixtures — never in prod. */
 export function _resetInMemoryForTests(): void {
   memImports.length = 0;
   memScores.length = 0;

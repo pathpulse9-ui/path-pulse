@@ -10,6 +10,7 @@ import { buildChallenge, verifyChallenge } from '../services/walletAuth.js';
 import { verifyRampWebhook } from '../services/ramp.js';
 import { verifyCarretWebhook } from '../services/carret.js';
 import { startTestApi, stopTestApi } from './testSupport.js';
+import { SPONSORED_TX_LIMIT_PER_HOUR } from '../middleware/rateLimit.js';
 
 let server: Server | undefined;
 let base = '';
@@ -94,6 +95,16 @@ test('SEP-10: a challenge signed by the account verifies and yields a wallet use
   assert.ok(user.userId);
 });
 
+test('SEP-10: a signed challenge cannot be replayed', async () => {
+  const kp = Keypair.random();
+  walletAddresses.push(kp.publicKey());
+  const { transaction, networkPassphrase } = buildChallenge(kp.publicKey());
+  const tx = TransactionBuilder.fromXDR(transaction, networkPassphrase);
+  tx.sign(kp);
+  await verifyChallenge(tx.toXDR());
+  await assert.rejects(verifyChallenge(tx.toXDR()), /already been used/);
+});
+
 test('SEP-10: a challenge signed by the wrong key is rejected', async () => {
   const kp = Keypair.random();
   const attacker = Keypair.random();
@@ -118,4 +129,21 @@ test('CORS only reflects the configured web origin', async () => {
 test('the SEP-10 toml endpoint is the only route with a wildcard CORS header', async () => {
   const toml = await fetch(base + '/.well-known/stellar.toml');
   assert.equal(toml.headers.get('access-control-allow-origin'), '*');
+});
+
+test('sponsor-paid transaction builds are capped per driver, not shared across drivers', async () => {
+  const build = (userId: string) =>
+    fetch(base + '/v1/tx/build', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: `pathpulse_session=${createSessionToken({ userId, method: 'guest' })}`,
+      },
+      body: JSON.stringify({ operations: [{ type: 'changeTrust', asset: { code: 'USDC' } }] }),
+    });
+  for (let i = 0; i < SPONSORED_TX_LIMIT_PER_HOUR; i++) {
+    assert.notEqual((await build('rl_driver_a')).status, 429);
+  }
+  assert.equal((await build('rl_driver_a')).status, 429);
+  assert.notEqual((await build('rl_driver_b')).status, 429);
 });

@@ -1,15 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getSessionUser, partnerLogin } from '../lib/api';
+import { ApiError, getSessionUser, partnerLogin } from '../lib/api';
 
-/**
- * Partner access gate for the Government Settlement Gateway (D8).
- *
- * Session is server-verified via the httpOnly `pathpulse_session` cookie
- * (`/v1/auth/partner/login` sets it, `/v1/auth/me` reads it) — the passcode
- * itself is never persisted client-side.
- */
 export function PartnerGate({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'authed' | 'locked'>('checking');
   const [passcode, setPasscode] = useState('');
@@ -20,7 +13,7 @@ export function PartnerGate({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const { user } = await getSessionUser();
-        setStatus(user?.method === 'partner' ? 'authed' : 'locked');
+        setStatus(user?.role === 'partner' ? 'authed' : 'locked');
       } catch {
         setStatus('locked');
       }
@@ -34,8 +27,12 @@ export function PartnerGate({ children }: { children: React.ReactNode }) {
     try {
       await partnerLogin(passcode);
       setStatus('authed');
-    } catch {
-      setError('Incorrect passcode.');
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? 'Sign in with the Google account or wallet registered for your organisation first.'
+          : 'Incorrect passcode.',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -51,8 +48,8 @@ export function PartnerGate({ children }: { children: React.ReactNode }) {
         <div className="rounded-3xl bg-white p-8">
           <div className="text-lg font-semibold">Partner sign-in</div>
           <p className="mt-2 text-sm text-black/60">
-            This dashboard is restricted to government and ecosystem partners. Enter the
-            passcode issued to you.
+            This dashboard is restricted to government and ecosystem partners. Sign in with the Google
+            account or wallet registered for you, then enter the passcode issued to you.
           </p>
           <form onSubmit={submit} className="mt-6 space-y-3">
             <input

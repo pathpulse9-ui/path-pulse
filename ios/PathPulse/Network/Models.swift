@@ -104,6 +104,13 @@ struct OffRampSession: Codable, Equatable, Hashable, Identifiable {
     let asset: AssetRef
     let fiatCurrency: String
     let createdAt: String
+    var updatedAt: String? = nil
+    var sandbox: Bool? = nil
+    var fiatAmountEstimate: String? = nil
+    var merchantTransactionId: String? = nil
+    var settlementBatchId: String? = nil
+    var stellarTxHash: String? = nil
+    var stellarTxUrl: String? = nil
 }
 
 struct OffRampSessionPage: Codable {
@@ -323,6 +330,9 @@ struct CarretBank: Codable, Equatable, Hashable, Identifiable {
         let d = bank_account_no.filter { $0.isNumber }
         return String(d.suffix(4))
     }
+
+    var isVerified: Bool { status == "verified" }
+    var maskedAccount: String { "••" + String(bank_account_no.suffix(4)) }
 }
 
 struct CarretBanksResponse: Codable {
@@ -423,18 +433,6 @@ struct DistributionAccount: Codable, Equatable, Hashable, Identifiable {
 }
 
 // MARK: - Carret banks
-
-struct CarretBank: Codable, Equatable, Hashable, Identifiable {
-    let id: Int
-    let status: String
-    let bank_account_no: String
-    let bank_ifsc: String
-    let bank_account_name: String
-    let bank_name: String
-
-    var isVerified: Bool { status == "verified" }
-    var maskedAccount: String { "••" + String(bank_account_no.suffix(4)) }
-}
 
 struct CarretBankList: Codable {
     var items: [CarretBank] = []

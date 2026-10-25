@@ -12,8 +12,7 @@ async function main() {
   const wallet = await provisionManagedWallet(userId);
   console.log('Provisioned managed wallet:', wallet.address);
 
-  const built = await buildTransaction({
-    userId,
+  const built = await buildTransaction(userId, {
     operations: [
       {
         type: 'payment',

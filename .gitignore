@@ -37,7 +37,8 @@ docs/CARDANO_MIGRATION_RESEARCH.md
 backend/scripts/pulsegen-stub.ts
 backend/scripts/seed-score-feed.ts
 backend/scripts/fixtures/
-/scripts/
+/scripts/*
+!/scripts/apprunner-update.py
 
 # scratch scripts at the backend root; keepers live in backend/scripts/
 /backend/*.ts
@@ -71,8 +72,12 @@ ios/DerivedData/
 # one-shot evidence scripts — run locally, not part of the product
 backend/scripts/demo-scout-revocation.ts
 backend/scripts/route-converted-to-settlement.ts
+backend/scripts/d8-evidence.ts
 
 # internal operational docs — not part of the reviewer deliverable
 docs/RUNBOOK.md
 docs/MAINNET_CUTOVER.md
 docs/AWS_COST_AND_KEY_STORAGE.md
+docs/SECURITY_REMEDIATION.md
+docs/*
+

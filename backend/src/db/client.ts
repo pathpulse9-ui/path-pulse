@@ -9,7 +9,7 @@ export function db(): pg.Pool {
     throw new Error('DATABASE_URL is not configured — managed wallets require a database');
   }
   if (!pool) {
-    pool = new pg.Pool({ connectionString: env.databaseUrl });
+    pool = new pg.Pool({ connectionString: env.databaseUrl, statement_timeout: 20_000 });
     pool.on('error', (e) => logger.error({ err: e }, 'postgres pool error'));
   }
   return pool;
@@ -111,6 +111,7 @@ alter table settlement_batches add column if not exists deposit_tx_hash text;
 alter table settlement_batches add column if not exists deposit_from text;
 alter table settlement_batches add column if not exists deposit_amount text;
 alter table settlement_batches add column if not exists deposit_at timestamptz;
+alter table settlement_batches add column if not exists conversion jsonb;
 create index if not exists settlement_batches_deposit_idx on settlement_batches (deposit_tx_hash);
 alter table group_payout_batches add column if not exists created_by text;
 
@@ -288,10 +289,122 @@ create table if not exists scout_assignments (
 
 create index if not exists scout_assignments_driver_idx on scout_assignments (driver_id, created_at desc);
 create index if not exists scout_assignments_created_idx on scout_assignments (created_at desc);
+
+alter table users add column if not exists google_sub text;
+
+create table if not exists chain_cursors (
+  account text primary key,
+  cursor text not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists chain_payments (
+  id text not null,
+  account text not null,
+  role text not null,
+  tx_hash text not null,
+  type text not null,
+  from_address text not null,
+  to_address text not null,
+  asset_code text not null,
+  asset_issuer text,
+  amount text not null,
+  created_at timestamptz not null,
+  primary key (id, account)
+);
+
+create index if not exists chain_payments_tx_idx on chain_payments (tx_hash);
+create index if not exists chain_payments_account_idx on chain_payments (account, created_at desc);
+
+create table if not exists partner_api_keys (
+  id text primary key,
+  name text not null,
+  key_hash text not null unique,
+  created_by text,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  last_used_at timestamptz
+);
+
+create table if not exists webhook_receipts (
+  hash text primary key,
+  received_at timestamptz not null default now()
+);
+
+create table if not exists sep10_used_challenges (
+  hash text primary key,
+  expires_at timestamptz not null
+);
+
+create table if not exists revoked_sessions (
+  jti text primary key,
+  expires_at timestamptz not null
+);
+
+alter table settlement_batches add column if not exists status text not null default 'confirmed';
+alter table settlement_batches add column if not exists approved_by text;
+create index if not exists settlement_batches_status_idx on settlement_batches (status) where status <> 'confirmed';
+
+create table if not exists settlement_deposit_claims (
+  deposit_tx_hash text primary key,
+  batch_id text not null,
+  claimed_at timestamptz not null default now()
+);
+insert into settlement_deposit_claims (deposit_tx_hash, batch_id)
+  select distinct on (deposit_tx_hash) deposit_tx_hash, id
+    from settlement_batches
+   where deposit_tx_hash is not null and status <> 'failed'
+   order by deposit_tx_hash, created_at
+  on conflict (deposit_tx_hash) do nothing;
+
+create table if not exists ops_approvals (
+  id text primary key,
+  action text not null,
+  request_body jsonb not null,
+  request_hash text not null,
+  amount text not null,
+  requested_by text not null,
+  approved_by text,
+  status text not null default 'pending',
+  result jsonb,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+create table if not exists ops_totp_steps (
+  identity text primary key,
+  last_step bigint not null
+);
+
+create table if not exists rate_limit_hits (
+  key text primary key,
+  hits int not null,
+  reset_at timestamptz not null
+);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'managed_wallets_reserved_ids') then
+    alter table managed_wallets add constraint managed_wallets_reserved_ids
+      check (user_id !~ '^__.*__$' or user_id in (
+        '__reserve_sponsor__', '__settlement_source__', '__group_payout_source__',
+        '__scout_issuer__', '__routing_swap_source__'
+      )) not valid;
+  end if;
+end $$;
 `;
 
+const MIGRATION_LOCK = 7_420_011;
+
 export async function migrate(): Promise<void> {
-  await db().query(SCHEMA);
+  const client = await db().connect();
+  try {
+    await client.query('select pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    await client.query(SCHEMA);
+  } finally {
+    await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => {});
+    client.release();
+  }
   logger.info('database schema ready');
 }
 

@@ -42,7 +42,7 @@ test('tampered auth tag is rejected', () => {
 
 test('unsupported version is rejected', () => {
   const sealed = seal(Keypair.random().secret(), key);
-  assert.throws(() => unseal(sealed.replace('v1.', 'v2.'), key), /unsupported version/);
+  assert.throws(() => unseal(sealed.replace('v1.', 'v9.'), key), /unsupported version/);
 });
 
 test('truncated payload is rejected', () => {
@@ -51,4 +51,19 @@ test('truncated payload is rejected', () => {
 
 test('rejects a key that is not 32 bytes', () => {
   assert.throws(() => keyFromEnv(randomBytes(16).toString('base64')), /must be 32 bytes/);
+});
+
+test('a seed sealed for one row cannot be opened as another row', () => {
+  const seed = Keypair.random().secret();
+  const sealed = seal(seed, key, 'pathpulse-seed|mainnet|__reserve_sponsor__|GRESERVE');
+  assert.ok(sealed.startsWith('v2.'));
+  assert.equal(unseal(sealed, key, 'pathpulse-seed|mainnet|__reserve_sponsor__|GRESERVE'), seed);
+  assert.throws(() => unseal(sealed, key, 'pathpulse-seed|mainnet|attacker|GATTACKER'));
+  assert.throws(() => unseal(sealed, key), /v2 but v1 was required/);
+});
+
+test('a legacy unbound seal is refused wherever a binding is required', () => {
+  const legacy = seal(Keypair.random().secret(), key);
+  assert.ok(legacy.startsWith('v1.'));
+  assert.throws(() => unseal(legacy, key, 'pathpulse-seed|mainnet|u|G'), /v1 but v2 was required/);
 });

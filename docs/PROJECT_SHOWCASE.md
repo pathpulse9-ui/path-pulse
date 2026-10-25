@@ -44,10 +44,13 @@ The system spans four delivery surfaces — a shared backend service, a web plat
 - **Treasury routing plan** — live balances, per-asset quotes into USDC, and a projected post-conversion settlement total. Execution is human-gated.
 
 ### Custody & key management
-- **AWS KMS as root of trust** — protocol accounts sign with an Ed25519 key (`ECC_NIST_EDWARDS25519`, `ED25519_SHA_512` over `MessageType: RAW`) generated in and never leaving AWS-managed HSM hardware.
+
+> **Mainnet status, 2026-10-19.** On mainnet, protocol accounts do **not** yet sign through KMS: the deployed build signs every service account with a seed unsealed in the API process, and the mainnet treasury is a **single key** with thresholds 0/0/0. The bullets below describe testnet, where both controls are live. The README section *Mainnet custody status* lists the steps that close the gap.
+
+- **AWS KMS as root of trust (testnet)** — protocol accounts sign with an Ed25519 key (`ECC_NIST_EDWARDS25519`, `ED25519_SHA_512` over `MessageType: RAW`) generated in and never leaving AWS-managed HSM hardware.
 - **Additive signer model** — the KMS-derived address is added *alongside* each account's existing signer, never as the sole one, so losing the KMS key degrades signing rather than stranding an account.
 - **Driver seeds sealed at rest** — AES-256-GCM with a fresh IV per seal, under a key-encryption key that is itself wrapped by KMS and unwrapped at startup. Plaintext exists only inside the signing module, only long enough to build a keypair.
-- **Human-gated treasury** — a 2-of-3 multisig with the master key weight explicitly set to 0. The backend never signs a treasury reconfiguration; it returns unsigned XDR for a quorum to sign out of band.
+- **Human-gated treasury (testnet)** — a 2-of-3 multisig with the master key weight explicitly set to 0. The backend never signs a treasury reconfiguration; it returns unsigned XDR for a quorum to sign out of band.
 
 ### Governance & audit
 - **Government Settlement Gateway** — end-to-end traceability from treasury deposit → settlement split → SDP → individual driver payout, behind a partner passcode gate.
@@ -160,7 +163,7 @@ What makes the settlement auditable rather than merely reported:
 - **Independent verifiability** — every settlement is a public Horizon record. A reviewer inspects the three payment operations directly and confirms destinations and amounts without PathPulse involvement.
 - **Provenance without laundering** — imported scores record supplier, arrival time, importing operator and a SHA-256 of the exact payload. The provenance attests to *receipt, not correctness*; nothing in the import path makes a number authoritative.
 - **No operator-chosen tiers** — the assignment API takes a driver id and reads the score from the feed. Even the interim synthetic feed is deterministic per driver id (SHA-256 derived), so a tier is reproducible by anyone holding the id and cannot be hand-picked.
-- **Signature isolation** — protocol signatures are produced inside KMS hardware; no private key material exists in the application process.
+- **Signature isolation (testnet only)** — testnet protocol signatures are produced inside KMS hardware. On mainnet, service-account seeds are still unsealed in the application process until the KMS ceremony runs.
 
 ---
 
@@ -170,7 +173,7 @@ What makes the settlement auditable rather than merely reported:
 | --- | --- | --- |
 | Stellar Horizon (testnet) | Transaction submission, account and ledger reads | Live |
 | Stellar Disbursement Platform | Per-driver payout fan-out, tenant `bluecorp` | Live, self-hosted |
-| AWS KMS | Protocol signing + key-encryption-key wrapping | Live |
+| AWS KMS | Protocol signing + key-encryption-key wrapping | Signing live on testnet only; on mainnet KMS wraps the KEK but does not sign yet |
 | Aquarius AMM (Soroban) | Cross-asset conversion — the execution venue | Live |
 | Stellar Broker | Parallel price quoting | Quote-only — cannot fill on testnet |
 | Carret Infra | USDC on Stellar → INR via `bank_transfer`, KYC/AML | Live in Carret's dev environment |
@@ -206,15 +209,15 @@ Compiled as `docs/TRANCHE2_PROOF_OF_COMPLETION.md` (2026-09-16), reviewed, and a
 
 
 - **D4.1** — Carret orders 1279 / 1280 / 1281 were funded by a Carret-side dev credit, **not by a Stellar transfer on any network**. No USDC moved and no transfer hash exists. Those orders prove the Carret API path and INR bank settlement, nothing about an on-chain deposit. An on-chain off-ramp deposit linked to a settlement batch is achievable only on mainnet and is carried as a Phase 5 criterion rather than claimed here.
-- **D5** — the phrase "each acting as the other's fallback" was withdrawn. Fallback is one-directional: a failed Broker quote costs a price comparison; a failed Aquarius costs the fill.
+- **D5** — Aquarius and StellarBroker both quote on every request. A failed swap is not retried on the other provider.
 - **D6.3** — the assignment API previously accepted a score and minted a brand-new random driver, meeting neither half of the criterion. It now takes a driver id, reads the score from the feed, and grants the badge to the driver's existing managed wallet. Re-proven end to end on three existing drivers.
 
 ### Tranche 3 — Mainnet & Handover (D7–D8)
 
 | Deliverable | Status |
 | --- | --- |
-| **D7** — Mainnet readiness | **Partially complete.** Security review done and findings fixed; AWS KMS production signing in service; operator role and mainnet preflight guards shipped. **Mainnet cutover itself is not done** — `docs/MAINNET_CUTOVER.md` is an open checklist, and the network gate (`assertMainnetAllowed()`) refuses mainnet operation without a second explicit flag. |
-| **D8** — Government gateway & handover | **Substantially built.** Gov dashboard, settlement drill-down, audit views, partner access control, and CSV/PDF compliance exports are live; E2E and load-test scripts exist. Production handover is outstanding. |
+| **D7** — Mainnet readiness | **Partially complete.** Security review done; its code findings are fixed on `main` but not yet deployed. AWS KMS signing is live on testnet and **not yet on mainnet**; the mainnet treasury is a single key until the multisig ceremony runs. Operator role and mainnet preflight guards shipped. **Mainnet cutover itself is not done** — `docs/MAINNET_CUTOVER.md` is an open checklist, and the network gate (`assertMainnetAllowed()`) refuses mainnet operation without a second explicit flag. |
+| **D8** — Government gateway & handover | **Substantially built.** Gov dashboard, settlement drill-down, audit views, partner access control, and CSV/PDF compliance exports are live; per-driver payout transaction hashes are exposed in the batch API and payouts CSV on `main`. End-to-end and load-test scripts are not in the repository and are not claimed here. Production handover is outstanding. |
 
 ### Deviations from the plan as written
 
@@ -271,18 +274,17 @@ Measured from this repository on 2026-09-27 at commit `c8b458d`.
 
 ### Open items, stated plainly
 
-- **Treasury signer distribution is not done.** The on-chain 2-of-3 is real, but all three signer secrets currently sit in one file on one machine (`secrets/treasury-v2.json`, mode 0600, gitignored). Operationally that is a 1-of-1 until distributed to separate signatories. This is a mainnet-cutover prerequisite and is not claimed as complete.
+- **Treasury signer distribution — done on mainnet 2026-10-24.** The mainnet treasury `GCESVOGE…` is a 2-of-3 whose three keys were each created by a different signatory (Naved, Umair, Daiwik) in their own wallet. Signers set in set_options tx `678113af…`; every signer pair has signed a test payment, and a single signature is rejected (`docs/TREASURY_CEREMONY.md`, evidence log).
 - **PulseGen score feed is not connected.** Three sources are implemented — live REST, delivered batch, and a deterministic synthetic interim — but the live feed activates only when `PULSEGEN_BASE_URL` and `PULSEGEN_API_KEY` are supplied. The scores themselves are PathPulse.ai's system and the one input that cannot be supplied from this side.
 - **On-chain off-ramp deposit remains a mainnet criterion.** Carret has no testnet; its dev environment transacts real mainnet USDC while PathPulse runs testnet, and the backend deliberately refuses to place a Carret order on testnet without an explicit override.
 - **Operator actions are not yet attributable to a person.** `POST /v1/auth/ops/login` mints a throwaway `ops_<uuid>` and discards the caller's real identity, so a shared passcode makes two operators indistinguishable in the audit trail. Splitting authentication from authorisation is tracked in `docs/MAINNET_CUTOVER.md`.
 - **Carret KYC ownership binding is open.** Anonymous access is closed, but resolving the account from the caller's own mapping is still outstanding.
 - **Rate-limit counters are in-memory**, so limits are only correct while the service runs a single instance.
-- **Three Tranche 1 accounts are permanently frozen** — seeds unrecoverable, and the old treasury was a 2-of-4 (master counted as a signer) rather than the documented 2-of-3. All three are replaced and the defect cannot be reproduced; `buildTreasuryMultisigTx` now sets `masterWeight: 0`.
 - **`README.md` links `docs/PHASE_PLAN.md`, which does not exist** in the repository — a stale reference worth correcting or creating.
 
 ### Next levers
 
-- **Complete the mainnet cutover** — key ceremony with three separate signatories, Carret and SDP production tenants, monitoring and alerting, then staged low-value pilot payouts behind the existing human gate.
+- **Complete the mainnet cutover** — Carret and SDP production tenants, monitoring and alerting, then staged low-value pilot payouts behind the existing human gate.
 - **Connect the live PulseGen feed** — the contract is written (`docs/SCORE_FEED_CONTRACT.md`) and the client is implemented and tested; it activates on credentials alone.
 - **Enable Broker execution on mainnet**, where its quotes are correctly priced and a partner key can be issued, converting the aggregator from one execution venue to two.
 - **Distribute the KMS treatment to the remaining distribution accounts** — the two are named as next in line.

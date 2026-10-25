@@ -1,20 +1,12 @@
 import { Keypair, type FeeBumpTransaction, type Transaction } from '@stellar/stellar-sdk';
 import { env } from '../config/env.js';
 
-/**
- * Signer abstraction. Two backends: `dev` (in-memory keypair, testnet only) and `aws-kms`
- * (Ed25519 key held in AWS KMS, never in this process). See docs/KMS_VERIFICATION.md.
- *
- * HARD RULE: no signer will produce a mainnet signature without an explicit,
- * human-gated backend. The dev signer refuses mainnet outright.
- */
 export interface Signer {
-  /** Public key this signer can sign for. */
   readonly publicKey: string;
   sign<T extends Transaction | FeeBumpTransaction>(tx: T): Promise<T>;
+  signHash(hash: Buffer): Promise<Buffer>;
 }
 
-/** Dev-tier signer: holds a testnet keypair in memory. NEVER for mainnet. */
 export class DevSigner implements Signer {
   private readonly keypair: Keypair;
   readonly publicKey: string;
@@ -33,6 +25,10 @@ export class DevSigner implements Signer {
     tx.sign(this.keypair);
     return tx;
   }
+
+  async signHash(hash: Buffer): Promise<Buffer> {
+    return this.keypair.sign(hash);
+  }
 }
 
 export class CustodialSigner implements Signer {
@@ -48,9 +44,12 @@ export class CustodialSigner implements Signer {
     tx.sign(this.keypair);
     return tx;
   }
+
+  async signHash(hash: Buffer): Promise<Buffer> {
+    return this.keypair.sign(hash);
+  }
 }
 
-/** Factory selecting the signer implementation from SIGNER_BACKEND. */
 export async function createSigner(keypair?: Keypair): Promise<Signer> {
   switch (env.signerBackend) {
     case 'dev':

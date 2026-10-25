@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   TransactionBuilder,
-  Networks,
   Operation,
   Asset,
   BASE_FEE,
 } from '@stellar/stellar-sdk';
 import { StellarWalletsKit, initKit, server, HORIZON_URL, FRIENDBOT_URL } from '../lib/stellar';
+import { NETWORK_PASSPHRASE, STELLAR_NETWORK, explorerTx } from '../lib/network';
 import { getWalletChallenge, verifyWalletChallenge } from '../lib/api';
 import { useSession } from '../lib/session';
 
@@ -77,7 +77,12 @@ export default function WalletConnect() {
       } catch (e: unknown) {
         if ((e as { response?: { status?: number } })?.response?.status === 404) {
           setAccount({ status: 'not-found' });
-          log('Account not found on testnet; needs Friendbot funding', 'err');
+          log(
+            STELLAR_NETWORK === 'mainnet'
+              ? 'Account not found on mainnet; it needs a funding payment'
+              : 'Account not found on testnet; needs Friendbot funding',
+            'err',
+          );
         } else {
           setAccount({ status: 'error', error: String(e) });
           log(`Horizon error: ${String(e)}`, 'err');
@@ -173,7 +178,7 @@ export default function WalletConnect() {
       const source = await server.loadAccount(kitConnection.address);
       const tx = new TransactionBuilder(source, {
         fee: BASE_FEE,
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(Operation.payment({ destination: dest, asset: Asset.native(), amount: '1' }))
         .setTimeout(180)
@@ -182,11 +187,11 @@ export default function WalletConnect() {
       log(`Requesting signature from ${kitConnection.walletName}…`);
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(tx.toXDR(), {
         address: kitConnection.address,
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: NETWORK_PASSPHRASE,
       });
       log('Transaction signed by external wallet', 'ok');
 
-      const signed = TransactionBuilder.fromXDR(signedTxXdr, Networks.TESTNET);
+      const signed = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
       const res = await server.submitTransaction(signed);
       setTxResult({ status: 'ok', hash: res.hash });
       log(`Submitted to Horizon: ${res.hash}`, 'ok');
@@ -252,7 +257,9 @@ export default function WalletConnect() {
           )}
           {account.status === 'not-found' && (
             <p className="text-sm text-amber-600">
-              Account not found on testnet — fund it via Friendbot below.
+              {STELLAR_NETWORK === 'mainnet'
+                ? 'Account not found on mainnet — send it XLM from another wallet to activate it.'
+                : 'Account not found on testnet — fund it via Friendbot below.'}
             </p>
           )}
           {account.status === 'error' && (
@@ -265,13 +272,15 @@ export default function WalletConnect() {
             >
               Refresh
             </button>
-            <button
-              onClick={fundWithFriendbot}
-              disabled={fundLoading}
-              className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200 disabled:opacity-50"
-            >
-              {fundLoading ? 'Funding…' : 'Fund with Friendbot'}
-            </button>
+            {STELLAR_NETWORK !== 'mainnet' && (
+              <button
+                onClick={fundWithFriendbot}
+                disabled={fundLoading}
+                className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200 disabled:opacity-50"
+              >
+                {fundLoading ? 'Funding…' : 'Fund with Friendbot'}
+              </button>
+            )}
             <button
               onClick={disconnectAndSignOut}
               className="rounded-full border border-black/10 px-4 py-1.5 text-sm hover:bg-black/5 transition-colors duration-200"
@@ -310,7 +319,7 @@ export default function WalletConnect() {
               <p className="text-sm text-green-700">
                 ✓ Submitted. Hash: <code className="text-xs">{txResult.hash}</code> ·{' '}
                 <a
-                  href={`https://stellar.expert/explorer/testnet/tx/${txResult.hash}`}
+                  href={explorerTx(txResult.hash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-black transition-colors duration-200"

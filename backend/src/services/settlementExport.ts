@@ -1,20 +1,6 @@
 import PDFDocument from 'pdfkit';
 import type { SettlementBatch } from '@pathpulse/contract';
 
-/**
- * Compliance exports for the settlement indexer.
- *
- * CSV: flat, one batch per row. Fields chosen to match what a regulator or
- * partner finance team actually needs to reconcile — no nested arrays, no
- * jsonb blobs, only stable columns.
- *
- * PDF: single-batch printable receipt with header, split table, driver-payout
- * table, and a signature block. Rendered synchronously into a buffer so the
- * route handler can pipe it out with a Content-Disposition attachment.
- */
-
-// ── CSV ────────────────────────────────────────────────────────────────────
-
 const CSV_HEADERS = [
   'batch_id',
   'created_at',
@@ -28,12 +14,14 @@ const CSV_HEADERS = [
   'tx_hash',
   'horizon_url',
   'payout_batch_id',
+  'deposit_tx_hash',
+  'deposit_from',
+  'deposit_amount',
 ] as const;
 
-/** Escape a value for RFC 4180 CSV: wrap in "…" and double any embedded ". */
 function csvCell(value: unknown): string {
-  const s = value === null || value === undefined ? '' : String(value);
-  // Only quote when needed — keeps small numeric cells readable.
+  const raw = value === null || value === undefined ? '' : String(value);
+  const s = /^[=+\-@\t\r]/.test(raw) && !/^-?\d+(\.\d+)?$/.test(raw) ? `'${raw}` : raw;
   if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -57,6 +45,9 @@ export function batchesToCsv(batches: SettlementBatch[]): string {
         b.txHash,
         b.horizonUrl ?? '',
         b.payoutBatchId ?? '',
+        b.deposit?.txHash ?? '',
+        b.deposit?.from ?? '',
+        b.deposit?.amount ?? '',
       ]
         .map(csvCell)
         .join(','),
@@ -65,10 +56,6 @@ export function batchesToCsv(batches: SettlementBatch[]): string {
   return rows.join('\n') + '\n';
 }
 
-// ── PDF ────────────────────────────────────────────────────────────────────
-
-/** Render a batch receipt to a PDF buffer. Resolves once the document is
- *  fully written — safe to send directly on an Express response. */
 export async function batchReceiptPdf(batch: SettlementBatch): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
@@ -77,7 +64,6 @@ export async function batchReceiptPdf(batch: SettlementBatch): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Header
     doc
       .font('Helvetica-Bold').fontSize(20).fillColor('#000000')
       .text('PathPulse — Settlement Receipt', { align: 'left' })
@@ -87,16 +73,18 @@ export async function batchReceiptPdf(batch: SettlementBatch): Promise<Buffer> {
       .text(`Generated ${new Date().toISOString()}`)
       .moveDown(1.2);
 
-    // Batch metadata
     kv(doc, 'Batch ID',       batch.id, true);
     kv(doc, 'Created at',     batch.createdAt);
     kv(doc, 'Network',        batch.network);
     kv(doc, 'Transaction',    batch.txHash, true);
     if (batch.horizonUrl) kv(doc, 'Horizon URL',    batch.horizonUrl);
     if (batch.payoutBatchId) kv(doc, 'Payout batch id', batch.payoutBatchId, true);
+    if (batch.deposit) {
+      kv(doc, 'Funded by deposit', batch.deposit.txHash, true);
+      kv(doc, 'Deposit', `${batch.deposit.amount} ${batch.asset.code} from ${batch.deposit.from}`);
+    }
     doc.moveDown(0.8);
 
-    // Split
     doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Deterministic split', 54).moveDown(0.4);
     const gross = batch.grossAmount;
     const asset = batch.asset.code;
@@ -107,10 +95,8 @@ export async function batchReceiptPdf(batch: SettlementBatch): Promise<Buffer> {
     splitRow(doc, 'Gross',                `${gross} ${asset}`, true);
     doc.moveDown(1);
 
-    // Driver payouts
     if ((batch.driverPayouts ?? []).length) {
       doc.font('Helvetica-Bold').fontSize(13).fillColor('#000000').text('Driver payouts', 54).moveDown(0.4);
-      // Table header
       const cols = { userId: 54, address: 200, tier: 380, mult: 430, amount: 490 };
       const headerY = doc.y;
       doc.font('Helvetica-Bold').fontSize(9).fillColor('#666666');
@@ -136,7 +122,6 @@ export async function batchReceiptPdf(batch: SettlementBatch): Promise<Buffer> {
       doc.moveDown(0.6);
     }
 
-    // Signature block
     doc.moveTo(54, doc.y).lineTo(558, doc.y).lineWidth(0.5).strokeColor('#DDDDDD').stroke();
     doc.moveDown(0.6);
     doc.font('Helvetica').fontSize(9).fillColor('#666666').text(
@@ -151,8 +136,6 @@ export async function batchReceiptPdf(batch: SettlementBatch): Promise<Buffer> {
     doc.end();
   });
 }
-
-// ── PDF helpers ────────────────────────────────────────────────────────────
 
 function kv(doc: PDFKit.PDFDocument, label: string, value: string, mono = false): void {
   const y = doc.y;
@@ -175,4 +158,48 @@ function short(a: string): string {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
+}
+
+const PAYOUT_CSV_HEADERS = [
+  'batch_id',
+  'batch_created_at',
+  'network',
+  'asset_code',
+  'treasury_deposit_tx_hash',
+  'settlement_tx_hash',
+  'payout_batch_id',
+  'user_id',
+  'driver_address',
+  'scout_tier',
+  'multiplier',
+  'amount',
+  'payout_tx_hash',
+] as const;
+
+export function payoutsToCsv(batches: SettlementBatch[]): string {
+  const rows: string[] = [PAYOUT_CSV_HEADERS.join(',')];
+  for (const b of batches) {
+    for (const p of b.driverPayouts ?? []) {
+      rows.push(
+        [
+          b.id,
+          b.createdAt,
+          b.network,
+          b.asset.code,
+          b.deposit?.txHash ?? '',
+          b.txHash,
+          b.payoutBatchId ?? '',
+          p.userId,
+          p.address,
+          p.tier,
+          p.multiplier,
+          p.amount,
+          p.payoutTxHash ?? '',
+        ]
+          .map(csvCell)
+          .join(','),
+      );
+    }
+  }
+  return rows.join('\n') + '\n';
 }

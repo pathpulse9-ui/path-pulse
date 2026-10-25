@@ -11,6 +11,7 @@ import {
   type CarretOrder,
 } from './carret.js';
 import { getMapping } from './carretSubAccountStore.js';
+import { evictOldest } from '../util/bounded.js';
 
 /**
  * On-ramp (INR → crypto) orchestration.
@@ -134,6 +135,7 @@ export async function createDeposit(
       createdAt: now,
     };
     sessions.set(s.id, s);
+    evictOldest(sessions, 5_000);
     return s;
   }
 
@@ -182,6 +184,7 @@ export async function createDeposit(
     carretQuoteId: quote.id,
   };
   sessions.set(s.id, s);
+  evictOldest(sessions, 5_000);
   return s;
 }
 

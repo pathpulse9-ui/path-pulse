@@ -1,18 +1,8 @@
 import type { OffRampSession, OffRampStatus } from '@pathpulse/contract';
-import { env } from '../config/env.js';
+import { env, horizonTxUrl } from '../config/env.js';
 import { db } from '../db/client.js';
-
-/**
- * Off-ramp session + status-event store — dual-mode, mirroring `settlementStore`.
- *
- * With DATABASE_URL set: rows live in `off_ramp_sessions` and every status
- * transition is appended to `off_ramp_status_events`, so a session survives a
- * restart and its history is auditable against the Carret order and the
- * settlement batch it draws from.
- *
- * Without DATABASE_URL: in-memory maps, so local dev and the test suite keep
- * working without Postgres.
- */
+import { evictOldest, trimHead } from '../util/bounded.js';
+import { databaseOrMemory } from '../util/memoryFallback.js';
 
 export interface StoredOffRampSession extends OffRampSession {
   ppUserId: string;
@@ -42,6 +32,7 @@ export interface OrphanCandidate {
   carretOrderId: string | null;
   carretAccountId: string | null;
   settlementBatchId: string | null;
+  stellarTxHash: string | null;
   createdAt: string;
 }
 
@@ -49,12 +40,13 @@ const memSessions = new Map<string, StoredOffRampSession>();
 const memEvents: OffRampStatusEvent[] = [];
 
 function hasDb(): boolean {
-  return Boolean(env.databaseUrl);
+  return databaseOrMemory('off-ramp store');
 }
 
 export async function saveSession(s: StoredOffRampSession): Promise<void> {
   if (!hasDb()) {
     memSessions.set(s.id, { ...s });
+    evictOldest(memSessions, 5_000);
     return;
   }
   await db().query(
@@ -140,6 +132,7 @@ export async function findSessionByCarretOrderId(
 export async function recordEvent(e: OffRampStatusEvent): Promise<void> {
   if (!hasDb()) {
     memEvents.push({ ...e });
+    trimHead(memEvents, 20_000);
     return;
   }
   await db().query(
@@ -174,12 +167,6 @@ export async function listEvents(sessionId: string): Promise<OffRampStatusEvent[
   }));
 }
 
-/**
- * Sessions the reconciler should re-check: still non-terminal, old enough that a
- * webhook should already have arrived, and recent enough that Carret still lists
- * the order. Carries the driver's Carret sub-account so the reconciler can query
- * the right order list, and the settlement batch so recovery keeps the link.
- */
 export async function listOrphanCandidates(
   staleSeconds: number,
   limit = 100,
@@ -190,6 +177,7 @@ export async function listOrphanCandidates(
   if (!hasDb()) {
     return [...memSessions.values()]
       .filter((s) => s.status !== 'completed' && s.status !== 'error')
+      .filter((s) => s.provider === 'carret')
       .filter((s) => {
         const t = new Date(s.createdAt).getTime();
         return t < cutoff && t > floor;
@@ -203,6 +191,7 @@ export async function listOrphanCandidates(
         carretOrderId: s.carretOrderId ?? null,
         carretAccountId: null,
         settlementBatchId: s.settlementBatchId ?? null,
+        stellarTxHash: s.stellarTxHash ?? null,
         createdAt: s.createdAt,
       }));
   }
@@ -214,16 +203,18 @@ export async function listOrphanCandidates(
             s.status,
             s.carret_order_id,
             s.settlement_batch_id,
+            s.stellar_tx_hash,
             s.created_at,
             sub.carret_account_id
      from off_ramp_sessions s
      left join carret_subaccounts sub on sub.user_id = s.user_id
      where s.status not in ('completed', 'error')
+       and s.provider = 'carret'
        and s.created_at < now() - ($1 || ' seconds')::interval
        and s.created_at > now() - interval '24 hours'
      order by s.created_at asc
-     limit ${limit}`,
-    [String(staleSeconds)],
+     limit $2`,
+    [String(staleSeconds), limit],
   );
 
   return res.rows.map((r) => ({
@@ -234,6 +225,7 @@ export async function listOrphanCandidates(
     carretOrderId: r.carret_order_id,
     carretAccountId: r.carret_account_id,
     settlementBatchId: r.settlement_batch_id,
+    stellarTxHash: r.stellar_tx_hash,
     createdAt: r.created_at.toISOString(),
   }));
 }
@@ -253,13 +245,8 @@ export interface OpsSessionRow {
   updatedAt: string;
 }
 
-/**
- * Every off-ramp session, newest first — the operator view. The per-driver
- * endpoints are scoped to the caller, so without this an operator has no way
- * to inspect a stuck withdrawal that is not their own.
- */
 export async function listAllSessions(limit = 100): Promise<OpsSessionRow[]> {
-  const size = Math.min(Math.max(1, limit), 500);
+  const size = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 500) : 100;
 
   if (!hasDb()) {
     return [...memSessions.values()]
@@ -308,7 +295,6 @@ export async function listAllSessions(limit = 100): Promise<OpsSessionRow[]> {
   }));
 }
 
-/** Only called by test fixtures — never in prod. */
 export function _resetInMemoryForTests(): void {
   memSessions.clear();
   memEvents.length = 0;
@@ -368,6 +354,7 @@ type OrphanRow = {
   status: string;
   carret_order_id: string | null;
   settlement_batch_id: string | null;
+  stellar_tx_hash: string | null;
   created_at: Date;
   carret_account_id: string | null;
 };
@@ -388,6 +375,7 @@ function rowToSession(r: Row): StoredOffRampSession {
     merchantTransactionId: r.merchant_transaction_id ?? undefined,
     settlementBatchId: r.settlement_batch_id ?? undefined,
     stellarTxHash: r.stellar_tx_hash ?? undefined,
+    stellarTxUrl: r.stellar_tx_hash ? horizonTxUrl(r.stellar_tx_hash) : undefined,
     carretOrderId: r.carret_order_id ?? undefined,
     carretQuoteId: r.carret_quote_id ?? undefined,
     carretDepositMemo: r.carret_deposit_memo ?? undefined,

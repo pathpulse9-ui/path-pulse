@@ -1,28 +1,32 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SettlementBatch, GroupPayoutBatch } from '@pathpulse/contract';
+import { isOpsApproval, type SettlementBatch, type GroupPayoutBatch } from '@pathpulse/contract';
 import {
   listSettlementBatches,
   createSettlementBatch,
   createGroupPayout,
   getSettlementBatch,
-  prepareScoutDemoDrivers,
-  type DemoScoutDriver,
 } from '../../lib/api';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { STELLAR_NETWORK } from '../../lib/network';
 import { parseRecipientsFile, type ParsedRecipient } from '../../lib/parseRecipients';
 import { ErrorNotice } from '../../components/dashboard/ErrorNotice';
+import { PendingApprovals } from '../../components/dashboard/PendingApprovals';
+import { explorerTx, explorerAcct } from '../../lib/network';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
-const explorerTx = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
-const explorerAcct = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
 function tierClasses(tier: number) {
   if (tier === 3) return 'bg-green-100 text-green-700 border-green-300';
   if (tier === 2) return 'bg-blue-100 text-blue-700 border-blue-300';
   return 'bg-black/5 text-black/60 border-black/10';
 }
+
+const SAMPLE_DRIVERS = [
+  { userId: 'driver-1', address: 'GD4YDGESVMWKAXYO3SXWE7H45SHHZC66DE33KBJXI5VY6Q27NKVOTTNQ' },
+  { userId: 'driver-2', address: 'GD325OSZQUOU5FMXXQKGXMIMO4E5CJUX6GZVVYSJPIVQLDHC7YI6FMIV' },
+];
 
 const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
@@ -35,7 +39,6 @@ export default function SettlementPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [demoDrivers, setDemoDrivers] = useState<DemoScoutDriver[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
 
   const [recipients, setRecipients] = useState<ParsedRecipient[]>([]);
@@ -46,6 +49,10 @@ export default function SettlementPage() {
   const [memo, setMemo] = useState('');
   const [payoutAsset, setPayoutAsset] = useState<'XLM' | 'USDC'>('XLM');
   const [settlementAsset, setSettlementAsset] = useState<'XLM' | 'USDC'>('XLM');
+  const [depositTxHash, setDepositTxHash] = useState('');
+  const [depositMemo, setDepositMemo] = useState('');
+  const [approvalsKey, setApprovalsKey] = useState(0);
+  const depositHashInvalid = depositTxHash.trim() !== '' && !/^[0-9a-fA-F]{64}$/.test(depositTxHash.trim());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -67,31 +74,22 @@ export default function SettlementPage() {
     load();
   }, [load]);
 
-  // Reviewer demo. No tier is asserted anywhere: each driver's badge is
-  // assigned from their validation score, and the settlement request carries
-  // no tier at all — the engine reads the badge from chain.
   const runSample = useCallback(async () => {
     setRunning(true);
     setError(null);
     setWarning(null);
-    setDemoDrivers([]);
     try {
-      setStatus('Reading validation scores and assigning SCOUT badges…');
-      const { drivers } = await prepareScoutDemoDrivers();
-      setDemoDrivers(drivers);
-
       setStatus('Executing 50/30/20 settlement…');
       const settlementRequest = {
-        grossAmount: settlementAsset === 'USDC' ? '1' : '100',
-        drivers: drivers.map((d) => ({ userId: d.userId, address: d.address })),
+        grossAmount: settlementAsset === 'USDC' ? '1' : '0.1',
+        drivers: SAMPLE_DRIVERS,
         asset: settlementAsset === 'USDC' ? { code: 'USDC' as const, issuer: USDC_ISSUER } : undefined,
+        depositTxHash: depositTxHash.trim() || undefined,
+        depositMemo: depositMemo.trim() || undefined,
       };
-      const batch = await runSettlement(settlementRequest, (key) =>
+      const result = await runSettlement(settlementRequest, (key) =>
         createSettlementBatch(settlementRequest, key),
       ).catch(async (e: unknown) => {
-        // The split is irreversible on-chain before the driver fan-out is
-        // attempted, so a payout-provider outage must not be reported as a
-        // failed settlement. Recover the persisted batch and warn instead.
         const message = e instanceof Error ? e.message : String(e);
         const settled = message.includes('settled on-chain');
         const id = settled ? /(stl_[0-9a-z_]+)/.exec(message)?.[1] : undefined;
@@ -102,7 +100,12 @@ export default function SettlementPage() {
         );
         return getSettlementBatch(id);
       });
-      setSelected(batch);
+      if (isOpsApproval(result)) {
+        setApprovalsKey((k) => k + 1);
+        setStatus(`Above the approval threshold — waiting for a second operator to approve ${result.id}.`);
+        return;
+      }
+      setSelected(result);
       await load();
       setStatus(null);
     } catch (e) {
@@ -111,7 +114,7 @@ export default function SettlementPage() {
     } finally {
       setRunning(false);
     }
-  }, [load, settlementAsset, runSettlement]);
+  }, [load, settlementAsset, depositTxHash, depositMemo, runSettlement]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -167,6 +170,10 @@ export default function SettlementPage() {
         })),
       };
       const batch = await runGroupPayout(groupRequest, (key) => createGroupPayout(groupRequest, key));
+      if (isOpsApproval(batch)) {
+        setApprovalsKey((k) => k + 1);
+        return;
+      }
       setGroupResult(batch);
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : 'Group payout failed');
@@ -177,6 +184,7 @@ export default function SettlementPage() {
 
   return (
     <div className="space-y-6">
+      <PendingApprovals refreshKey={approvalsKey} onApproved={load} />
       <div className="rounded-2xl bg-white p-6 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -351,7 +359,7 @@ export default function SettlementPage() {
           <h2 className="text-black text-lg font-medium tracking-[-0.02em]">
             Settlement batches
           </h2>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               onClick={load}
               disabled={loading}
@@ -368,18 +376,43 @@ export default function SettlementPage() {
               <option value="XLM">XLM</option>
               <option value="USDC">USDC</option>
             </select>
+            <input
+              value={depositTxHash}
+              onChange={(e) => setDepositTxHash(e.target.value)}
+              disabled={running}
+              placeholder="Deposit tx hash (optional)"
+              aria-invalid={depositHashInvalid}
+              className={`w-full sm:w-72 rounded-full border bg-white px-4 h-9 font-mono text-xs outline-none transition-colors duration-200 disabled:opacity-50 ${
+                depositHashInvalid ? 'border-red-400 focus:border-red-500' : 'border-black/10 focus:border-black/30'
+              }`}
+            />
+            <input
+              value={depositMemo}
+              onChange={(e) => setDepositMemo(e.target.value.slice(0, 28))}
+              disabled={running}
+              placeholder="Deposit memo"
+              className="w-full sm:w-44 rounded-full border border-black/10 bg-white px-4 h-9 font-mono text-xs outline-none focus:border-black/30 transition-colors duration-200 disabled:opacity-50"
+            />
             <button
               onClick={runSample}
-              disabled={running}
+              disabled={running || depositHashInvalid}
               className="bg-black text-white text-sm font-medium px-6 py-2 rounded-full hover:bg-gray-800 transition-colors duration-200 disabled:opacity-50"
             >
               {running
                 ? 'Running…'
-                : `Run sample settlement (${settlementAsset === 'USDC' ? '1 USDC' : '100 XLM'})`}
+                : `Run sample settlement (${settlementAsset === 'USDC' ? '1 USDC' : '0.1 XLM'})`}
             </button>
           </div>
         </div>
 
+        <p className="text-xs text-black/50">
+          Link the funding deposit for this run so partners can trace it on the gov dashboard. It must come from the
+          treasury or an authorised sender, and on mainnet it must carry the memo you enter here. It must pay at
+          least the gross amount in {settlementAsset} into the settlement source
+          {batches[0]?.sourceAddress ? <span className="font-mono"> {batches[0].sourceAddress}</span> : ''}, and can
+          fund only one batch.
+        </p>
+        {depositHashInvalid && <p className="text-xs text-red-700">A transaction hash is 64 hex characters.</p>}
         {status && <p className="text-sm text-black/50">{status}</p>}
         {error != null && <ErrorNotice error={error} />}
         {warning && (
@@ -388,64 +421,11 @@ export default function SettlementPage() {
           </p>
         )}
 
-        {demoDrivers.length > 0 && (
-          <div className="rounded-xl border border-black/10 p-4 space-y-2">
-            <div className="text-xs text-black/50">
-              Tiers came from validation scores, not from this request — the settlement was
-              submitted with no tier at all.
-            </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-black/50 border-b border-black/10">
-                  <th className="py-2 font-medium">Driver</th>
-                  <th className="py-2 font-medium">Score</th>
-                  <th className="py-2 font-medium">Source</th>
-                  <th className="py-2 font-medium">Badge on chain</th>
-                  <th className="py-2 font-medium">Assignment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {demoDrivers.map((d) => (
-                  <tr key={d.userId} className="border-b border-black/5">
-                    <td className="py-2 font-mono text-xs">{d.userId}</td>
-                    <td className="py-2">{d.score.toFixed(4)}</td>
-                    <td className="py-2 text-xs text-black/50">{d.scoreSource}</td>
-                    <td className="py-2">
-                      <span className={`text-xs rounded-full border px-2 py-0.5 ${tierClasses(d.tier ?? 1)}`}>
-                        SCOUT{d.tier ?? 1} · {d.multiplier.toFixed(1)}×
-                      </span>
-                    </td>
-                    <td className="py-2 font-mono text-xs">
-                      {d.assignmentTx ? (
-                        <>
-                          <a
-                            href={explorerTx(d.assignmentTx)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline text-blue-600"
-                          >
-                            {short(d.assignmentTx)}
-                          </a>
-                          {!d.assignedNow && (
-                            <span className="text-black/40"> · issued earlier</span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-black/40">no assignment on record</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
         {!error && batches.length === 0 && !loading && !running && (
           <div className="rounded-xl border border-dashed border-black/15 p-8 text-center">
             <p className="font-medium text-black">No settlement batches yet</p>
             <p className="text-sm text-black/50 mt-1">
-              Run a sample settlement to execute a 50/30/20 split on testnet.
+              Run a settlement to execute a 50/30/20 split on {STELLAR_NETWORK}.
             </p>
           </div>
         )}
@@ -531,6 +511,32 @@ export default function SettlementPage() {
               >
                 view on stellar.expert
               </a>
+            </p>
+            <p className="text-xs text-black/50 -mt-2 mb-4">
+              {selected.deposit ? (
+                <>
+                  Funded by deposit{' '}
+                  <a
+                    href={explorerTx(selected.deposit.txHash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono underline hover:text-black"
+                  >
+                    {short(selected.deposit.txHash)}
+                  </a>{' '}
+                  ({selected.deposit.amount} {selected.asset.code})
+                </>
+              ) : (
+                'No treasury deposit linked'
+              )}
+              {' · '}
+              {selected.createdBy ? (
+                <>
+                  started by <span className="font-mono">{selected.createdBy}</span>
+                </>
+              ) : (
+                'operator not recorded'
+              )}
             </p>
             <table className="w-full text-sm">
               <thead>

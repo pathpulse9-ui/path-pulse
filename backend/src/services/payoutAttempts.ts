@@ -23,10 +23,28 @@ export interface RetryOptions {
 const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_BASE_DELAY_MS = 500;
 
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+export function attemptErrorSummary(error: unknown): string {
+  const e = error as { name?: string; status?: number; code?: string };
+  return [e?.name || 'Error', e?.status ? `status ${e.status}` : '', e?.code ?? ''].filter(Boolean).join(' · ');
+}
+
 function isRetryable(e: unknown): boolean {
   const status = (e as { status?: number })?.status;
   if (typeof status === 'number') return status === 408 || status === 429 || status >= 500;
-  return true;
+  const name = (e as { name?: string })?.name;
+  const code = (e as { code?: string; cause?: { code?: string } })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  return code !== undefined && TRANSIENT_NETWORK_CODES.has(code);
 }
 
 function delay(ms: number): Promise<void> {
@@ -42,7 +60,7 @@ async function record(
   error?: unknown,
   disbursementId?: string,
 ): Promise<void> {
-  const message = error instanceof Error ? error.message : error ? String(error) : null;
+  const message = error ? attemptErrorSummary(error) : null;
   try {
     await db().query(
       `insert into payout_attempts (batch_id, disbursement_id, step, attempt, outcome, error, duration_ms)
@@ -54,11 +72,6 @@ async function record(
   }
 }
 
-/**
- * Runs one SDP step with bounded retries and exponential backoff, writing an attempt row per
- * try. Non-retryable responses (4xx other than 408/429) fail immediately rather than burning
- * the budget on a request the server will never accept.
- */
 export async function withRetry<T>(
   batchId: string,
   step: PayoutStep,

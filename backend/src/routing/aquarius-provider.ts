@@ -10,15 +10,16 @@ import {
 } from '@stellar/stellar-sdk';
 import type { RoutingSwapResult } from '@pathpulse/contract';
 import { env, horizonTxUrl } from '../config/env.js';
-import { horizon } from '../stellar/network.js';
+import { horizon, submitToHorizon } from '../stellar/network.js';
 import { sorobanServer, simulateAndSubmit } from '../stellar/soroban.js';
-import { getManagedSigner, provisionManagedWallet } from '../stellar/managed.js';
+import { getManagedSigner, provisionManagedWallet, RESERVE_SPONSOR_USER } from '../stellar/managed.js';
 import { fromStroops } from '../stellar/settlement.js';
 import { findPath, applySlippage } from './aquarius.js';
 import { resolveAsset, type RoutableSymbol } from './assets.js';
 import { routingError, type RoutingProvider } from './provider.js';
 
-const SWAP_SOURCE_USER = '__routing_swap_source__';
+export const SWAP_SOURCE_USER = RESERVE_SPONSOR_USER;
+const SOROBAN_INCLUSION_FEE = '100000';
 
 function requireRouter(): string {
   const id = env.routing.aquaRouterContract;
@@ -32,7 +33,7 @@ function requireRouter(): string {
   return id;
 }
 
-async function ensureTrustline(address: string, symbol: RoutableSymbol): Promise<void> {
+export async function ensureTrustline(address: string, symbol: RoutableSymbol): Promise<void> {
   const target = resolveAsset(symbol);
   if (target.asset.isNative()) return;
 
@@ -52,7 +53,7 @@ async function ensureTrustline(address: string, symbol: RoutableSymbol): Promise
   builder.addOperation(Operation.changeTrust({ asset: target.asset }));
   let tx = builder.setTimeout(180).build();
   tx = (await (await getManagedSigner(SWAP_SOURCE_USER)).sign(tx)) as typeof tx;
-  await horizon.submitTransaction(tx);
+  await submitToHorizon(tx, 'routing trustline');
 }
 
 export const aquariusProvider: RoutingProvider = {
@@ -60,8 +61,8 @@ export const aquariusProvider: RoutingProvider = {
   canQuote: true,
   canExecute: true,
 
-  async quote(from, to, sourceStroops) {
-    const path = await findPath(from, to, sourceStroops);
+  async quote(from, to, sourceStroops, signal) {
+    const path = await findPath(from, to, sourceStroops, signal);
     return {
       provider: 'aquarius',
       from,
@@ -85,7 +86,7 @@ export const aquariusProvider: RoutingProvider = {
 
     const account = await sorobanServer().getAccount(wallet.address);
     const tx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
+      fee: SOROBAN_INCLUSION_FEE,
       networkPassphrase: env.networkPassphrase,
     })
       .addOperation(
@@ -114,6 +115,7 @@ export const aquariusProvider: RoutingProvider = {
       sourceAmount: fromStroops(sourceStroops),
       estimatedDestinationAmount: fromStroops(path.destinationStroops),
       minDestinationAmount: fromStroops(minOut),
+      destinationAmount: result.returnStroops === undefined ? undefined : fromStroops(result.returnStroops),
       hops: path.pools.length,
       pools: path.pools,
       txHash: result.hash,

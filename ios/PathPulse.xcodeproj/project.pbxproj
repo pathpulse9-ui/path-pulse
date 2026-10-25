@@ -20,6 +20,7 @@
 		879389747C854949E9759F5B /* CommonComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 391DFEBB9B5C6CC0FC891C48 /* CommonComponents.swift */; };
 		8E43077B06580E08BE235507 /* PathPulseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09AB2C446A4AA66498EA8C80 /* PathPulseApp.swift */; };
 		92BE5CAD1D43CE2840B79A6F /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 87EF5F73D72874F5F6D5DB7C /* GoogleSignIn */; };
+		A1C0DE5E47E1A0B2C3D4E5F8 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = A1C0DE5E47E1A0B2C3D4E5F7 /* Sentry */; };
 		A304814A6EF211EF1E4521EF /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769FBB6DFAE33E54575F6A45 /* Spacing.swift */; };
 		AA38D851429AA8C5B1C70CA1 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04E1BBD6896203F9E55DEAC /* APIClient.swift */; };
 		BAF9DA6F6A0CD924EDC822EC /* DataRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472FA53AC87B37FFBB4796DB /* DataRepository.swift */; };
@@ -78,6 +79,7 @@
 			files = (
 				92BE5CAD1D43CE2840B79A6F /* GoogleSignIn in Frameworks */,
 				4FCB47AAA6FF93F68549E896 /* GoogleSignInSwift in Frameworks */,
+				A1C0DE5E47E1A0B2C3D4E5F8 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +189,7 @@
 			packageProductDependencies = (
 				87EF5F73D72874F5F6D5DB7C /* GoogleSignIn */,
 				3606E008446E676AE6E6D061 /* GoogleSignInSwift */,
+				A1C0DE5E47E1A0B2C3D4E5F7 /* Sentry */,
 			);
 			productName = PathPulse;
 			productReference = CE041C88CBA84811D59EDAD7 /* PathPulse.app */;
@@ -217,6 +220,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				5F4B668F63F238A2289FA2DD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				A1C0DE5E47E1A0B2C3D4E5F6 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 4405A694188856B1BD78463D /* Products */;
@@ -285,6 +289,9 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				CODE_SIGN_ENTITLEMENTS = PathPulse/PathPulse.entitlements;
 				INFOPLIST_FILE = PathPulse/Info.plist;
+				PATHPULSE_API_BASE = "https://pay-api.pathpulse.ai";
+				PATHPULSE_STELLAR_NETWORK = testnet;
+				PATHPULSE_SENTRY_DSN = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -431,6 +438,9 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				CODE_SIGN_ENTITLEMENTS = PathPulse/PathPulse.entitlements;
 				INFOPLIST_FILE = PathPulse/Info.plist;
+				PATHPULSE_API_BASE = "https://pay-api.pathpulse.ai";
+				PATHPULSE_STELLAR_NETWORK = testnet;
+				PATHPULSE_SENTRY_DSN = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -475,6 +485,14 @@
 				minimumVersion = 7.1.0;
 			};
 		};
+		A1C0DE5E47E1A0B2C3D4E5F6 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.30.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -487,6 +505,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5F4B668F63F238A2289FA2DD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
+		};
+		A1C0DE5E47E1A0B2C3D4E5F7 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1C0DE5E47E1A0B2C3D4E5F6 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

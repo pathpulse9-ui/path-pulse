@@ -317,63 +317,11 @@ lands us a real feed and closes D6 cleanly.
 
 ## Accounts
 
-**The honest state.** Current `.env` on demo-api:
-
-```
-PARTNER_REVENUE_PUBLIC=GBKDXMOLXXQ5LXDVHQRN7E477GWFDM633NFLTBJSPPOYOVS4JNXYAGDG
-DRIVER_POOL_PUBLIC   =GADHKHQSM3UIK54ZXCZMILLJAWQDYTZGY7OF6GOG4K3QY7P4PWMWAHLR
-TREASURY_PUBLIC      =GBNIZZ7OF7S3ECFGL4SA4NPDFRW4IDIZVO2IFU3TZKCI2P4MZCHTYG7A
-```
-
-T1 evidence in `docs/TRANCHE2_PROOF_OF_COMPLETION.md` listed:
-
-```
-Partner Revenue = GA3XFACID… (paid by the on-chain settlement tx d3330aab…)
-Treasury        = GBRXUTNCZOM7NX6N3RC5YJAPGNAJENCKJTBXMWQKOFHGAY4FCHDO7QT2
-Signers         = GB3REMIR… GD674BNV… GDPFOIWS… (each weight 1, master weight 0, threshold 2)
-```
-
-The current three accounts do not match. This needs an actual
-explanation from you (I only see the delta, not the reason) — most
-likely candidates:
-
-- (a) You rotated the treasury after T1 because a signer key was
-  compromised / a signer left the ceremony;
-- (b) You're testing on a fresh burner set of accounts during T2 dev
-  and forgot to restore the T1-declared ones before the reviewers ran
-  the audit;
-- (c) The T1 treasury was a placeholder Ops promised to swap in later
-  and this is the swap.
-
-**Answer to write once you tell me which:**
-
-> The Partner Revenue / Driver Pool / Treasury accounts changed
-> between T1 and T2 because [REASON]. The current T2 treasury
-> `GBNIZZ7O…` was regenerated on [DATE] via the same key ceremony
-> described in `docs/KMS_VERIFICATION.md`, with the following signer
-> configuration:
->
-> ```
-> Master key weight: 0 (cannot sign alone)
-> Signer 1: G… (weight 1) — [role: Ops key holder A]
-> Signer 2: G… (weight 1) — [role: Ops key holder B]
-> Signer 3: G… (weight 1) — [role: Ops key holder C]
-> Thresholds: low = 2, med = 2, high = 2 → 2-of-3
-> ```
->
-> Verifiable now: `GET https://demo-api.pathpulse.ai/v1/treasury/config`
-> returns this configuration live, read directly from Horizon.
-
-**Code work implied:**
-1. Confirm `GET /v1/treasury/config` on the deployed backend actually
-   returns the current signer list + weights (the endpoint exists per
-   `docs/API_ARCHITECTURE.md`, verify it hasn't drifted).
-2. If (a) — rotation — link the Horizon tx that reconfigured the
-   treasury so it's provable on-chain.
-3. If (b) — swap back — restore T1-declared accounts in `.env`, roll
-   the deploy, then write the response above unchanged.
-
-**Ask the user:** which of (a)/(b)/(c) applies?
+The mainnet treasury is `GCESVOGE2FLAWTV6D2BQ7H3KRRJT5D74IXWEGR7MZQUJK2MNMBD5MIA3`: master weight 0,
+thresholds 2/2/2, three signers at weight 1, each created by a different signatory in their own wallet
+(set_options tx `678113af8c0f6256a4f1b37d6c692d62cb30300c2159318d1549f2d2ff1d6ffd`). Every signer pair has
+signed a test payment; the evidence log is in `docs/TREASURY_CEREMONY.md`. `GET /v1/treasury/config` returns
+the same configuration live, read from Horizon.
 
 ---
 
@@ -381,7 +329,6 @@ likely candidates:
 
 1. **Decide** the two open questions:
    - D6 Option A or B?
-   - Accounts reason (a)/(b)/(c)?
 2. **Ship** the D4.3 persistence + reconciler PR (~1 day). This must
    land before the next capture run — the answer to D4.2 depends on
    it.

@@ -1,39 +1,171 @@
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { env } from '../config/env.js';
+import { db } from '../db/client.js';
+import { logger } from '../config/logger.js';
+
+export type SessionRole = 'ops' | 'partner';
 
 export interface SessionPayload {
   userId: string;
-  method: 'google' | 'wallet' | 'guest' | 'partner' | 'ops';
+  method: 'google' | 'wallet' | 'guest' | 'partner';
+  role?: SessionRole;
+  roleExpiresAt?: number;
   email?: string;
   address?: string;
+  jti?: string;
+  exp?: number;
+}
+
+const ISSUER = 'pathpulse-api';
+const AUDIENCE = 'pathpulse';
+const revoked = new Map<string, number>();
+
+export function roleOf(session: SessionPayload, now = Date.now()): SessionRole | undefined {
+  if (session.role === 'ops') {
+    return session.roleExpiresAt !== undefined && now < session.roleExpiresAt ? 'ops' : undefined;
+  }
+  if (session.role === 'partner') {
+    return session.roleExpiresAt === undefined || now < session.roleExpiresAt ? 'partner' : undefined;
+  }
+  return session.method === 'partner' ? 'partner' : undefined;
+}
+
+export function withRole(session: SessionPayload, role: SessionRole | undefined, now = Date.now()): SessionPayload {
+  const { userId, method, email, address } = session;
+  if (!role) return { userId, method, email, address };
+  const ttl = role === 'ops' ? env.session.opsRoleTtlSeconds : env.session.partnerRoleTtlSeconds;
+  return { userId, method, email, address, role, roleExpiresAt: now + ttl * 1000 };
+}
+
+export function sessionMaxAgeSeconds(payload: SessionPayload): number {
+  return payload.role || payload.method === 'partner' ? env.session.privilegedMaxAgeSeconds : env.session.maxAgeSeconds;
 }
 
 export function createSessionToken(payload: SessionPayload): string {
-  return jwt.sign(payload, env.session.secret, { expiresIn: env.session.maxAgeSeconds });
+  const { jti: _jti, exp: _exp, ...claims } = payload;
+  return jwt.sign(claims, env.session.secret, {
+    algorithm: 'HS256',
+    expiresIn: sessionMaxAgeSeconds(payload),
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    jwtid: randomUUID(),
+  });
 }
 
 export function verifySessionToken(token: string): SessionPayload | null {
   try {
-    return jwt.verify(token, env.session.secret) as SessionPayload;
+    const payload = jwt.verify(token, env.session.secret, {
+      algorithms: ['HS256'],
+      issuer: ISSUER,
+      audience: AUDIENCE,
+    }) as SessionPayload & { iat?: number; iss?: string; aud?: string };
+    if (!payload.jti || isRevoked(payload.jti)) return null;
+    const { iat: _iat, iss: _iss, aud: _aud, ...session } = payload;
+    return session;
   } catch {
     return null;
   }
 }
 
-export function setSessionCookie(res: Response, payload: SessionPayload) {
-  const token = createSessionToken(payload);
-  res.cookie(env.session.cookieName, token, {
+const MAX_REVOKED_IN_MEMORY = 50_000;
+
+function pruneRevoked(now = Date.now()): void {
+  for (const [jti, until] of revoked) if (until <= now) revoked.delete(jti);
+  while (revoked.size >= MAX_REVOKED_IN_MEMORY) {
+    const oldest = revoked.keys().next().value;
+    if (oldest === undefined) break;
+    revoked.delete(oldest);
+  }
+}
+
+function isRevoked(jti: string, now = Date.now()): boolean {
+  const until = revoked.get(jti);
+  if (until === undefined) return false;
+  if (until <= now) {
+    revoked.delete(jti);
+    return false;
+  }
+  return true;
+}
+
+export async function revokeSession(session: SessionPayload | null): Promise<void> {
+  if (!session?.jti) return;
+  const expiresAt = (session.exp ?? Math.floor(Date.now() / 1000) + env.session.maxAgeSeconds) * 1000;
+  pruneRevoked();
+  revoked.set(session.jti, expiresAt);
+  if (!env.databaseUrl) return;
+  try {
+    await db().query(
+      'insert into revoked_sessions (jti, expires_at) values ($1, $2) on conflict (jti) do nothing',
+      [session.jti, new Date(expiresAt)],
+    );
+  } catch (e) {
+    logger.error({ err: e }, 'failed to persist session revocation');
+    const failure = new Error('Sign-out could not be recorded; try again') as Error & { status: number };
+    failure.name = 'RevocationUnavailable';
+    failure.status = 503;
+    throw failure;
+  }
+}
+
+export function dropRevokedSessions() {
+  return async (req: Request, _res: Response, next: (e?: unknown) => void): Promise<void> => {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      next();
+      return;
+    }
+    try {
+      if (await isSessionRevokedInDb(session)) {
+        revoked.set(session.jti!, (session.exp ?? Math.floor(Date.now() / 1000)) * 1000);
+        delete req.cookies[env.session.cookieName];
+      }
+      next();
+    } catch (e) {
+      next(e);
+    }
+  };
+}
+
+export async function isSessionRevokedInDb(session: SessionPayload): Promise<boolean> {
+  if (!env.databaseUrl || !session.jti) return false;
+  const r = await db().query('select 1 from revoked_sessions where jti = $1', [session.jti]);
+  return (r.rowCount ?? 0) > 0;
+}
+
+export async function loadRevokedSessions(): Promise<void> {
+  if (!env.databaseUrl) return;
+  await db().query('delete from revoked_sessions where expires_at < now()');
+  const rows = await db().query<{ jti: string; expires_at: Date }>('select jti, expires_at from revoked_sessions');
+  for (const r of rows.rows) revoked.set(r.jti, r.expires_at.getTime());
+}
+
+function cookieOptions() {
+  return {
     httpOnly: true,
     secure: env.nodeEnv === 'production',
-    sameSite: 'lax',
-    maxAge: env.session.maxAgeSeconds * 1000,
+    sameSite: 'lax' as const,
     path: '/',
+  };
+}
+
+export function setSessionCookie(res: Response, payload: SessionPayload) {
+  res.cookie(env.session.cookieName, createSessionToken(payload), {
+    ...cookieOptions(),
+    maxAge: sessionMaxAgeSeconds(payload) * 1000,
   });
 }
 
-export function clearSessionCookie(res: Response) {
-  res.clearCookie(env.session.cookieName, { path: '/' });
+export async function replaceSession(req: Request, res: Response, payload: SessionPayload): Promise<void> {
+  await revokeSession(getSessionFromRequest(req));
+  setSessionCookie(res, payload);
+}
+
+export async function endSession(req: Request, res: Response): Promise<void> {
+  await revokeSession(getSessionFromRequest(req));
+  res.clearCookie(env.session.cookieName, cookieOptions());
 }
 
 export function getSessionFromRequest(req: Request): SessionPayload | null {

@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/node';
 import type { Express, NextFunction, Request, Response } from 'express';
-import { env } from '../config/env.js';
+import { env, numEnv } from '../config/env.js';
 import { logger } from '../config/logger.js';
 
 /**
@@ -28,29 +28,49 @@ export function initSentry(): void {
     dsn,
     environment: process.env.SENTRY_ENVIRONMENT ?? env.network,
     release: process.env.SENTRY_RELEASE,
-    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? '0.1'),
+    tracesSampleRate: numEnv('SENTRY_TRACES_SAMPLE_RATE', 0.1),
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+    },
     integrations: [
       Sentry.httpIntegration(),
       Sentry.expressIntegration(),
     ],
     beforeSend(event, hint) {
-      // Scrub session cookies + API-KEY headers before shipping to Sentry.
-      // These should never leave our process, especially not to a 3rd party.
-      const req = (event.request ?? {}) as { cookies?: unknown; headers?: Record<string, unknown> };
-      if (req.cookies) req.cookies = '[redacted]';
-      if (req.headers) {
-        for (const k of Object.keys(req.headers)) {
-          if (/cookie|api-key|authorization/i.test(k)) req.headers[k] = '[redacted]';
-        }
-      }
-      // Drop expected 4xx noise — those are user mistakes not bugs.
       const err = hint?.originalException as { status?: number } | undefined;
       if (err?.status && err.status < 500 && err.status !== 429) return null;
-      return event;
+      return scrubEvent(event);
     },
+    beforeSendTransaction: (event) => scrubEvent(event),
   });
   initialized = true;
   logger.info({ environment: process.env.SENTRY_ENVIRONMENT ?? env.network }, 'Sentry initialized');
+}
+
+type ScrubbableEvent = {
+  request?: { data?: unknown; cookies?: unknown; query_string?: unknown; headers?: Record<string, unknown> };
+  user?: { ip_address?: unknown } & Record<string, unknown>;
+  extra?: Record<string, unknown>;
+};
+
+export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
+  if (event.request) {
+    delete event.request.data;
+    delete event.request.cookies;
+    delete event.request.query_string;
+    const headers = event.request.headers;
+    if (headers) {
+      for (const k of Object.keys(headers)) {
+        if (/cookie|api-key|authorization|x-forwarded-for|signature/i.test(k)) delete headers[k];
+      }
+    }
+  }
+  if (event.user) delete event.user.ip_address;
+  return event;
 }
 
 /**

@@ -2,11 +2,10 @@ import { ensureAccountForEmail } from '../src/services/account.js';
 import { buildTransaction, submitTransaction } from '../src/stellar/transactions.js';
 
 async function main() {
-  const { userId, wallet } = await ensureAccountForEmail('reviewer.t1@example.com');
+  const { userId, wallet } = await ensureAccountForEmail('reviewer.t1@example.com', 'verify-wiring-reviewer');
   console.log('email/OAuth provisioned:', userId, wallet.address);
 
-  const built = await buildTransaction({
-    userId,
+  const built = await buildTransaction(userId, {
     operations: [{ type: 'payment', destination: wallet.address, asset: { code: 'XLM' }, amount: '1' }],
     memo: 'T1 delegated',
   });

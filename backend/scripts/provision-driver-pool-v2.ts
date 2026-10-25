@@ -1,17 +1,3 @@
-/**
- * Replace the Driver Pool distribution account on Stellar TESTNET.
- *
- * The original driver pool (GD2J6WSB…) was provisioned by `provision-testnet.ts`,
- * which printed secrets to stdout only — the seed is unrecoverable. Without its
- * seed the account can never sign a `changeTrust`, so it can never hold USDC, so
- * every USDC settlement fails atomically at the driver-pool payment op.
- *
- * This mirrors the partner_revenue replacement of 2026-08-30: generate, fund,
- * add the USDC trustline, and persist the secret to secrets/distribution-v2.json
- * (mode 0600, gitignored) so the mistake isn't repeated.
- *
- *   pnpm --filter @pathpulse/backend exec tsx scripts/provision-driver-pool-v2.ts
- */
 import { readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
